@@ -172,7 +172,7 @@ public class SessionService extends SessionServiceGrpc.SessionServiceImplBase {
             s.tag("childNumber", "1");
             try {
 
-                Thread.sleep(1000);
+                Thread.sleep(2000);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
