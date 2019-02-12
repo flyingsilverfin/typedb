@@ -126,6 +126,13 @@ public class SessionService extends SessionServiceGrpc.SessionServiceImplBase {
         @Override
         public void onNext(Transaction.Req request) {
             // NOTE this is the gRPC thread
+
+            try {
+                Thread.sleep(1);
+            } catch (InterruptedException e) {
+
+            }
+
             try {
                 Tracer tracing = Tracing.currentTracer();
                 if (tracing != null && request.getMetadataOrDefault("traceIdLow", "").length() > 0) {
