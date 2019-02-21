@@ -111,10 +111,10 @@ public class TransactionOLTP implements Transaction {
     private final SessionImpl session;
     private final JanusGraph janusGraph;
     private final ElementFactory elementFactory;
-    private final KeyspaceCache keyspaceCache;
     //----------------------------- Transaction Specific
     private final RuleCache ruleCache;
     private final org.apache.tinkerpop.gremlin.structure.Transaction janusTransaction;
+    private final KeyspaceCache keyspaceCache;
     private final TransactionCache transactionCache;
 
     private final ThreadLocal<Boolean> createdInCurrentThread = ThreadLocal.withInitial(() -> Boolean.FALSE);
@@ -144,10 +144,6 @@ public class TransactionOLTP implements Transaction {
 
         this.keyspaceCache = keyspaceCache;
         this.transactionCache = new TransactionCache(keyspaceCache);
-
-        //Initialise Graph
-//        if (span != null) span.annotate("Opening `cache` with WRITE type");
-//        cache().open(Type.WRITE);
 
         if (span != null) span.finish();
     }
@@ -296,12 +292,6 @@ public class TransactionOLTP implements Transaction {
         return LabelId.of(currentValue);
     }
 
-    /**
-     * @return The graph cache which contains all the data cached and accessible by all transactions.
-     */
-    public KeyspaceCache getKeyspaceCache() {
-        return keyspaceCache;
-    }
 
     /**
      * Gets the config option which determines the number of instances a {@link grakn.core.graql.concept.Type} must have before the {@link grakn.core.graql.concept.Type}
@@ -315,7 +305,7 @@ public class TransactionOLTP implements Transaction {
 
     public TransactionCache cache() {
         if (transactionCache.isTxOpen() && transactionCache.schemaNotCached()) {
-            transactionCache.refreshSchemaCache();
+            transactionCache.updateSchemaCacheFromKeyspaceCache();
         }
         return transactionCache;
     }
@@ -690,11 +680,8 @@ public class TransactionOLTP implements Transaction {
         if (isClosed()) {
             return;
         }
-        try {
-            cache().writeToKeyspaceCache(type().equals(Type.READ));
-        } finally {
-            closeTransaction(closeMessage);
-        }
+        cache().refreshKeyspaceCache();
+        closeTransaction(closeMessage);
     }
 
     /**
@@ -709,9 +696,10 @@ public class TransactionOLTP implements Transaction {
         }
         try {
             validateGraph();
-            commitTransactionInternal();
-            cache().writeToKeyspaceCache(true);
-            //TODO update cache here
+            synchronized (keyspaceCache) {
+                commitTransactionInternal();
+                cache().flushToKeyspaceCache();
+            }
         } finally {
             String closeMessage = ErrorMessage.TX_CLOSED_ON_ACTION.getMessage("committed", keyspace());
             closeTransaction(closeMessage);
@@ -754,9 +742,10 @@ public class TransactionOLTP implements Transaction {
         Map<String, Set<ConceptId>> newAttributes = cache().getNewAttributes();
         boolean logsExist = !newInstances.isEmpty() || !newAttributes.isEmpty();
 
-        commitTransactionInternal();
-
-        cache().writeToKeyspaceCache(true);
+        synchronized (keyspaceCache) {
+            commitTransactionInternal();
+            cache().flushToKeyspaceCache();
+        }
 
         //If we have logs to commit get them and add them
         if (logsExist) {

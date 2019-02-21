@@ -85,10 +85,9 @@ public class SessionImpl implements Session {
         // copy schema to session cache if there are any schema concepts
         if (!keyspaceHasBeenInitialised(tx)) {
             initialiseMetaConcepts(tx);
-            copyMetaConceptsToKeyspaceCache(tx);
-            tx.commit();
         }
-        tx.close();
+        copyMetaConceptsToKeyspaceCache(tx);
+        tx.commit();
     }
 
     @Override
@@ -141,6 +140,14 @@ public class SessionImpl implements Session {
         copyToCache(tx.getMetaConcept());
         copyToCache(tx.getMetaRole());
         copyToCache(tx.getMetaRule());
+    }
+
+
+    /**
+     * @return The graph cache which contains all the data cached and accessible by all transactions.
+     */
+    public KeyspaceCache getKeyspaceCache() {
+        return keyspaceCache;
     }
 
     private void copyToCache(SchemaConcept schemaConcept) {
