@@ -155,7 +155,7 @@ public class SessionImpl implements Session {
     private void copyToCache(SchemaConcept schemaConcept) {
         schemaConcept.subs().forEach(concept -> {
             keyspaceCache.cacheLabel(concept.label(), concept.labelId());
-            keyspaceCache.cacheType(concept.label(), concept);
+//            keyspaceCache.cacheType(concept.label(), concept);
         });
     }
 
