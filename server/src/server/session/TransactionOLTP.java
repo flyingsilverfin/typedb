@@ -511,11 +511,11 @@ public class TransactionOLTP implements Transaction {
      * @return The {@link SchemaConcept} which was either cached or built via a DB read or write
      */
     private SchemaConcept buildSchemaConcept(Label label, Supplier<SchemaConcept> dbBuilder) {
-        if (cache().isTypeCached(label)) {
-            return cache().getCachedSchemaConcept(label);
-        } else {
+//        if (cache().isTypeCached(label)) {
+//            return cache().getCachedSchemaConcept(label);
+//        } else {
             return dbBuilder.get();
-        }
+//        }
     }
 
     @Override
