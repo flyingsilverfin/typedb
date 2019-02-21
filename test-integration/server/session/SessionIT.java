@@ -132,8 +132,7 @@ public class SessionIT {
      */
     @Test
     public void sessionsInDifferentThreadsShouldBeAbleToAccessSameKeyspace() throws ExecutionException, InterruptedException {
-        SessionImpl sessionWithLocalCache = server.sessionFactory().session(session.keyspace());
-        Transaction tx1 = sessionWithLocalCache.transaction(WRITE);
+        Transaction tx1 = session.transaction(WRITE);
         tx1.putEntityType("person");
         tx1.commit();
         ExecutorService executor = Executors.newFixedThreadPool(2);
