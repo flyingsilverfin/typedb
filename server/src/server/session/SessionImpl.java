@@ -22,7 +22,6 @@ import brave.ScopedSpan;
 import com.google.common.annotations.VisibleForTesting;
 import grakn.benchmark.lib.serverinstrumentation.ServerTracingInstrumentation;
 import grakn.core.common.config.Config;
-import grakn.core.common.config.ConfigKey;
 import grakn.core.common.exception.ErrorMessage;
 import grakn.core.graql.concept.SchemaConcept;
 import grakn.core.graql.internal.Schema;
@@ -63,6 +62,9 @@ public class SessionImpl implements Session {
     private final Config config;
     private final JanusGraph graph;
     private final KeyspaceCache keyspaceCache;
+    private final Runnable onClose;
+
+    private boolean isClosed = false;
 
     /**
      * Instantiates {@link SessionImpl} specific for internal use (within Grakn Server),
@@ -71,7 +73,7 @@ public class SessionImpl implements Session {
      * @param keyspace to which keyspace the session should be bound to
      * @param config   config to be used.
      */
-    public SessionImpl(Keyspace keyspace, Config config, KeyspaceCache keyspaceCache) {
+    public SessionImpl(Keyspace keyspace, Config config, KeyspaceCache keyspaceCache, Runnable onClose) {
         this.keyspace = keyspace;
         this.config = config;
         // Only save a reference to the factory rather than opening an Hadoop graph immediately because that can be
@@ -81,6 +83,7 @@ public class SessionImpl implements Session {
         this.graph = JanusGraphFactory.openGraph(this);
 
         this.keyspaceCache = keyspaceCache;
+        this.onClose = onClose;
 
         TransactionOLTP tx = this.transaction(Transaction.Type.WRITE);
         // copy schema to session cache if there are any schema concepts
@@ -89,6 +92,7 @@ public class SessionImpl implements Session {
         }
         copyMetaConceptsToKeyspaceCache(tx);
         tx.commit();
+
     }
 
     @Override
@@ -193,6 +197,10 @@ public class SessionImpl implements Session {
      */
     @Override
     public void close() {
+        if (isClosed) {
+            return;
+        }
+
         TransactionOLTP localTx = localOLTPTransactionContainer.get();
         if (localTx != null) {
             localTx.close(ErrorMessage.SESSION_CLOSED.getMessage(keyspace()));
@@ -201,6 +209,9 @@ public class SessionImpl implements Session {
 
         ((StandardJanusGraph) graph).getOpenTransactions().forEach(org.janusgraph.core.Transaction::close);
         graph.close();
+
+        this.onClose.run();
+        isClosed = true;
     }
 
     @Override
