@@ -26,6 +26,8 @@ import grakn.core.server.keyspace.KeyspaceManager;
 import grakn.core.server.session.cache.KeyspaceCache;
 import grakn.core.server.util.LockManager;
 import org.janusgraph.core.JanusGraph;
+import org.janusgraph.core.util.JanusGraphCleanup;
+import org.janusgraph.diskstorage.BackendException;
 import org.janusgraph.graphdb.database.StandardJanusGraph;
 
 import java.util.concurrent.ConcurrentHashMap;
@@ -59,10 +61,39 @@ public class SessionFactory {
      */
     public SessionImpl session(Keyspace keyspace) {
         if (!keyspaceStore.containsKeyspace(keyspace)) {
-            initialiseNewKeyspace(keyspace);
+            return initialiseNewKeyspace(keyspace);
+            // TODO could return new session directly here so we don't close and re-open right away
+        } else {
+            return newSessionImpl(keyspace, config);
         }
-        // TODO this is wasteful after an initialiseNewKeyspace
-        return newSessionImpl(keyspace, config);
+    }
+
+    public void deleteKeyspace(Keyspace keyspace) {
+
+        // problem on how to implement this in a thread-safe way:
+        // two tasks: close JanusGraph, and remove entry from the keypsace cache map
+
+        // option 1: atomically [close JanusGraph, null value in map], [delete null entry in map]
+        // option 2: atomically [remove valid entry from map], [close JanusGraph]
+
+        // problem option 1: map may have a new, valid entry inserted right after we null the value atomically but before we delete it
+        // so we end up deleting a valid entry
+
+        // problem option 2: remove entry from map, second thread creates a new entry and tries to open a new JanusGraph with
+        // the same name before we are able to delete the close/delete the old JanusGraph
+
+        // leave the nulled out value for now, further problems exist higher up the stack eg. possibly two concurrent hits on KeyspaceService.delete()?
+
+        KeyspaceCacheContainer keyspaceCacheContainer = keyspaceCacheMap.remove(keyspace);
+
+        try {
+            JanusGraph graph = keyspaceCacheContainer.retrieveGraph();
+            graph.close();
+            JanusGraphCleanup.clear(graph);
+        } catch (BackendException e) {
+            throw new RuntimeException(e);
+        }
+
     }
 
     /**
@@ -70,19 +101,20 @@ public class SessionFactory {
      *
      * @param keyspace the new {@link Keyspace} we want to create
      */
-    private void initialiseNewKeyspace(Keyspace keyspace) {
+    private SessionImpl initialiseNewKeyspace(Keyspace keyspace) {
         //If the keyspace does not exist lock and create it
         Lock lock = lockManager.getLock(getLockingKey(keyspace));
         lock.lock();
+        SessionImpl session;
         try {
-            SessionImpl session = newSessionImpl(keyspace, config);
-
+            // opening a session initialises the keyspace with meta concepts, protect with lock so doesn't get initialised twice
+            session = newSessionImpl(keyspace, config);
             // Add current keyspace to list of available Grakn keyspaces
             keyspaceStore.addKeyspace(keyspace);
-            session.close();
         } finally {
             lock.unlock();
         }
+        return session;
     }
 
     /**
@@ -159,6 +191,7 @@ public class SessionFactory {
             return references;
         }
         public JanusGraph retrieveGraph() { return graph; }
+
 
     }
 
