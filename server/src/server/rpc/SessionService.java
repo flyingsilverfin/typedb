@@ -96,7 +96,7 @@ public class SessionService extends SessionServiceGrpc.SessionServiceImplBase {
         this.attributeDeduplicatorDaemon = attributeDeduplicatorDaemon;
         this.openSessions = new HashMap<>();
 
-        int cores = Runtime.getRuntime().availableProcessors();
+        int cores = 16;
         transactionThreadPool = new RoundRobinThreadPool(cores);
     }
 
