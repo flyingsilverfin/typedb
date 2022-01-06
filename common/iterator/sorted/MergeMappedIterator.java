@@ -16,9 +16,12 @@
  *
  */
 
-package com.vaticle.typedb.core.common.iterator;
+package com.vaticle.typedb.core.common.iterator.sorted;
 
 import com.vaticle.typedb.core.common.exception.TypeDBException;
+import com.vaticle.typedb.core.common.iterator.FunctionalIterator;
+import com.vaticle.typedb.core.common.iterator.Iterators;
+import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Order;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -30,8 +33,8 @@ import java.util.function.Predicate;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.ILLEGAL_ARGUMENT;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.ILLEGAL_STATE;
 
-class MergeMappedIterator<T, U extends Comparable<? super U>, ITER extends FunctionalIterator.Sorted<U>>
-        extends AbstractFunctionalIterator.Sorted<U> {
+public class MergeMappedIterator<T, U extends Comparable<? super U>, ORDER extends Order, ITER extends SortedIterator<U, ORDER>>
+        extends AbstractSortedIterator<U, ORDER> {
 
     private final Function<T, ITER> mappingFn;
     final FunctionalIterator<T> iterator;
@@ -42,7 +45,8 @@ class MergeMappedIterator<T, U extends Comparable<? super U>, ITER extends Funct
 
     enum State {INIT, NOT_READY, FETCHED, COMPLETED}
 
-    MergeMappedIterator(FunctionalIterator<T> iterator, Function<T, ITER> mappingFn) {
+    MergeMappedIterator(ORDER order, FunctionalIterator<T> iterator, Function<T, ITER> mappingFn) {
+        super(order);
         this.iterator = iterator;
         this.mappingFn = mappingFn;
         this.queue = new PriorityQueue<>();
@@ -135,12 +139,12 @@ class MergeMappedIterator<T, U extends Comparable<? super U>, ITER extends Funct
         iterator.recycle();
     }
 
-    static class Forwardable<T, U extends Comparable<? super U>>
-            extends MergeMappedIterator<T, U, FunctionalIterator.Sorted.Forwardable<U>>
-            implements FunctionalIterator.Sorted.Forwardable<U> {
+    public static class Forwardable<T, U extends Comparable<? super U>, ORDER extends Order>
+            extends MergeMappedIterator<T, U, ORDER, SortedIterator.Forwardable<U, ORDER>>
+            implements SortedIterator.Forwardable<U, ORDER> {
 
-        Forwardable(FunctionalIterator<T> source, Function<T, FunctionalIterator.Sorted.Forwardable<U>> mappingFn) {
-            super(source, mappingFn);
+        public Forwardable(ORDER order, FunctionalIterator<T> source, Function<T, SortedIterator.Forwardable<U, ORDER>> mappingFn) {
+            super(order, source, mappingFn);
         }
 
         @Override
@@ -148,7 +152,7 @@ class MergeMappedIterator<T, U extends Comparable<? super U>, ITER extends Funct
             if (last != null && target.compareTo(last) < 0) throw TypeDBException.of(ILLEGAL_ARGUMENT);
             notInQueue.forEach(iter -> iter.forward(target));
             queue.forEach(queueNode -> {
-                FunctionalIterator.Sorted.Forwardable<U> iter = queueNode.iter;
+                SortedIterator.Forwardable<U, ORDER> iter = queueNode.iter;
                 iter.forward(target);
                 notInQueue.add(iter);
             });
@@ -157,23 +161,23 @@ class MergeMappedIterator<T, U extends Comparable<? super U>, ITER extends Funct
         }
 
         @Override
-        public final FunctionalIterator.Sorted.Forwardable<U> merge(FunctionalIterator.Sorted.Forwardable<U> iterator) {
+        public final SortedIterator.Forwardable<U, ORDER> merge(SortedIterator.Forwardable<U, ORDER> iterator) {
             return Iterators.Sorted.merge(this, iterator);
         }
 
         @Override
-        public <V extends Comparable<? super V>> FunctionalIterator.Sorted.Forwardable<V> mapSorted(
-                Function<U, V> mappingFn, Function<V, U> reverseMappingFn) {
-            return Iterators.Sorted.mapSorted(this, mappingFn, reverseMappingFn);
+        public <V extends Comparable<? super V>, ORD extends Order> SortedIterator.Forwardable<V, ORD> mapSorted(
+                ORD order, Function<U, V> mappingFn, Function<V, U> reverseMappingFn) {
+            return Iterators.Sorted.mapSorted(order, this, mappingFn, reverseMappingFn);
         }
 
         @Override
-        public FunctionalIterator.Sorted.Forwardable<U> distinct() {
+        public SortedIterator.Forwardable<U, ORDER> distinct() {
             return Iterators.Sorted.distinct(this);
         }
 
         @Override
-        public FunctionalIterator.Sorted.Forwardable<U> filter(Predicate<U> predicate) {
+        public SortedIterator.Forwardable<U, ORDER> filter(Predicate<U> predicate) {
             return Iterators.Sorted.filter(this, predicate);
         }
     }

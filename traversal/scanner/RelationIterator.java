@@ -22,7 +22,8 @@ import com.vaticle.typedb.core.common.collection.KeyValue;
 import com.vaticle.typedb.core.common.exception.TypeDBException;
 import com.vaticle.typedb.core.common.iterator.AbstractFunctionalIterator;
 import com.vaticle.typedb.core.common.iterator.FunctionalIterator;
-import com.vaticle.typedb.core.common.iterator.FunctionalIterator.Sorted.Forwardable;
+import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator;
+import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Forwardable;
 import com.vaticle.typedb.core.common.iterator.Iterators;
 import com.vaticle.typedb.core.common.parameters.Label;
 import com.vaticle.typedb.core.graph.GraphManager;
@@ -129,7 +130,7 @@ public class RelationIterator extends AbstractFunctionalIterator<VertexMap> {
 
     private void proposeFirst() {
         assert state == State.INIT && relation == null && proposer == 0;
-        FunctionalIterator.Sorted<ThingVertex> relationIterator = getIterator(proposer);
+        SortedIterator<ThingVertex> relationIterator = getIterator(proposer);
         if (relationIterator.hasNext()) {
             relation = relationIterator.next();
             state = State.PROPOSED;
@@ -146,7 +147,7 @@ public class RelationIterator extends AbstractFunctionalIterator<VertexMap> {
 
     private void proposeNext() {
         assert state == State.EMPTY;
-        FunctionalIterator.Sorted<ThingVertex> relationIterator = getIterator(proposer);
+        SortedIterator<ThingVertex> relationIterator = getIterator(proposer);
         scoped.clear(); // relationIterator requires clearing of scoped roles as it is stateful
         while (relationIterator.hasNext()) {
             ThingVertex newRelation = relationIterator.next();
@@ -207,13 +208,12 @@ public class RelationIterator extends AbstractFunctionalIterator<VertexMap> {
             return player.ins().edge(ROLEPLAYER, roleVertex).get().filter(
                     directedEdge -> relationTypes.contains(directedEdge.get().from().type().properLabel())
             ).mapSorted(
-                    dirEdge -> new KeyValue<>(dirEdge.get().from(), dirEdge.get().optimised().get()),
-                    relRole -> ThingAdjacency.DirectedEdge.in(new ThingEdgeImpl.Target(ROLEPLAYER, relRole.key(), player, roleVertex))
+                    relRole -> ThingAdjacency.DirectedEdge.in(new ThingEdgeImpl.Target(ROLEPLAYER, relRole.key(), player, roleVertex)), dirEdge -> new KeyValue<>(dirEdge.get().from(), dirEdge.get().optimised().get())
             );
-        })).filter(relRole -> !scoped.contains(relRole.value())).mapSorted(relRole -> {
+        })).filter(relRole -> !scoped.contains(relRole.value())).mapSorted(relation -> new KeyValue<>(relation, null), relRole -> {
             scoped.record(pos, relRole.value());
             return relRole.key();
-        }, relation -> new KeyValue<>(relation, null));
+        });
     }
 
     @Override

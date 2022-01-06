@@ -21,9 +21,10 @@ package com.vaticle.typedb.core.rocks;
 import com.vaticle.typedb.core.common.collection.ByteArray;
 import com.vaticle.typedb.core.common.collection.KeyValue;
 import com.vaticle.typedb.core.common.exception.TypeDBException;
-import com.vaticle.typedb.core.common.iterator.AbstractFunctionalIterator;
-import com.vaticle.typedb.core.common.iterator.FunctionalIterator;
 import com.vaticle.typedb.core.common.iterator.Iterators;
+import com.vaticle.typedb.core.common.iterator.sorted.AbstractSortedIterator;
+import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator;
+import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Order;
 import com.vaticle.typedb.core.graph.common.Storage.Key;
 
 import java.util.NoSuchElementException;
@@ -32,8 +33,8 @@ import java.util.function.Predicate;
 
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.RESOURCE_CLOSED;
 
-public final class RocksIterator<T extends Key> extends AbstractFunctionalIterator.Sorted<KeyValue<T, ByteArray>>
-        implements FunctionalIterator.Sorted.Forwardable<KeyValue<T, ByteArray>>, AutoCloseable {
+public final class RocksIterator<T extends Key> extends AbstractSortedIterator<KeyValue<T, ByteArray>, Order.Asc>
+        implements SortedIterator.Forwardable<KeyValue<T, ByteArray>, Order.Asc>, AutoCloseable {
 
     private final Key.Prefix<T> prefix;
     private final RocksStorage storage;
@@ -45,6 +46,7 @@ public final class RocksIterator<T extends Key> extends AbstractFunctionalIterat
     private enum State {INIT, UNFETCHED, FORWARDED, FETCHED, COMPLETED;}
 
     RocksIterator(RocksStorage storage, Key.Prefix<T> prefix) {
+        super(ASC);
         this.storage = storage;
         this.prefix = prefix;
         state = State.INIT;
@@ -156,29 +158,29 @@ public final class RocksIterator<T extends Key> extends AbstractFunctionalIterat
     }
 
     @Override
-    public final FunctionalIterator.Sorted.Forwardable<KeyValue<T, ByteArray>> merge(
-            FunctionalIterator.Sorted.Forwardable<KeyValue<T, ByteArray>> iterator) {
-        return Iterators.Sorted.merge(this, iterator);
+    public final SortedIterator.Forwardable<KeyValue<T, ByteArray>, Order.Asc> merge(
+            SortedIterator.Forwardable<KeyValue<T, ByteArray>, Order.Asc> iterator) {
+        return Iterators.Sorted.merge(ASC, this, iterator);
     }
 
     @Override
-    public <V extends Comparable<? super V>> FunctionalIterator.Sorted.Forwardable<V> mapSorted(
-            Function<KeyValue<T, ByteArray>, V> mappingFn, Function<V, KeyValue<T, ByteArray>> reverseMappingFn) {
-        return Iterators.Sorted.mapSorted(this, mappingFn, reverseMappingFn);
+    public <V extends Comparable<? super V>, ORDER extends Order> SortedIterator.Forwardable<V, ORDER> mapSorted(
+            ORDER order, Function<KeyValue<T, ByteArray>, V> mappingFn, Function<V, KeyValue<T, ByteArray>> reverseMappingFn) {
+        return Iterators.Sorted.mapSorted(order, this, mappingFn, reverseMappingFn);
     }
 
     @Override
-    public FunctionalIterator.Sorted.Forwardable<KeyValue<T, ByteArray>> distinct() {
+    public SortedIterator.Forwardable<KeyValue<T, ByteArray>, Order.Asc> distinct() {
         return Iterators.Sorted.distinct(this);
     }
 
     @Override
-    public FunctionalIterator.Sorted.Forwardable<KeyValue<T, ByteArray>> filter(Predicate<KeyValue<T, ByteArray>> predicate) {
+    public SortedIterator.Forwardable<KeyValue<T, ByteArray>, Order.Asc> filter(Predicate<KeyValue<T, ByteArray>> predicate) {
         return Iterators.Sorted.filter(this, predicate);
     }
 
     @Override
-    public FunctionalIterator.Sorted.Forwardable<KeyValue<T, ByteArray>> onFinalise(Runnable finalise) {
+    public SortedIterator.Forwardable<KeyValue<T, ByteArray>, Order.Asc> onFinalise(Runnable finalise) {
         return Iterators.Sorted.onFinalise(this, finalise);
     }
 }

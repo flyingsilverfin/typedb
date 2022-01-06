@@ -22,6 +22,7 @@ import com.vaticle.typedb.common.collection.ConcurrentSet;
 import com.vaticle.typedb.core.common.collection.ByteArray;
 import com.vaticle.typedb.core.common.collection.KeyValue;
 import com.vaticle.typedb.core.common.iterator.FunctionalIterator;
+import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator;
 import com.vaticle.typedb.core.graph.adjacency.ThingAdjacency;
 import com.vaticle.typedb.core.graph.common.Encoding;
 import com.vaticle.typedb.core.graph.common.Storage.Key;
@@ -100,10 +101,10 @@ public abstract class ThingAdjacencyImpl implements ThingAdjacency {
         private final ThingAdjacencyImpl adjacency;
         private final Encoding.Edge.Thing encoding;
         private final TypeVertex optimisedType;
-        private final FunctionalIterator.Sorted.Forwardable<DirectedEdge> directedEdges;
+        private final SortedIterator.Forwardable<DirectedEdge> directedEdges;
 
         SortedIteratorBuilderImpl(ThingAdjacencyImpl adjacency, Encoding.Edge.Thing encoding, @Nullable TypeVertex optimisedType,
-                                  FunctionalIterator.Sorted.Forwardable<DirectedEdge> directedEdges) {
+                                  SortedIterator.Forwardable<DirectedEdge> directedEdges) {
             this.adjacency = adjacency;
             this.encoding = encoding;
             this.optimisedType = optimisedType;
@@ -111,25 +112,25 @@ public abstract class ThingAdjacencyImpl implements ThingAdjacency {
         }
 
         @Override
-        public FunctionalIterator.Sorted<ThingVertex> from() {
+        public SortedIterator<ThingVertex> from() {
             return adjacency.direction.isOut() ?
                     directedEdges.mapSorted(directedEdge -> directedEdge.get().from()).distinct() :
-                    directedEdges.mapSorted(directedEdge -> directedEdge.get().from(), vertex -> adjacency.asDirected(
+                    directedEdges.mapSorted(vertex -> adjacency.asDirected(
                             new ThingEdgeImpl.Target(encoding, adjacency.owner(), vertex, optimisedType)
-                    ));
+                    ), directedEdge -> directedEdge.get().from());
         }
 
         @Override
-        public FunctionalIterator.Sorted<ThingVertex> to() {
+        public SortedIterator<ThingVertex> to() {
             return adjacency.direction.isOut() ?
-                    directedEdges.mapSorted(directedEdge -> directedEdge.get().to(), vertex -> adjacency.asDirected(
+                    directedEdges.mapSorted(vertex -> adjacency.asDirected(
                             new ThingEdgeImpl.Target(encoding, adjacency.owner(), vertex, optimisedType)
-                    )) :
+                    ), directedEdge -> directedEdge.get().to()) :
                     directedEdges.mapSorted(directedEdge -> directedEdge.get().to()).distinct();
         }
 
         @Override
-        public FunctionalIterator.Sorted.Forwardable<DirectedEdge> get() {
+        public SortedIterator.Forwardable<DirectedEdge> get() {
             return directedEdges;
         }
     }
@@ -148,12 +149,11 @@ public abstract class ThingAdjacencyImpl implements ThingAdjacency {
             return owner;
         }
 
-        private FunctionalIterator.Sorted.Forwardable<DirectedEdge> edgeIteratorSorted(
+        private SortedIterator.Forwardable<DirectedEdge> edgeIteratorSorted(
                 Encoding.Edge.Thing encoding, IID... lookahead) {
             Key.Prefix<EdgeIID.Thing> prefix = EdgeIID.Thing.prefix(owner.iid(), infixIID(encoding, lookahead));
             return owner.graph().storage().iterate(prefix).mapSorted(
-                    kv -> asDirected(newPersistedEdge(EdgeIID.Thing.of(kv.key().bytes()))),
-                    sortable -> KeyValue.of(sortable.iid(), ByteArray.empty())
+                    sortable -> KeyValue.of(sortable.iid(), ByteArray.empty()), kv -> asDirected(newPersistedEdge(EdgeIID.Thing.of(kv.key().bytes())))
             );
         }
 
@@ -235,7 +235,7 @@ public abstract class ThingAdjacencyImpl implements ThingAdjacency {
             }
         }
 
-        FunctionalIterator.Sorted.Forwardable<DirectedEdge> bufferedEdgeIterator(Encoding.Edge.Thing encoding, IID[] lookahead) {
+        SortedIterator.Forwardable<DirectedEdge> bufferedEdgeIterator(Encoding.Edge.Thing encoding, IID[] lookahead) {
             ConcurrentNavigableMap<DirectedEdge, ThingEdge> result;
             InfixIID.Thing infixIID = infixIID(encoding, lookahead);
             if (lookahead.length == encoding.lookAhead()) {
@@ -431,16 +431,15 @@ public abstract class ThingAdjacencyImpl implements ThingAdjacency {
                 return link(bufferedIterator, storageIterator).distinct();
             }
 
-            private FunctionalIterator.Sorted.Forwardable<DirectedEdge> edgeIteratorSorted(
+            private SortedIterator.Forwardable<DirectedEdge> edgeIteratorSorted(
                     Encoding.Edge.Thing encoding, IID... lookahead) {
                 assert encoding != ROLEPLAYER || lookahead.length >= 1;
                 Key.Prefix<EdgeIID.Thing> prefix = EdgeIID.Thing.prefix(owner.iid(), infixIID(encoding, lookahead));
-                FunctionalIterator.Sorted.Forwardable<DirectedEdge> storageIter = owner.graph().storage().iterate(prefix)
+                SortedIterator.Forwardable<DirectedEdge> storageIter = owner.graph().storage().iterate(prefix)
                         .mapSorted(
-                                kv -> asDirected(cache(newPersistedEdge(EdgeIID.Thing.of(kv.key().bytes())))),
-                                directedEdge -> KeyValue.of(directedEdge.iid(), ByteArray.empty())
+                                directedEdge -> KeyValue.of(directedEdge.iid(), ByteArray.empty()), kv -> asDirected(cache(newPersistedEdge(EdgeIID.Thing.of(kv.key().bytes()))))
                         );
-                FunctionalIterator.Sorted.Forwardable<DirectedEdge> bufferedIter = bufferedEdgeIterator(encoding, lookahead);
+                SortedIterator.Forwardable<DirectedEdge> bufferedIter = bufferedEdgeIterator(encoding, lookahead);
                 return bufferedIter.merge(storageIter).distinct();
             }
 

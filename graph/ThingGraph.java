@@ -23,6 +23,7 @@ import com.vaticle.typedb.core.common.collection.ByteArray;
 import com.vaticle.typedb.core.common.exception.TypeDBCheckedException;
 import com.vaticle.typedb.core.common.exception.TypeDBException;
 import com.vaticle.typedb.core.common.iterator.FunctionalIterator;
+import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator;
 import com.vaticle.typedb.core.common.parameters.Label;
 import com.vaticle.typedb.core.graph.common.Encoding;
 import com.vaticle.typedb.core.graph.common.KeyGenerator;
@@ -211,14 +212,14 @@ public class ThingGraph {
         else return vertex;
     }
 
-    public FunctionalIterator.Sorted<ThingVertex> getReadable(TypeVertex typeVertex) {
-        FunctionalIterator.Sorted<ThingVertex> vertices = storage.iterate(
+    public SortedIterator<ThingVertex> getReadable(TypeVertex typeVertex) {
+        SortedIterator<ThingVertex> vertices = storage.iterate(
                 VertexIID.Thing.prefix(typeVertex.iid())
         ).mapSorted(kv -> convertToReadable(kv.key()));
         if (!thingsByTypeIID.containsKey(typeVertex.iid())) return vertices;
         else {
-            FunctionalIterator.Sorted<ThingVertex> buffered = iterateSorted(thingsByTypeIID.get(typeVertex.iid()))
-                    .mapSorted(e -> e, ThingVertex::toWrite);
+            SortedIterator<ThingVertex> buffered = iterateSorted(thingsByTypeIID.get(typeVertex.iid()))
+                    .mapSorted(ThingVertex::toWrite, e -> e);
             return vertices.merge(buffered).distinct();
         }
     }

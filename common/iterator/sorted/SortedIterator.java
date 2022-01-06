@@ -1,0 +1,81 @@
+/*
+ * Copyright (C) 2021 Vaticle
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ */
+
+package com.vaticle.typedb.core.common.iterator.sorted;
+
+import com.vaticle.typedb.core.common.iterator.FunctionalIterator;
+
+import java.util.function.Function;
+import java.util.function.Predicate;
+
+public interface SortedIterator<T extends Comparable<? super T>, ORDER extends SortedIterator.Order>
+        extends FunctionalIterator<T> {
+
+    Order.Asc ASC = new Order.Asc();
+    Order.Desc DESC = new Order.Desc();
+
+    abstract class Order {
+
+        abstract <T extends Comparable<? super T>> int compare(T last, T next);
+
+        public static class Asc extends Order {
+
+            @Override
+            <T extends Comparable<? super T>> int compare(T last, T next) {
+                return last.compareTo(next);
+            }
+        }
+
+        static class Desc extends Order {
+
+            @Override
+            <T extends Comparable<? super T>> int compare(T last, T next) {
+                return -1 * last.compareTo(next);
+            }
+        }
+    }
+
+    ORDER order();
+
+    T peek();
+
+    SortedIterator<T, ORDER> merge(SortedIterator<T, ORDER> iterator);
+
+    SortedIterator<T, ORDER> distinct();
+
+    SortedIterator<T, ORDER> filter(Predicate<T> predicate);
+
+    <U extends Comparable<? super U>, ORD extends Order> SortedIterator<U, ORD> mapSorted(ORD order, Function<T, U> mappingFn);
+
+    interface Forwardable<T extends Comparable<? super T>, ORDER extends Order> extends SortedIterator<T, ORDER> {
+
+        void forward(T target);
+
+        Forwardable<T, ORDER> merge(Forwardable<T, ORDER> iterator);
+
+        @Override
+        Forwardable<T, ORDER> distinct();
+
+        @Override
+        Forwardable<T, ORDER> filter(Predicate<T> predicate);
+
+        <U extends Comparable<? super U>, ORD extends Order> SortedIterator<U, ORD> mapSorted(ORD order,
+                                                                                              Function<T, U> mappingFn,
+                                                                                              Function<U, T> reverseMappingFn);
+    }
+}

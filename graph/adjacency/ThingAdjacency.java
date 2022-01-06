@@ -19,6 +19,7 @@
 package com.vaticle.typedb.core.graph.adjacency;
 
 import com.vaticle.typedb.core.common.iterator.FunctionalIterator;
+import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator;
 import com.vaticle.typedb.core.graph.common.Encoding;
 import com.vaticle.typedb.core.graph.edge.ThingEdge;
 import com.vaticle.typedb.core.graph.iid.EdgeIID;
@@ -75,11 +76,11 @@ public interface ThingAdjacency {
 
     interface SortedIteratorBuilder {
 
-        FunctionalIterator.Sorted<ThingVertex> from();
+        SortedIterator<ThingVertex> from();
 
-        FunctionalIterator.Sorted<ThingVertex> to();
+        SortedIterator<ThingVertex> to();
 
-        FunctionalIterator.Sorted.Forwardable<DirectedEdge> get();
+        SortedIterator.Forwardable<DirectedEdge> get();
     }
 
     interface Write extends ThingAdjacency {

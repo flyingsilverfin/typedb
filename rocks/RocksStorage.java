@@ -23,7 +23,7 @@ import com.vaticle.typedb.core.common.collection.ByteArray;
 import com.vaticle.typedb.core.common.collection.KeyValue;
 import com.vaticle.typedb.core.common.exception.ErrorMessage;
 import com.vaticle.typedb.core.common.exception.TypeDBException;
-import com.vaticle.typedb.core.common.iterator.FunctionalIterator;
+import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator;
 import com.vaticle.typedb.core.graph.common.KeyGenerator;
 import com.vaticle.typedb.core.graph.common.Storage;
 import com.vaticle.typedb.core.graph.common.Storage.Key.Partition;
@@ -57,8 +57,6 @@ import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.ILL
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.RESOURCE_CLOSED;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Transaction.TRANSACTION_DATA_READ_VIOLATION;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Transaction.TRANSACTION_SCHEMA_READ_VIOLATION;
-import static com.vaticle.typedb.core.graph.common.Encoding.ENCODING_VERSION;
-import static com.vaticle.typedb.core.graph.common.Encoding.System.ENCODING_VERSION_KEY;
 import static com.vaticle.typedb.core.graph.common.Encoding.System.TRANSACTION_DUMMY_WRITE;
 
 public abstract class RocksStorage implements Storage {
@@ -210,7 +208,7 @@ public abstract class RocksStorage implements Storage {
         }
 
         @Override
-        public <T extends Key> FunctionalIterator.Sorted.Forwardable<KeyValue<T, ByteArray>> iterate(Key.Prefix<T> prefix) {
+        public <T extends Key> SortedIterator.Forwardable<KeyValue<T, ByteArray>> iterate(Key.Prefix<T> prefix) {
             RocksIterator<T> iterator = new RocksIterator<>(this, prefix);
             iterators.add(iterator);
             if (!isOpen()) throw TypeDBException.of(RESOURCE_CLOSED); //guard against close() race conditions
@@ -292,7 +290,7 @@ public abstract class RocksStorage implements Storage {
         }
 
         @Override
-        public <T extends Key> FunctionalIterator.Sorted.Forwardable<KeyValue<T, ByteArray>> iterate(Key.Prefix<T> prefix) {
+        public <T extends Key> SortedIterator.Forwardable<KeyValue<T, ByteArray>> iterate(Key.Prefix<T> prefix) {
             RocksIterator<T> iterator = new RocksIterator<>(this, prefix);
             iterators.add(iterator);
             if (!isOpen()) throw TypeDBException.of(RESOURCE_CLOSED); //guard against close() race conditions
