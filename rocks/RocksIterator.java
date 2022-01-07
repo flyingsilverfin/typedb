@@ -33,20 +33,21 @@ import java.util.function.Predicate;
 
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.RESOURCE_CLOSED;
 
-public final class RocksIterator<T extends Key> extends AbstractSortedIterator<KeyValue<T, ByteArray>, Order.Asc>
-        implements SortedIterator.Forwardable<KeyValue<T, ByteArray>, Order.Asc>, AutoCloseable {
+public abstract class RocksIterator<T extends Key, ORDER extends Order>
+        extends AbstractSortedIterator<KeyValue<T, ByteArray>, ORDER>
+        implements SortedIterator.Forwardable<KeyValue<T, ByteArray>, ORDER>, AutoCloseable {
 
-    private final Key.Prefix<T> prefix;
-    private final RocksStorage storage;
-    private State state;
+    final Key.Prefix<T> prefix;
+    final RocksStorage storage;
+    State state;
     private KeyValue<T, ByteArray> next;
     private boolean isClosed;
     org.rocksdb.RocksIterator internalRocksIterator;
 
-    private enum State {INIT, UNFETCHED, FORWARDED, FETCHED, COMPLETED;}
+    private enum State {INIT, OPENED, UNFETCHED, FORWARDED, FETCHED, COMPLETED;}
 
-    RocksIterator(RocksStorage storage, Key.Prefix<T> prefix) {
-        super(ASC);
+    private RocksIterator(RocksStorage storage, ORDER order, Key.Prefix<T> prefix) {
+        super(order);
         this.storage = storage;
         this.prefix = prefix;
         state = State.INIT;
@@ -90,40 +91,30 @@ public final class RocksIterator<T extends Key> extends AbstractSortedIterator<K
         }
     }
 
-    @Override
-    public synchronized void forward(KeyValue<T, ByteArray> target) {
-        if (state == State.COMPLETED) return;
-        else if (state == State.INIT) initialise(target.key());
-        else internalRocksIterator.seek(target.key().bytes().getBytes());
-        state = State.FORWARDED;
-    }
-
     private synchronized boolean initialiseAndCheck() {
         if (state != State.COMPLETED) {
-            initialise(prefix);
+            initialiseInternalIterator();
+            seekToFirst();
             return hasValidNext();
         } else {
             return false;
         }
     }
 
-    private synchronized void initialise(Key key) {
+    void initialiseInternalIterator() {
         assert state == State.INIT;
-        this.internalRocksIterator = storage.getInternalRocksIterator(key.partition(), usePrefixBloom());
-        this.internalRocksIterator.seek(key.bytes().getBytes());
-        state = State.FORWARDED;
+        this.internalRocksIterator = storage.getInternalRocksIterator(prefix.partition(), usePrefixBloom());
+        state = State.OPENED;
     }
 
-    private synchronized boolean fetchAndCheck() {
-        if (state != State.COMPLETED) {
-            internalRocksIterator.next();
-            return hasValidNext();
-        } else {
-            return false;
-        }
-    }
+    @Override
+    public abstract void forward(KeyValue<T, ByteArray> target);
 
-    private synchronized boolean hasValidNext() {
+    abstract void seekToFirst();
+
+    abstract boolean fetchAndCheck();
+
+    synchronized boolean hasValidNext() {
         ByteArray key;
         if (!internalRocksIterator.isValid() || !((key = ByteArray.of(internalRocksIterator.key())).hasPrefix(prefix.bytes()))) {
             recycle();
@@ -158,29 +149,92 @@ public final class RocksIterator<T extends Key> extends AbstractSortedIterator<K
     }
 
     @Override
-    public final SortedIterator.Forwardable<KeyValue<T, ByteArray>, Order.Asc> merge(
-            SortedIterator.Forwardable<KeyValue<T, ByteArray>, Order.Asc> iterator) {
-        return Iterators.Sorted.merge( this, iterator);
+    public final SortedIterator.Forwardable<KeyValue<T, ByteArray>, ORDER> merge(
+            SortedIterator.Forwardable<KeyValue<T, ByteArray>, ORDER> iterator) {
+        return Iterators.Sorted.merge(this, iterator);
     }
 
     @Override
-    public <V extends Comparable<? super V>, ORDER extends Order> SortedIterator.Forwardable<V, ORDER> mapSorted(
-            ORDER order, Function<KeyValue<T, ByteArray>, V> mappingFn, Function<V, KeyValue<T, ByteArray>> reverseMappingFn) {
+    public <V extends Comparable<? super V>, ORD extends Order> SortedIterator.Forwardable<V, ORD> mapSorted(
+            ORD order, Function<KeyValue<T, ByteArray>, V> mappingFn, Function<V, KeyValue<T, ByteArray>> reverseMappingFn) {
         return Iterators.Sorted.mapSorted(order, this, mappingFn, reverseMappingFn);
     }
 
     @Override
-    public SortedIterator.Forwardable<KeyValue<T, ByteArray>, Order.Asc> distinct() {
+    public SortedIterator.Forwardable<KeyValue<T, ByteArray>, ORDER> distinct() {
         return Iterators.Sorted.distinct(this);
     }
 
     @Override
-    public SortedIterator.Forwardable<KeyValue<T, ByteArray>, Order.Asc> filter(Predicate<KeyValue<T, ByteArray>> predicate) {
+    public SortedIterator.Forwardable<KeyValue<T, ByteArray>, ORDER> filter(Predicate<KeyValue<T, ByteArray>> predicate) {
         return Iterators.Sorted.filter(this, predicate);
     }
 
     @Override
-    public SortedIterator.Forwardable<KeyValue<T, ByteArray>, Order.Asc> onFinalise(Runnable finalise) {
+    public SortedIterator.Forwardable<KeyValue<T, ByteArray>, ORDER> onFinalise(Runnable finalise) {
         return Iterators.Sorted.onFinalise(this, finalise);
+    }
+
+    static class Ascending<T extends Key> extends RocksIterator<T, Order.Asc> {
+
+        Ascending(RocksStorage storage, Key.Prefix<T> prefix) {
+            super(storage, ASC, prefix);
+        }
+
+        synchronized void seekToFirst() {
+            assert state == State.OPENED;
+            this.internalRocksIterator.seek(prefix.bytes().getBytes());
+            state = State.FORWARDED;
+        }
+
+        @Override
+        synchronized boolean fetchAndCheck() {
+            if (state != State.COMPLETED) {
+                internalRocksIterator.next();
+                return hasValidNext();
+            } else {
+                return false;
+            }
+        }
+
+        @Override
+        public synchronized void forward(KeyValue<T, ByteArray> target) {
+            if (state == State.COMPLETED) return;
+            else if (state == State.INIT) initialiseInternalIterator();
+            internalRocksIterator.seek(target.key().bytes().getBytes());
+            state = State.FORWARDED;
+        }
+    }
+
+    static class Descending<T extends Key> extends RocksIterator<T, Order.Desc> {
+
+        Descending(RocksStorage storage, Key.Prefix<T> prefix) {
+            super(storage, DESC, prefix);
+        }
+
+        synchronized void seekToFirst() {
+            assert state == State.OPENED;
+            T lastKey = storage.getLastKey(prefix);
+            this.internalRocksIterator.seek(lastKey.bytes().getBytes());
+            state = State.FORWARDED;
+        }
+
+        @Override
+        synchronized boolean fetchAndCheck() {
+            if (state != State.COMPLETED) {
+                internalRocksIterator.prev();
+                return hasValidNext();
+            } else {
+                return false;
+            }
+        }
+
+        @Override
+        public synchronized void forward(KeyValue<T, ByteArray> target) {
+            if (state == State.COMPLETED) return;
+            else if (state == State.INIT) initialiseInternalIterator();
+            internalRocksIterator.seekForPrev(target.key().bytes().getBytes());
+            state = State.FORWARDED;
+        }
     }
 }

@@ -65,7 +65,7 @@ public interface SortedIterator<T extends Comparable<? super T>, ORDER extends S
             }
         }
 
-        static class Desc extends Order {
+        public static class Desc extends Order {
 
             @Override
             <T extends Comparable<? super T>> int compare(T last, T next) {
