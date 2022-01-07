@@ -24,6 +24,7 @@ import com.vaticle.typedb.core.common.collection.KeyValue;
 import com.vaticle.typedb.core.common.exception.ErrorMessage;
 import com.vaticle.typedb.core.common.exception.TypeDBException;
 import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator;
+import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Order;
 import com.vaticle.typedb.core.graph.common.KeyGenerator;
 import com.vaticle.typedb.core.graph.common.Storage;
 import com.vaticle.typedb.core.graph.common.Storage.Key.Partition;
@@ -55,8 +56,10 @@ import java.util.concurrent.locks.StampedLock;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.ILLEGAL_OPERATION;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.ILLEGAL_STATE;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.RESOURCE_CLOSED;
+import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.UNIMPLEMENTED;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Transaction.TRANSACTION_DATA_READ_VIOLATION;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Transaction.TRANSACTION_SCHEMA_READ_VIOLATION;
+import static com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.ASC;
 import static com.vaticle.typedb.core.graph.common.Encoding.System.TRANSACTION_DUMMY_WRITE;
 
 public abstract class RocksStorage implements Storage {
@@ -208,11 +211,20 @@ public abstract class RocksStorage implements Storage {
         }
 
         @Override
-        public <T extends Key> SortedIterator.Forwardable<KeyValue<T, ByteArray>> iterate(Key.Prefix<T> prefix) {
+        public <T extends Key> SortedIterator.Forwardable<KeyValue<T, ByteArray>, Order.Asc> iterate(Key.Prefix<T> prefix) {
             RocksIterator<T> iterator = new RocksIterator<>(this, prefix);
             iterators.add(iterator);
             if (!isOpen()) throw TypeDBException.of(RESOURCE_CLOSED); //guard against close() race conditions
             return iterator.onFinalise(iterator::close);
+        }
+
+        @Override
+        public <T extends Key, ORDER extends Order> SortedIterator.Forwardable<KeyValue<T, ByteArray>, ORDER> iterate(Key.Prefix<T> prefix, ORDER order) {
+//            RocksIterator<T> iterator = new RocksIterator<>(this, prefix);
+//            iterators.add(iterator);
+//            if (!isOpen()) throw TypeDBException.of(RESOURCE_CLOSED); //guard against close() race conditions
+//            return iterator.onFinalise(iterator::close);
+            throw TypeDBException.of(UNIMPLEMENTED);
         }
     }
 
@@ -290,11 +302,22 @@ public abstract class RocksStorage implements Storage {
         }
 
         @Override
-        public <T extends Key> SortedIterator.Forwardable<KeyValue<T, ByteArray>> iterate(Key.Prefix<T> prefix) {
+        public <T extends Key> SortedIterator.Forwardable<KeyValue<T, ByteArray>, Order.Asc> iterate(Key.Prefix<T> prefix) {
+//            return iterate(prefix, ASC);
             RocksIterator<T> iterator = new RocksIterator<>(this, prefix);
             iterators.add(iterator);
             if (!isOpen()) throw TypeDBException.of(RESOURCE_CLOSED); //guard against close() race conditions
             return iterator;
+        }
+
+        @Override
+        public <T extends Key, ORDER extends Order>
+        SortedIterator.Forwardable<KeyValue<T, ByteArray>, ORDER> iterate(Key.Prefix<T> prefix, ORDER order) {
+//            RocksIterator<T> iterator = new RocksIterator<>(this, prefix);
+//            iterators.add(iterator);
+//            if (!isOpen()) throw TypeDBException.of(RESOURCE_CLOSED); //guard against close() race conditions
+//            return iterator;
+            throw TypeDBException.of(UNIMPLEMENTED);
         }
 
         @Override

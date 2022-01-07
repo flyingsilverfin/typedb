@@ -37,6 +37,7 @@ public class FilteredSortedIterator<T extends Comparable<? super T>, ORDER exten
     T last;
 
     public FilteredSortedIterator(ITER iterator, Predicate<T> predicate) {
+        super(iterator.order());
         this.iterator = iterator;
         this.predicate = predicate;
     }
@@ -93,7 +94,7 @@ public class FilteredSortedIterator<T extends Comparable<? super T>, ORDER exten
         @Override
         public <U extends Comparable<? super U>, ORD extends Order> SortedIterator.Forwardable<U, ORD> mapSorted(
                 ORD order, Function<T, U> mappingFn, Function<U, T> reverseMappingFn) {
-            return Iterators.Sorted.mapSorted(mappingFn, this, reverseMappingFn);
+            return Iterators.Sorted.mapSorted(order, this, mappingFn,  reverseMappingFn);
         }
 
         @Override

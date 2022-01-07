@@ -30,6 +30,7 @@ import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Forwardable
 import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Order;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
@@ -163,8 +164,8 @@ public class Iterators {
         }
 
         @SafeVarargs
-        public static <T extends Comparable<? super T>, ORDER extends Order> Forwardable<T, ORDER> merge(ORDER order, Forwardable<T, ORDER>... iterators) {
-            return new MergeMappedIterator.Forwardable<>(order, iterate(iterators), e -> e);
+        public static <T extends Comparable<? super T>, ORDER extends Order> Forwardable<T, ORDER> merge(Forwardable<T, ORDER> iterator, Forwardable<T, ORDER>... iterators) {
+            return new MergeMappedIterator.Forwardable<>(iterator.order(), iterate(list(list(iterators), iterator)), e -> e);
         }
 
         public static <T extends Comparable<? super T>, ORDER extends Order> Forwardable<T, ORDER> merge(ORDER order, FunctionalIterator<Forwardable<T, ORDER>> iterators) {

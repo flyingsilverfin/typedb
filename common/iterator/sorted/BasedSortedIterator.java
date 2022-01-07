@@ -81,7 +81,7 @@ public class BasedSortedIterator<T extends Comparable<? super T>, ORDER extends 
 
     @Override
     public final Forwardable<T, ORDER> merge(Forwardable<T, ORDER> iterator) {
-        return Iterators.Sorted.merge(order, this, iterator);
+        return Iterators.Sorted.merge( this, iterator);
     }
 
     @Override

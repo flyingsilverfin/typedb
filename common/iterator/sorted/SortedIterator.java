@@ -74,8 +74,8 @@ public interface SortedIterator<T extends Comparable<? super T>, ORDER extends S
         @Override
         Forwardable<T, ORDER> filter(Predicate<T> predicate);
 
-        <U extends Comparable<? super U>, ORD extends Order> SortedIterator<U, ORD> mapSorted(ORD order,
-                                                                                              Function<T, U> mappingFn,
-                                                                                              Function<U, T> reverseMappingFn);
+        <U extends Comparable<? super U>, ORD extends Order> SortedIterator.Forwardable<U, ORD> mapSorted(ORD order,
+                                                                                                          Function<T, U> mappingFn,
+                                                                                                          Function<U, T> reverseMappingFn);
     }
 }

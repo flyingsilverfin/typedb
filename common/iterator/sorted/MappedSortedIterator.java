@@ -134,7 +134,7 @@ public class MappedSortedIterator<
 
         @Override
         public final SortedIterator.Forwardable<U, ORDER> merge(SortedIterator.Forwardable<U, ORDER> iterator) {
-            return Iterators.Sorted.merge(order, this, iterator);
+            return Iterators.Sorted.merge(this, iterator);
         }
 
         @Override

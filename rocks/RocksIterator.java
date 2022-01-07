@@ -160,7 +160,7 @@ public final class RocksIterator<T extends Key> extends AbstractSortedIterator<K
     @Override
     public final SortedIterator.Forwardable<KeyValue<T, ByteArray>, Order.Asc> merge(
             SortedIterator.Forwardable<KeyValue<T, ByteArray>, Order.Asc> iterator) {
-        return Iterators.Sorted.merge(ASC, this, iterator);
+        return Iterators.Sorted.merge( this, iterator);
     }
 
     @Override

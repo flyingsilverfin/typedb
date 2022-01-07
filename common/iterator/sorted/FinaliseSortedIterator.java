@@ -35,6 +35,7 @@ public class FinaliseSortedIterator<T extends Comparable<? super T>, ORDER exten
     T last;
 
     FinaliseSortedIterator(ITER iterator, Runnable function) {
+        super(iterator.order());
         this.iterator = iterator;
         this.function = function;
         this.last = null;
@@ -88,7 +89,7 @@ public class FinaliseSortedIterator<T extends Comparable<? super T>, ORDER exten
         @Override
         public <U extends Comparable<? super U>, ORD extends Order> SortedIterator.Forwardable<U, ORD> mapSorted(
                 ORD order, Function<T, U> mappingFn, Function<U, T> reverseMappingFn) {
-            return Iterators.Sorted.mapSorted(mappingFn, this, reverseMappingFn);
+            return Iterators.Sorted.mapSorted(order, this, mappingFn, reverseMappingFn);
         }
 
         @Override

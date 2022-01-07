@@ -35,6 +35,7 @@ public class DistinctSortedIterator<T extends Comparable<? super T>, ORDER exten
     T last;
 
     public DistinctSortedIterator(ITER iterator) {
+        super(iterator.order());
         this.iterator = iterator;
         last = null;
     }
@@ -82,7 +83,7 @@ public class DistinctSortedIterator<T extends Comparable<? super T>, ORDER exten
 
         @Override
         public final SortedIterator.Forwardable<T, ORDER> merge(SortedIterator.Forwardable<T, ORDER> iterator) {
-            return Iterators.Sorted.merge(this, iterator);
+            return Iterators.Sorted.merge( this, iterator);
         }
 
         @Override

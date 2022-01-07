@@ -25,6 +25,7 @@ import com.vaticle.typedb.core.common.iterator.FunctionalIterator;
 import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator;
 import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Forwardable;
 import com.vaticle.typedb.core.common.iterator.Iterators;
+import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Order;
 import com.vaticle.typedb.core.common.parameters.Label;
 import com.vaticle.typedb.core.graph.GraphManager;
 import com.vaticle.typedb.core.graph.adjacency.ThingAdjacency;
@@ -49,6 +50,7 @@ import java.util.Set;
 
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.ILLEGAL_STATE;
 import static com.vaticle.typedb.core.common.iterator.Iterators.iterate;
+import static com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.ASC;
 import static com.vaticle.typedb.core.graph.common.Encoding.Edge.Thing.Optimised.ROLEPLAYER;
 
 public class RelationIterator extends AbstractFunctionalIterator<VertexMap> {
@@ -56,7 +58,7 @@ public class RelationIterator extends AbstractFunctionalIterator<VertexMap> {
     private final GraphManager graphMgr;
     private final RelationTraversal traversal;
     private final List<StructureEdge<?, ?>> edges;
-    private final Map<Integer, Forwardable<ThingVertex>> iterators;
+    private final Map<Integer, Forwardable<ThingVertex, Order.Asc>> iterators;
     private final Map<Retrievable, Vertex<?, ?>> answer;
     private final Set<Label> relationTypes;
     private final Scoped scoped;
@@ -130,7 +132,7 @@ public class RelationIterator extends AbstractFunctionalIterator<VertexMap> {
 
     private void proposeFirst() {
         assert state == State.INIT && relation == null && proposer == 0;
-        SortedIterator<ThingVertex> relationIterator = getIterator(proposer);
+        SortedIterator<ThingVertex, Order.Asc> relationIterator = getIterator(proposer);
         if (relationIterator.hasNext()) {
             relation = relationIterator.next();
             state = State.PROPOSED;
@@ -147,7 +149,7 @@ public class RelationIterator extends AbstractFunctionalIterator<VertexMap> {
 
     private void proposeNext() {
         assert state == State.EMPTY;
-        SortedIterator<ThingVertex> relationIterator = getIterator(proposer);
+        SortedIterator<ThingVertex, Order.Asc> relationIterator = getIterator(proposer);
         scoped.clear(); // relationIterator requires clearing of scoped roles as it is stateful
         while (relationIterator.hasNext()) {
             ThingVertex newRelation = relationIterator.next();
@@ -176,7 +178,7 @@ public class RelationIterator extends AbstractFunctionalIterator<VertexMap> {
 
     private void verifyProposed(int pos) {
         int equality;
-        Forwardable<ThingVertex> relationIterator = getIterator(pos);
+        Forwardable<ThingVertex, Order.Asc> relationIterator = getIterator(pos);
         do {
             if (!relationIterator.hasNext()) {
                 state = State.COMPLETED;
@@ -195,25 +197,32 @@ public class RelationIterator extends AbstractFunctionalIterator<VertexMap> {
         state = State.PROPOSED;
     }
 
-    private Forwardable<ThingVertex> getIterator(int pos) {
+    private Forwardable<ThingVertex, Order.Asc> getIterator(int pos) {
         assert edges.get(pos).to().id().isRetrievable();
         return iterators.computeIfAbsent(pos, this::createIterator);
     }
 
-    private Forwardable<ThingVertex> createIterator(int pos) {
+    private Forwardable<ThingVertex, Order.Asc> createIterator(int pos) {
         StructureEdge<?, ?> edge = edges.get(pos);
         ThingVertex player = answer.get(edge.to().id().asVariable().asRetrievable()).asThing();
-        return Iterators.Sorted.merge(iterate(edge.asNative().asRolePlayer().types()).map(roleLabel -> {
+        return Iterators.Sorted.merge(ASC, iterate(edge.asNative().asRolePlayer().types()).map(roleLabel -> {
             TypeVertex roleVertex = graphMgr.schema().getType(roleLabel);
-            return player.ins().edge(ROLEPLAYER, roleVertex).get().filter(
+            Forwardable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> relRoles = player.ins().edge(ROLEPLAYER, roleVertex).get().filter(
                     directedEdge -> relationTypes.contains(directedEdge.get().from().type().properLabel())
             ).mapSorted(
-                    relRole -> ThingAdjacency.DirectedEdge.in(new ThingEdgeImpl.Target(ROLEPLAYER, relRole.key(), player, roleVertex)), dirEdge -> new KeyValue<>(dirEdge.get().from(), dirEdge.get().optimised().get())
+                    ASC,
+                    dirEdge -> new KeyValue<>(dirEdge.get().from(), dirEdge.get().optimised().get()),
+                    relRole -> ThingAdjacency.DirectedEdge.in(new ThingEdgeImpl.Target(ROLEPLAYER, relRole.key(), player, roleVertex))
             );
-        })).filter(relRole -> !scoped.contains(relRole.value())).mapSorted(relation -> new KeyValue<>(relation, null), relRole -> {
-            scoped.record(pos, relRole.value());
-            return relRole.key();
-        });
+            return relRoles;
+        })).filter(relRole -> !scoped.contains(relRole.value())).mapSorted(
+                ASC,
+                relRole -> {
+                    scoped.record(pos, relRole.value());
+                    return relRole.key();
+                },
+                relation -> new KeyValue<>(relation, null)
+        );
     }
 
     @Override
