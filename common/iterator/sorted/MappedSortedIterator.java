@@ -89,7 +89,7 @@ public class MappedSortedIterator<
     @Override
     public U next() {
         if (!hasNext()) throw new NoSuchElementException();
-        assert last == null || next.compareTo(last) >= 0 : "Sorted mapped iterator produces out of order values";
+        assert last == null || order.isValidNext(last, next) : "Sorted mapped iterator produces out of order values";
         last = next;
         state = State.EMPTY;
         return next;
@@ -111,7 +111,8 @@ public class MappedSortedIterator<
          * @param mappingFn        - The forward mapping function must return a new iterator that is sorted with respect to U's comparator.
          * @param reverseMappingFn - The reverse mapping function must be the able to invert the forward mapping function
          */
-        public Forwardable(ORDER order, SortedIterator.Forwardable<T, ?> source, Function<T, U> mappingFn, Function<U, T> reverseMappingFn) {
+        public Forwardable(ORDER order, SortedIterator.Forwardable<T, ?> source,
+                           Function<T, U> mappingFn, Function<U, T> reverseMappingFn) {
             super(order, source, mappingFn);
             this.reverseMappingFn = reverseMappingFn;
         }
@@ -126,7 +127,7 @@ public class MappedSortedIterator<
 
         @Override
         public void forward(U target) {
-            if (last != null && target.compareTo(last) < 0) throw TypeDBException.of(ILLEGAL_ARGUMENT);
+            if (last != null && !order.isValidNext(last, target)) throw TypeDBException.of(ILLEGAL_ARGUMENT);
             T reverseMapped = reverseMappingFn.apply(target);
             source.forward(reverseMapped);
             state = State.EMPTY;

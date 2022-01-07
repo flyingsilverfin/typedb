@@ -42,7 +42,7 @@ public class BasedSortedIterator<T extends Comparable<? super T>, ORDER extends 
     public BasedSortedIterator(ORDER order, NavigableSet<T> source) {
         super(order);
         this.source = source;
-        this.iterator = source.iterator();
+        this.iterator = order.iterateOrdered(source);
         this.last = null;
     }
 
@@ -74,8 +74,8 @@ public class BasedSortedIterator<T extends Comparable<? super T>, ORDER extends 
 
     @Override
     public void forward(T target) {
-        if (last != null && target.compareTo(last) < 0) throw TypeDBException.of(ILLEGAL_ARGUMENT);
-        this.iterator = source.tailSet(target).iterator();
+        if (last != null && !order.isValidNext(last, target)) throw TypeDBException.of(ILLEGAL_ARGUMENT);
+        this.iterator = order.iterateOrdered(source, target);
         this.next = null;
     }
 

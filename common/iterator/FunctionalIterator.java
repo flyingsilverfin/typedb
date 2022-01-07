@@ -25,8 +25,10 @@ import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Order;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
@@ -93,4 +95,12 @@ public interface FunctionalIterator<T> extends Iterator<T> {
 
     void recycle();
 
+    @Override
+    default void forEachRemaining(Consumer<? super T> action) {
+        Objects.requireNonNull(action);
+        while (hasNext()) {
+            action.accept(next());
+        }
+        recycle();
+    }
 }
