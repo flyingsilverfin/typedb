@@ -32,7 +32,7 @@ import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.ILL
 
 public class BasedSortedIterator<T extends Comparable<? super T>, ORDER extends Order>
         extends AbstractSortedIterator<T, ORDER>
-        implements SortedIterator.Forwardable<T, ORDER> {
+        implements SortedIterator.Seekable<T, ORDER> {
 
     private final NavigableSet<T> source;
     private Iterator<T> iterator;
@@ -73,30 +73,30 @@ public class BasedSortedIterator<T extends Comparable<? super T>, ORDER extends 
     }
 
     @Override
-    public void forward(T target) {
+    public void seek(T target) {
         if (last != null && !order.isValidNext(last, target)) throw TypeDBException.of(ILLEGAL_ARGUMENT);
         this.iterator = order.iterateOrdered(source, target);
         this.next = null;
     }
 
     @Override
-    public final Forwardable<T, ORDER> merge(Forwardable<T, ORDER> iterator) {
+    public final Seekable<T, ORDER> merge(Seekable<T, ORDER> iterator) {
         return Iterators.Sorted.merge( this, iterator);
     }
 
     @Override
-    public <U extends Comparable<? super U>, ORD extends Order> Forwardable<U, ORD> mapSorted(
+    public <U extends Comparable<? super U>, ORD extends Order> Seekable<U, ORD> mapSorted(
             ORD order, Function<T, U> mappingFn, Function<U, T> reverseMappingFn) {
         return Iterators.Sorted.mapSorted(order, this, mappingFn, reverseMappingFn);
     }
 
     @Override
-    public Forwardable<T, ORDER> distinct() {
+    public Seekable<T, ORDER> distinct() {
         return Iterators.Sorted.distinct(this);
     }
 
     @Override
-    public Forwardable<T, ORDER> filter(Predicate<T> predicate) {
+    public Seekable<T, ORDER> filter(Predicate<T> predicate) {
         return Iterators.Sorted.filter(this, predicate);
     }
 

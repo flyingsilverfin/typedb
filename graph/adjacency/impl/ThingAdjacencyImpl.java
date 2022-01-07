@@ -44,7 +44,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
-import java.util.function.Function;
 import java.util.function.Predicate;
 
 import static com.vaticle.typedb.core.common.iterator.Iterators.Sorted.emptySorted;
@@ -104,10 +103,10 @@ public abstract class ThingAdjacencyImpl implements ThingAdjacency {
         private final ThingAdjacencyImpl adjacency;
         private final Encoding.Edge.Thing encoding;
         private final TypeVertex optimisedType;
-        private final SortedIterator.Forwardable<DirectedEdge, Order.Asc> directedEdges;
+        private final SortedIterator.Seekable<DirectedEdge, Order.Asc> directedEdges;
 
         SortedIteratorBuilderImpl(ThingAdjacencyImpl adjacency, Encoding.Edge.Thing encoding, @Nullable TypeVertex optimisedType,
-                                  SortedIterator.Forwardable<DirectedEdge, Order.Asc> directedEdges) {
+                                  SortedIterator.Seekable<DirectedEdge, Order.Asc> directedEdges) {
             this.adjacency = adjacency;
             this.encoding = encoding;
             this.optimisedType = optimisedType;
@@ -139,7 +138,7 @@ public abstract class ThingAdjacencyImpl implements ThingAdjacency {
         }
 
         @Override
-        public SortedIterator.Forwardable<DirectedEdge, Order.Asc> get() {
+        public SortedIterator.Seekable<DirectedEdge, Order.Asc> get() {
             return directedEdges;
         }
     }
@@ -158,7 +157,7 @@ public abstract class ThingAdjacencyImpl implements ThingAdjacency {
             return owner;
         }
 
-        private SortedIterator.Forwardable<DirectedEdge, Order.Asc> edgeIteratorSorted(
+        private SortedIterator.Seekable<DirectedEdge, Order.Asc> edgeIteratorSorted(
                 Encoding.Edge.Thing encoding, IID... lookahead) {
             Key.Prefix<EdgeIID.Thing> prefix = EdgeIID.Thing.prefix(owner.iid(), infixIID(encoding, lookahead));
             return owner.graph().storage().iterate(prefix, ASC)
@@ -247,7 +246,7 @@ public abstract class ThingAdjacencyImpl implements ThingAdjacency {
             }
         }
 
-        SortedIterator.Forwardable<DirectedEdge, Order.Asc> bufferedEdgeIterator(Encoding.Edge.Thing encoding, IID[] lookahead) {
+        SortedIterator.Seekable<DirectedEdge, Order.Asc> bufferedEdgeIterator(Encoding.Edge.Thing encoding, IID[] lookahead) {
             ConcurrentNavigableMap<DirectedEdge, ThingEdge> result;
             InfixIID.Thing infixIID = infixIID(encoding, lookahead);
             if (lookahead.length == encoding.lookAhead()) {
@@ -443,17 +442,17 @@ public abstract class ThingAdjacencyImpl implements ThingAdjacency {
                 return link(bufferedIterator, storageIterator).distinct();
             }
 
-            private SortedIterator.Forwardable<DirectedEdge, Order.Asc> edgeIteratorSorted(
+            private SortedIterator.Seekable<DirectedEdge, Order.Asc> edgeIteratorSorted(
                     Encoding.Edge.Thing encoding, IID... lookahead) {
                 assert encoding != ROLEPLAYER || lookahead.length >= 1;
                 Key.Prefix<EdgeIID.Thing> prefix = EdgeIID.Thing.prefix(owner.iid(), infixIID(encoding, lookahead));
-                SortedIterator.Forwardable<DirectedEdge, Order.Asc> storageIter = owner.graph().storage().iterate(prefix, ASC)
+                SortedIterator.Seekable<DirectedEdge, Order.Asc> storageIter = owner.graph().storage().iterate(prefix, ASC)
                         .mapSorted(
                                 ASC,
                                 kv -> asDirected(cache(newPersistedEdge(EdgeIID.Thing.of(kv.key().bytes())))),
                                 directedEdge -> KeyValue.of(directedEdge.iid(), ByteArray.empty())
                         );
-                SortedIterator.Forwardable<DirectedEdge, Order.Asc> bufferedIter = bufferedEdgeIterator(encoding, lookahead);
+                SortedIterator.Seekable<DirectedEdge, Order.Asc> bufferedIter = bufferedEdgeIterator(encoding, lookahead);
                 return bufferedIter.merge(storageIter).distinct();
             }
 

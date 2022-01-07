@@ -101,21 +101,20 @@ public interface SortedIterator<T extends Comparable<? super T>, ORDER extends S
 
     <U extends Comparable<? super U>, ORD extends Order> SortedIterator<U, ORD> mapSorted(ORD order, Function<T, U> mappingFn);
 
-    // TODO rename to Seekable
-    interface Forwardable<T extends Comparable<? super T>, ORDER extends Order> extends SortedIterator<T, ORDER> {
+    interface Seekable<T extends Comparable<? super T>, ORDER extends Order> extends SortedIterator<T, ORDER> {
 
-        void forward(T target);
+        void seek(T target);
 
-        Forwardable<T, ORDER> merge(Forwardable<T, ORDER> iterator);
-
-        @Override
-        Forwardable<T, ORDER> distinct();
+        Seekable<T, ORDER> merge(Seekable<T, ORDER> iterator);
 
         @Override
-        Forwardable<T, ORDER> filter(Predicate<T> predicate);
+        Seekable<T, ORDER> distinct();
 
-        <U extends Comparable<? super U>, ORD extends Order> SortedIterator.Forwardable<U, ORD> mapSorted(ORD order,
-                                                                                                          Function<T, U> mappingFn,
-                                                                                                          Function<U, T> reverseMappingFn);
+        @Override
+        Seekable<T, ORDER> filter(Predicate<T> predicate);
+
+        <U extends Comparable<? super U>, ORD extends Order> Seekable<U, ORD> mapSorted(ORD order,
+                                                                                        Function<T, U> mappingFn,
+                                                                                        Function<U, T> reverseMappingFn);
     }
 }

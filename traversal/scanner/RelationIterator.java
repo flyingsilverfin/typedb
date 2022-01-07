@@ -23,7 +23,7 @@ import com.vaticle.typedb.core.common.exception.TypeDBException;
 import com.vaticle.typedb.core.common.iterator.AbstractFunctionalIterator;
 import com.vaticle.typedb.core.common.iterator.FunctionalIterator;
 import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator;
-import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Forwardable;
+import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Seekable;
 import com.vaticle.typedb.core.common.iterator.Iterators;
 import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Order;
 import com.vaticle.typedb.core.common.parameters.Label;
@@ -58,7 +58,7 @@ public class RelationIterator extends AbstractFunctionalIterator<VertexMap> {
     private final GraphManager graphMgr;
     private final RelationTraversal traversal;
     private final List<StructureEdge<?, ?>> edges;
-    private final Map<Integer, Forwardable<ThingVertex, Order.Asc>> iterators;
+    private final Map<Integer, Seekable<ThingVertex, Order.Asc>> iterators;
     private final Map<Retrievable, Vertex<?, ?>> answer;
     private final Set<Label> relationTypes;
     private final Scoped scoped;
@@ -178,14 +178,14 @@ public class RelationIterator extends AbstractFunctionalIterator<VertexMap> {
 
     private void verifyProposed(int pos) {
         int equality;
-        Forwardable<ThingVertex, Order.Asc> relationIterator = getIterator(pos);
+        Seekable<ThingVertex, Order.Asc> relationIterator = getIterator(pos);
         do {
             if (!relationIterator.hasNext()) {
                 state = State.COMPLETED;
                 return;
             }
             equality = relationIterator.peek().compareTo(this.relation);
-            if (equality < 0) relationIterator.forward(this.relation);
+            if (equality < 0) relationIterator.seek(this.relation);
         } while (equality < 0);
         if (equality > 0) state = State.REJECTED;
     }
@@ -197,17 +197,17 @@ public class RelationIterator extends AbstractFunctionalIterator<VertexMap> {
         state = State.PROPOSED;
     }
 
-    private Forwardable<ThingVertex, Order.Asc> getIterator(int pos) {
+    private Seekable<ThingVertex, Order.Asc> getIterator(int pos) {
         assert edges.get(pos).to().id().isRetrievable();
         return iterators.computeIfAbsent(pos, this::createIterator);
     }
 
-    private Forwardable<ThingVertex, Order.Asc> createIterator(int pos) {
+    private Seekable<ThingVertex, Order.Asc> createIterator(int pos) {
         StructureEdge<?, ?> edge = edges.get(pos);
         ThingVertex player = answer.get(edge.to().id().asVariable().asRetrievable()).asThing();
         return Iterators.Sorted.merge(ASC, iterate(edge.asNative().asRolePlayer().types()).map(roleLabel -> {
             TypeVertex roleVertex = graphMgr.schema().getType(roleLabel);
-            Forwardable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> relRoles = player.ins().edge(ROLEPLAYER, roleVertex).get().filter(
+            Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> relRoles = player.ins().edge(ROLEPLAYER, roleVertex).get().filter(
                     directedEdge -> relationTypes.contains(directedEdge.get().from().type().properLabel())
             ).mapSorted(
                     ASC,

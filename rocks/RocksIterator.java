@@ -35,7 +35,7 @@ import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.RES
 
 public abstract class RocksIterator<T extends Key, ORDER extends Order>
         extends AbstractSortedIterator<KeyValue<T, ByteArray>, ORDER>
-        implements SortedIterator.Forwardable<KeyValue<T, ByteArray>, ORDER>, AutoCloseable {
+        implements SortedIterator.Seekable<KeyValue<T, ByteArray>, ORDER>, AutoCloseable {
 
     final Key.Prefix<T> prefix;
     final RocksStorage storage;
@@ -108,7 +108,7 @@ public abstract class RocksIterator<T extends Key, ORDER extends Order>
     }
 
     @Override
-    public abstract void forward(KeyValue<T, ByteArray> target);
+    public abstract void seek(KeyValue<T, ByteArray> target);
 
     abstract void seekToFirst();
 
@@ -149,29 +149,29 @@ public abstract class RocksIterator<T extends Key, ORDER extends Order>
     }
 
     @Override
-    public final SortedIterator.Forwardable<KeyValue<T, ByteArray>, ORDER> merge(
-            SortedIterator.Forwardable<KeyValue<T, ByteArray>, ORDER> iterator) {
+    public final Seekable<KeyValue<T, ByteArray>, ORDER> merge(
+            Seekable<KeyValue<T, ByteArray>, ORDER> iterator) {
         return Iterators.Sorted.merge(this, iterator);
     }
 
     @Override
-    public <V extends Comparable<? super V>, ORD extends Order> SortedIterator.Forwardable<V, ORD> mapSorted(
+    public <V extends Comparable<? super V>, ORD extends Order> Seekable<V, ORD> mapSorted(
             ORD order, Function<KeyValue<T, ByteArray>, V> mappingFn, Function<V, KeyValue<T, ByteArray>> reverseMappingFn) {
         return Iterators.Sorted.mapSorted(order, this, mappingFn, reverseMappingFn);
     }
 
     @Override
-    public SortedIterator.Forwardable<KeyValue<T, ByteArray>, ORDER> distinct() {
+    public Seekable<KeyValue<T, ByteArray>, ORDER> distinct() {
         return Iterators.Sorted.distinct(this);
     }
 
     @Override
-    public SortedIterator.Forwardable<KeyValue<T, ByteArray>, ORDER> filter(Predicate<KeyValue<T, ByteArray>> predicate) {
+    public Seekable<KeyValue<T, ByteArray>, ORDER> filter(Predicate<KeyValue<T, ByteArray>> predicate) {
         return Iterators.Sorted.filter(this, predicate);
     }
 
     @Override
-    public SortedIterator.Forwardable<KeyValue<T, ByteArray>, ORDER> onFinalise(Runnable finalise) {
+    public Seekable<KeyValue<T, ByteArray>, ORDER> onFinalise(Runnable finalise) {
         return Iterators.Sorted.onFinalise(this, finalise);
     }
 
@@ -198,7 +198,7 @@ public abstract class RocksIterator<T extends Key, ORDER extends Order>
         }
 
         @Override
-        public synchronized void forward(KeyValue<T, ByteArray> target) {
+        public synchronized void seek(KeyValue<T, ByteArray> target) {
             if (state == State.COMPLETED) return;
             else if (state == State.INIT) initialiseInternalIterator();
             internalRocksIterator.seek(target.key().bytes().getBytes());
@@ -230,7 +230,7 @@ public abstract class RocksIterator<T extends Key, ORDER extends Order>
         }
 
         @Override
-        public synchronized void forward(KeyValue<T, ByteArray> target) {
+        public synchronized void seek(KeyValue<T, ByteArray> target) {
             if (state == State.COMPLETED) return;
             else if (state == State.INIT) initialiseInternalIterator();
             internalRocksIterator.seekForPrev(target.key().bytes().getBytes());

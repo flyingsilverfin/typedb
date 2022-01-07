@@ -81,7 +81,7 @@ public interface ThingAdjacency {
 
         SortedIterator<ThingVertex, Order.Asc> to();
 
-        SortedIterator.Forwardable<DirectedEdge, Order.Asc> get();
+        SortedIterator.Seekable<DirectedEdge, Order.Asc> get();
     }
 
     interface Write extends ThingAdjacency {

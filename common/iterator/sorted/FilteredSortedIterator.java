@@ -71,39 +71,39 @@ public class FilteredSortedIterator<T extends Comparable<? super T>, ORDER exten
         iterator.recycle();
     }
 
-    public static class Forwardable<T extends Comparable<? super T>, ORDER extends Order>
-            extends FilteredSortedIterator<T, ORDER, SortedIterator.Forwardable<T, ORDER>>
-            implements SortedIterator.Forwardable<T, ORDER> {
+    public static class Seekable<T extends Comparable<? super T>, ORDER extends Order>
+            extends FilteredSortedIterator<T, ORDER, SortedIterator.Seekable<T, ORDER>>
+            implements SortedIterator.Seekable<T, ORDER> {
 
-        public Forwardable(SortedIterator.Forwardable<T, ORDER> source, Predicate<T> predicate) {
+        public Seekable(SortedIterator.Seekable<T, ORDER> source, Predicate<T> predicate) {
             super(source, predicate);
         }
 
         @Override
-        public void forward(T target) {
+        public void seek(T target) {
             if (last != null && !order.isValidNext(last, target)) throw TypeDBException.of(ILLEGAL_ARGUMENT);
-            iterator.forward(target);
+            iterator.seek(target);
             next = null;
         }
 
         @Override
-        public final SortedIterator.Forwardable<T, ORDER> merge(SortedIterator.Forwardable<T, ORDER> iterator) {
+        public final SortedIterator.Seekable<T, ORDER> merge(SortedIterator.Seekable<T, ORDER> iterator) {
             return Iterators.Sorted.merge(this, iterator);
         }
 
         @Override
-        public <U extends Comparable<? super U>, ORD extends Order> SortedIterator.Forwardable<U, ORD> mapSorted(
+        public <U extends Comparable<? super U>, ORD extends Order> SortedIterator.Seekable<U, ORD> mapSorted(
                 ORD order, Function<T, U> mappingFn, Function<U, T> reverseMappingFn) {
             return Iterators.Sorted.mapSorted(order, this, mappingFn,  reverseMappingFn);
         }
 
         @Override
-        public SortedIterator.Forwardable<T, ORDER> distinct() {
+        public SortedIterator.Seekable<T, ORDER> distinct() {
             return Iterators.Sorted.distinct(this);
         }
 
         @Override
-        public SortedIterator.Forwardable<T, ORDER> filter(Predicate<T> predicate) {
+        public SortedIterator.Seekable<T, ORDER> filter(Predicate<T> predicate) {
             return Iterators.Sorted.filter(this, predicate);
         }
     }

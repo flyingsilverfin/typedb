@@ -44,9 +44,9 @@ public interface Storage {
 
     void deleteUntracked(Key key);
 
-    <T extends Key> SortedIterator.Forwardable<KeyValue<T, ByteArray>, Order.Asc> iterate(Key.Prefix<T> key);
+    <T extends Key> SortedIterator.Seekable<KeyValue<T, ByteArray>, Order.Asc> iterate(Key.Prefix<T> key);
 
-    <T extends Key, ORDER extends Order> SortedIterator.Forwardable<KeyValue<T, ByteArray>, ORDER> iterate(Key.Prefix<T> key, ORDER order);
+    <T extends Key, ORDER extends Order> SortedIterator.Seekable<KeyValue<T, ByteArray>, ORDER> iterate(Key.Prefix<T> key, ORDER order);
 
     void putUntracked(Key key);
 
