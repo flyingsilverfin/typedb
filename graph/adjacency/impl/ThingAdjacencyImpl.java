@@ -161,10 +161,7 @@ public abstract class ThingAdjacencyImpl implements ThingAdjacency {
         private SortedIterator.Forwardable<DirectedEdge, Order.Asc> edgeIteratorSorted(
                 Encoding.Edge.Thing encoding, IID... lookahead) {
             Key.Prefix<EdgeIID.Thing> prefix = EdgeIID.Thing.prefix(owner.iid(), infixIID(encoding, lookahead));
-            return owner.graph().storage().iterate(
-                    prefix
-//                    ASC
-            )
+            return owner.graph().storage().iterate(prefix, ASC)
                     .mapSorted(
                             ASC,
                             kv -> asDirected(newPersistedEdge(EdgeIID.Thing.of(kv.key().bytes()))),
@@ -192,10 +189,7 @@ public abstract class ThingAdjacencyImpl implements ThingAdjacency {
         @Override
         public IteratorBuilder edge(Encoding.Edge.Thing.Optimised encoding) {
             Key.Prefix<EdgeIID.Thing> prefix = EdgeIID.Thing.prefix(owner.iid(), infixIID(encoding));
-            return new IteratorBuilderImpl(owner.graph().storage().iterate(
-                    prefix
-//                    ASC
-            )
+            return new IteratorBuilderImpl(owner.graph().storage().iterate(prefix, ASC)
                     .map(kv -> newPersistedEdge(EdgeIID.Thing.of(kv.key().bytes()))));
         }
 
@@ -443,7 +437,7 @@ public abstract class ThingAdjacencyImpl implements ThingAdjacency {
 
             private FunctionalIterator<ThingEdge> edgeIterator(Encoding.Edge.Thing encoding, IID... lookahead) {
                 Key.Prefix<EdgeIID.Thing> prefix = EdgeIID.Thing.prefix(owner.iid(), infixIID(encoding, lookahead));
-                FunctionalIterator<ThingEdge> storageIterator = owner.graph().storage().iterate(prefix)//, ASC)
+                FunctionalIterator<ThingEdge> storageIterator = owner.graph().storage().iterate(prefix, ASC)
                         .map(keyValue -> cache(newPersistedEdge(EdgeIID.Thing.of(keyValue.key().bytes()))));
                 FunctionalIterator<ThingEdge> bufferedIterator = bufferedEdgeIterator(encoding, lookahead).map(DirectedEdge::get);
                 return link(bufferedIterator, storageIterator).distinct();
@@ -453,7 +447,7 @@ public abstract class ThingAdjacencyImpl implements ThingAdjacency {
                     Encoding.Edge.Thing encoding, IID... lookahead) {
                 assert encoding != ROLEPLAYER || lookahead.length >= 1;
                 Key.Prefix<EdgeIID.Thing> prefix = EdgeIID.Thing.prefix(owner.iid(), infixIID(encoding, lookahead));
-                SortedIterator.Forwardable<DirectedEdge, Order.Asc> storageIter = owner.graph().storage().iterate(prefix)//, ASC)
+                SortedIterator.Forwardable<DirectedEdge, Order.Asc> storageIter = owner.graph().storage().iterate(prefix, ASC)
                         .mapSorted(
                                 ASC,
                                 kv -> asDirected(cache(newPersistedEdge(EdgeIID.Thing.of(kv.key().bytes())))),
