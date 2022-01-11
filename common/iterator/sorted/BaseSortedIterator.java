@@ -18,14 +18,13 @@
 
 package com.vaticle.typedb.core.common.iterator.sorted;
 
-import com.vaticle.typedb.core.common.iterator.Iterators;
+import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Order;
 
 import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
-import java.util.function.Predicate;
 
-public class BaseSortedIterator<T extends Comparable<? super T>, ORDER extends SortedIterator.Order>
+public class BaseSortedIterator<T extends Comparable<? super T>, ORDER extends Order>
         extends AbstractSortedIterator<T, ORDER> {
 
     private final Iterator<T> iterator;
@@ -37,8 +36,7 @@ public class BaseSortedIterator<T extends Comparable<? super T>, ORDER extends S
         this.iterator = source.iterator();
     }
 
-    private static <T extends Comparable<? super T>, ORD extends SortedIterator.Order> boolean isSorted(ORD order,
-                                                                                                        List<T> source) {
+    private static <T extends Comparable<? super T>, ORD extends Order> boolean isSorted(ORD order, List<T> source) {
         if (source.size() <= 1) return true;
         for (int i = 0; i < source.size(); i++) {
             T last = source.get(i);

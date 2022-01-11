@@ -130,8 +130,8 @@ public class Iterators {
             return iterateSorted(SortedIterator.ASC, new ConcurrentSkipListSet<T>());
         }
 
-        public static <T extends Comparable<T>, ORDER extends Order> SortedIterator<T, ORDER> iterateSorted(ORDER order, List<T> elements) {
-            return new BaseSortedIterator<>(order, elements);
+        public static <T extends Comparable<T>, ORDER extends Order> SortedIterator<T, ORDER> iterateSorted(ORDER order, List<T> list) {
+            return new BaseSortedIterator<>(order, list);
         }
 
         public static <T extends Comparable<? super T>, ORDER extends Order> Seekable<T, ORDER> iterateSorted(ORDER order, NavigableSet<T> set) {

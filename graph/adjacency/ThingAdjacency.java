@@ -166,5 +166,4 @@ public interface ThingAdjacency {
         void commit();
 
     }
-
 }
