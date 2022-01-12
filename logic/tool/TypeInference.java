@@ -441,12 +441,10 @@ public class TypeInference {
             for (RelationConstraint.RolePlayer rolePlayer : constraint.players()) {
                 TypeVariable playerResolver = register(rolePlayer.player());
                 TypeVariable actingRoleResolver = new TypeVariable(newSystemId());
-                if (rolePlayer.roleType().isPresent()) {
-                    TypeVariable roleTypeResolver = register(rolePlayer.roleType().get());
-                    traversal.sub(actingRoleResolver.id(), roleTypeResolver.id(), true);
-                    restrict(roleTypeResolver.id(), graphMgr.schema().roleTypes());
-                    restrict(actingRoleResolver.id(), graphMgr.schema().roleTypes());
-                }
+                TypeVariable roleTypeResolver = register(rolePlayer.roleType());
+                traversal.sub(actingRoleResolver.id(), roleTypeResolver.id(), true);
+                restrict(roleTypeResolver.id(), graphMgr.schema().roleTypes());
+                restrict(actingRoleResolver.id(), graphMgr.schema().roleTypes());
                 traversal.relates(resolver.id(), actingRoleResolver.id());
                 traversal.plays(playerResolver.id(), actingRoleResolver.id());
                 restrict(playerResolver.id(), graphMgr.schema().playerTypes());
@@ -457,8 +455,7 @@ public class TypeInference {
         private void registerInsertableRelation(TypeVariable resolver, RelationConstraint constraint) {
             for (RelationConstraint.RolePlayer rolePlayer : constraint.players()) {
                 TypeVariable playerResolver = register(rolePlayer.player());
-                TypeVariable roleResolver = register(rolePlayer.roleType().isPresent() ?
-                        rolePlayer.roleType().get() : new TypeVariable(newSystemId()));
+                TypeVariable roleResolver = register(rolePlayer.roleType());
                 traversal.relates(resolver.id(), roleResolver.id());
                 traversal.plays(playerResolver.id(), roleResolver.id());
             }

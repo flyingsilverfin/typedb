@@ -113,7 +113,7 @@ public abstract class Concludable extends Resolvable<Conjunction> {
         }
         // This gives a deterministic ordering to the applicable rules, which is important for testing.
         return Iterators.iterate(applicableRules.keySet().stream().sorted(Comparator.comparing(Rule::getLabel))
-                                         .collect(Collectors.toList()));
+                .collect(Collectors.toList()));
     }
 
     abstract Map<Rule, Set<Unifier>> applicableRules(ConceptManager conceptMgr, LogicManager logicMgr);
@@ -124,13 +124,21 @@ public abstract class Concludable extends Resolvable<Conjunction> {
 
     public abstract AlphaEquivalence alphaEquals(Concludable that);
 
-    public boolean isRelation() { return false; }
+    public boolean isRelation() {
+        return false;
+    }
 
-    public boolean isHas() { return false; }
+    public boolean isHas() {
+        return false;
+    }
 
-    public boolean isIsa() { return false; }
+    public boolean isIsa() {
+        return false;
+    }
 
-    public boolean isAttribute() { return false; }
+    public boolean isAttribute() {
+        return false;
+    }
 
     public Relation asRelation() {
         throw TypeDBException.of(INVALID_CASTING, className(this.getClass()), className(Relation.class));
@@ -165,7 +173,7 @@ public abstract class Concludable extends Resolvable<Conjunction> {
 
         if (!concludableTypeVar.inferredTypes().isEmpty() && !conclusionTypeVar.inferredTypes().isEmpty()) {
             return !Collections.disjoint(subtypeLabels(concludableTypeVar.inferredTypes(), conceptMgr).toSet(),
-                                         conclusionTypeVar.inferredTypes());
+                    conclusionTypeVar.inferredTypes());
         } else {
             // if either variable is allowed to be any type (ie empty set), its possible to do unification
             return true;
@@ -308,7 +316,7 @@ public abstract class Concludable extends Resolvable<Conjunction> {
                 clonedIsa = cloner.getClone(isa).asThing().asIsa();
             }
             return new Relation(cloner.conjunction(), cloner.getClone(relation).asThing().asRelation(), clonedIsa,
-                                iterate(labels).map(l -> cloner.getClone(l).asType().asLabel()).toSet());
+                    iterate(labels).map(l -> cloner.getClone(l).asType().asLabel()).toSet());
         }
 
         public RelationConstraint relation() {
@@ -382,25 +390,22 @@ public abstract class Concludable extends Resolvable<Conjunction> {
                         clone.get(conjRP).add(thenRP);
                         return clone;
                     }).flatMap(newMapping -> matchRolePlayers(conjRolePLayers.subList(1, conjRolePLayers.size()),
-                                                              thenRolePlayers, newMapping, conceptMgr));
+                            thenRolePlayers, newMapping, conceptMgr));
         }
 
         private Unifier convertRPMappingToUnifier(Map<RolePlayer, Set<RolePlayer>> mapping,
                                                   Unifier.Builder unifierBuilder, ConceptManager conceptMgr) {
             mapping.forEach((conjRP, thenRPs) -> thenRPs.forEach(thenRP -> {
                 unifierBuilder.addThing(conjRP.player(), thenRP.player().id());
-                if (conjRP.roleType().isPresent()) {
-                    assert thenRP.roleType().isPresent();
-                    TypeVariable conjRoleType = conjRP.roleType().get();
-                    TypeVariable thenRoleType = thenRP.roleType().get();
-                    if (conjRoleType.id().isLabel()) {
-                        Set<Label> allowedTypes = iterate(conjRoleType.inferredTypes())
-                                .flatMap(roleLabel -> subtypeLabels(roleLabel, conceptMgr))
-                                .toSet();
-                        unifierBuilder.addLabelType(conjRoleType.id().asLabel(), allowedTypes, thenRoleType.id());
-                    } else {
-                        unifierBuilder.addVariableType(conjRoleType, thenRoleType.id());
-                    }
+                TypeVariable conjRoleType = conjRP.roleType();
+                TypeVariable thenRoleType = thenRP.roleType();
+                if (conjRoleType.id().isLabel()) {
+                    Set<Label> allowedTypes = iterate(conjRoleType.inferredTypes())
+                            .flatMap(roleLabel -> subtypeLabels(roleLabel, conceptMgr))
+                            .toSet();
+                    unifierBuilder.addLabelType(conjRoleType.id().asLabel(), allowedTypes, thenRoleType.id());
+                } else {
+                    unifierBuilder.addVariableType(conjRoleType, thenRoleType.id());
                 }
             }));
 
@@ -408,13 +413,8 @@ public abstract class Concludable extends Resolvable<Conjunction> {
         }
 
         private boolean unificationSatisfiable(RolePlayer concludableRolePlayer, RolePlayer conclusionRolePlayer, ConceptManager conceptMgr) {
-            assert conclusionRolePlayer.roleType().isPresent();
-            boolean satisfiable = true;
-            if (concludableRolePlayer.roleType().isPresent()) {
-                satisfiable = unificationSatisfiable(concludableRolePlayer.roleType().get(), conclusionRolePlayer.roleType().get(), conceptMgr);
-            }
-            satisfiable &= unificationSatisfiable(concludableRolePlayer.player(), conclusionRolePlayer.player());
-            return satisfiable;
+            return unificationSatisfiable(concludableRolePlayer.roleType(), conclusionRolePlayer.roleType(), conceptMgr)
+                    && unificationSatisfiable(concludableRolePlayer.player(), conclusionRolePlayer.player());
         }
 
         @Override

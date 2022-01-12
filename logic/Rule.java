@@ -464,8 +464,8 @@ public class Rule {
                 ids.add(relation.owner().id());
                 relation.players().forEach(rp -> {
                     ids.add(rp.player().id());
-                    if (rp.roleType().isPresent() && rp.roleType().get().id().isRetrievable()) {
-                        ids.add(rp.roleType().get().id().asRetrievable());
+                    if (rp.roleType().id().isRetrievable()) {
+                        ids.add(rp.roleType().id().asRetrievable());
                     }
                 });
                 if (isa.type().id().isRetrievable()) ids.add(isa.type().id().asRetrievable());
@@ -486,7 +486,7 @@ public class Rule {
                         thenConcepts.put(relationTypeIdentifier, relationType);
                         thenConcepts.put(isa().owner().id(), rel);
                         relation().players().forEach(rp -> {
-                            thenConcepts.putIfAbsent(rp.roleType().get().id(), getRole(rp, relationType, whenConcepts));
+                            thenConcepts.putIfAbsent(rp.roleType().id(), getRole(rp, relationType, whenConcepts));
                             thenConcepts.putIfAbsent(rp.player().id(), whenConcepts.get(rp.player().id()));
                         });
                         return thenConcepts;
@@ -505,7 +505,7 @@ public class Rule {
                     RoleType role = getRole(rp, relationType, whenConcepts);
                     Thing player = whenConcepts.get(rp.player().id()).asThing();
                     relation.addPlayer(role, player, true);
-                    thenConcepts.putIfAbsent(rp.roleType().get().id(), role);
+                    thenConcepts.putIfAbsent(rp.roleType().id(), role);
                     thenConcepts.putIfAbsent(rp.player().id(), player);
                 });
                 return Iterators.single(thenConcepts);
@@ -565,8 +565,7 @@ public class Rule {
                 RelationTraversal traversal = new RelationTraversal(relationId, set(relationType.getLabel())); // TODO include inheritance
                 relation().players().forEach(rp -> {
                     Identifier.Variable.Retrievable playerId = rp.player().id();
-                    assert rp.roleType().isPresent() && rp.roleType().get().label().isPresent()
-                            && whenConcepts.contains(playerId);
+                    assert rp.roleType().label().isPresent() && whenConcepts.contains(playerId);
                     traversal.player(playerId, whenConcepts.get(playerId).asThing().getIID(),
                             set(getRole(rp, relationType, whenConcepts).getLabel())); // TODO include inheritance
                 });
@@ -586,11 +585,11 @@ public class Rule {
             }
 
             private RoleType getRole(RelationConstraint.RolePlayer rp, RelationType scope, ConceptMap whenConcepts) {
-                if (rp.roleType().get().reference().isName()) {
-                    return whenConcepts.get(rp.roleType().get().reference().asName()).asRoleType();
+                if (rp.roleType().id().isName()) {
+                    return whenConcepts.get(rp.roleType().id().asName()).asRoleType();
                 } else {
-                    assert rp.roleType().get().reference().isLabel();
-                    return scope.getRelates(rp.roleType().get().label().get().properLabel().name());
+                    assert rp.roleType().id().isLabel();
+                    return scope.getRelates(rp.roleType().label().get().properLabel().name());
                 }
             }
         }

@@ -30,12 +30,10 @@ import com.vaticle.typedb.core.pattern.variable.VariableRegistry;
 import com.vaticle.typedb.core.traversal.GraphTraversal;
 import com.vaticle.typedb.core.traversal.common.Identifier;
 
-import javax.annotation.Nullable;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -58,7 +56,7 @@ public class RelationConstraint extends ThingConstraint implements AlphaEquivale
         this.hash = Objects.hash(RelationConstraint.class, this.owner, this.rolePlayers);
         for (RelationConstraint.RolePlayer rp : rolePlayers) {
             rp.player().constraining(this);
-            rp.roleType().ifPresent(roleType -> roleType.constraining(this));
+            rp.roleType().constraining(this);
         }
     }
 
@@ -90,28 +88,28 @@ public class RelationConstraint extends ThingConstraint implements AlphaEquivale
         for (RolePlayer rolePlayer : rolePlayers) {
             ThingVariable player = rolePlayer.player();
             int rep = rolePlayer.repetition();
-            if (rolePlayer.roleType().isPresent()) {
-                TypeVariable roleType = rolePlayer.roleType().get();
-                if (roleType.reference().isName()) {
-                    Identifier.Scoped role = Identifier.Scoped.of(owner.id(), roleType.id(), player.id(), rep);
-                    traversal.relating(owner.id(), role);
-                    traversal.playing(player.id(), role);
-                    traversal.isa(role, roleType.id());
-                } else {
-                    assert roleType.reference().isLabel() && !roleType.inferredTypes().isEmpty();
-                    traversal.rolePlayer(owner.id(), player.id(), roleType.inferredTypes(), rep);
-                }
+            TypeVariable roleType = rolePlayer.roleType();
+            if (roleType.reference().isName()) {
+                Identifier.Scoped role = Identifier.Scoped.of(owner.id(), roleType.id(), player.id(), rep);
+                traversal.relating(owner.id(), role);
+                traversal.playing(player.id(), role);
+                traversal.isa(role, roleType.id());
             } else {
-                traversal.rolePlayer(owner.id(), player.id(), rep);
+                assert roleType.reference().isLabel() && !roleType.inferredTypes().isEmpty();
+                traversal.rolePlayer(owner.id(), player.id(), roleType.inferredTypes(), rep);
             }
         }
     }
 
     @Override
-    public boolean isRelation() { return true; }
+    public boolean isRelation() {
+        return true;
+    }
 
     @Override
-    public RelationConstraint asRelation() { return this; }
+    public RelationConstraint asRelation() {
+        return this;
+    }
 
     @Override
     public boolean equals(Object o) {
@@ -130,7 +128,7 @@ public class RelationConstraint extends ThingConstraint implements AlphaEquivale
         Set<com.vaticle.typedb.core.pattern.variable.Variable> variables = new HashSet<>();
         rolePlayers.forEach(player -> {
             variables.add(player.player());
-            if (player.roleType().isPresent()) variables.add(player.roleType().get());
+            variables.add(player.roleType());
         });
         return variables;
     }
@@ -158,8 +156,8 @@ public class RelationConstraint extends ThingConstraint implements AlphaEquivale
         private final int repetition;
         private final int hash;
 
-        public RolePlayer(@Nullable TypeVariable roleType, ThingVariable player, int repetition) {
-            assert roleType == null || roleType.reference().isName() ||
+        public RolePlayer(TypeVariable roleType, ThingVariable player, int repetition) {
+            assert roleType.reference().isName() ||
                     (roleType.label().isPresent() && roleType.label().get().scope().isPresent());
             if (player == null) throw new NullPointerException("Null player");
             this.roleType = roleType;
@@ -171,7 +169,7 @@ public class RelationConstraint extends ThingConstraint implements AlphaEquivale
         public static RolePlayer of(com.vaticle.typeql.lang.pattern.constraint.ThingConstraint.Relation.RolePlayer constraint,
                                     VariableRegistry registry) {
             return new RolePlayer(
-                    constraint.roleType().map(registry::register).orElse(null),
+                    registry.register(constraint.roleType()),
                     registry.register(constraint.player()),
                     constraint.repetition()
             );
@@ -179,7 +177,7 @@ public class RelationConstraint extends ThingConstraint implements AlphaEquivale
 
         public static RolePlayer of(RolePlayer clone, VariableCloner cloner) {
             return new RolePlayer(
-                    clone.roleType().map(cloner::clone).orElse(null),
+                    cloner.clone(clone.roleType()),
                     cloner.clone(clone.player()),
                     clone.repetition()
             );
@@ -189,8 +187,8 @@ public class RelationConstraint extends ThingConstraint implements AlphaEquivale
             return repetition;
         }
 
-        public Optional<TypeVariable> roleType() {
-            return Optional.ofNullable(roleType);
+        public TypeVariable roleType() {
+            return roleType;
         }
 
         public ThingVariable player() {
@@ -202,9 +200,9 @@ public class RelationConstraint extends ThingConstraint implements AlphaEquivale
             if (this == o) return true;
             if (o == null || getClass() != o.getClass()) return false;
             RolePlayer that = (RolePlayer) o;
-            return (Objects.equals(this.roleType, that.roleType) &&
+            return this.roleType.equals(that.roleType) &&
                     this.player.equals(that.player) &&
-                    this.repetition == that.repetition);
+                    this.repetition == that.repetition;
         }
 
         @Override
@@ -214,7 +212,7 @@ public class RelationConstraint extends ThingConstraint implements AlphaEquivale
 
         @Override
         public String toString() {
-            return (roleType != null ? roleType.toString() + COLON : "") + player.toString();
+            return roleType.toString() + COLON + player.toString();
         }
 
         @Override
@@ -225,7 +223,7 @@ public class RelationConstraint extends ThingConstraint implements AlphaEquivale
         }
 
         public RolePlayer clone(Conjunction.Cloner cloner) {
-            TypeVariable roleTypeClone = roleType == null ? null : cloner.cloneVariable(roleType);
+            TypeVariable roleTypeClone = cloner.cloneVariable(roleType);
             ThingVariable playerClone = cloner.cloneVariable(player);
             return new RelationConstraint.RolePlayer(roleTypeClone, playerClone, repetition);
         }
