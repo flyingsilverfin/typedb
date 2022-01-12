@@ -161,7 +161,7 @@ public class Deleter {
                 if (var.relation().isPresent()) {
                     var.relation().get().players().forEach(rolePlayer -> {
                         Thing player = matched.get(rolePlayer.player().reference().asName()).asThing();
-                        RoleType roleType = getRoleType(relation, player, rolePlayer);
+                        RoleType roleType = getRoleType(relation, rolePlayer);
                         relation.removePlayer(roleType, player);
                     });
                 } else {

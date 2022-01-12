@@ -277,7 +277,7 @@ public class Inserter {
                 if (var.relation().isPresent()) {
                     var.relation().get().players().forEach(rolePlayer -> {
                         Thing player = insert(rolePlayer.player());
-                        RoleType roleType = getRoleType(relation, player, rolePlayer);
+                        RoleType roleType = getRoleType(relation, rolePlayer);
                         relation.addPlayer(roleType, player);
                     });
                 } else { // var.relation().size() > 1

@@ -22,7 +22,6 @@ import com.vaticle.factory.tracing.client.FactoryTracingThreadStatic;
 import com.vaticle.typedb.core.common.exception.TypeDBException;
 import com.vaticle.typedb.core.common.parameters.Label;
 import com.vaticle.typedb.core.concept.thing.Relation;
-import com.vaticle.typedb.core.concept.thing.Thing;
 import com.vaticle.typedb.core.concept.type.RelationType;
 import com.vaticle.typedb.core.concept.type.RoleType;
 import com.vaticle.typedb.core.pattern.constraint.thing.RelationConstraint;
@@ -35,7 +34,7 @@ public class Util {
 
     private static final String TRACE_PREFIX = "util.";
 
-    public static RoleType getRoleType(Relation relation, Thing player, RelationConstraint.RolePlayer rolePlayer) {
+    public static RoleType getRoleType(Relation relation, RelationConstraint.RolePlayer rolePlayer) {
         try (FactoryTracingThreadStatic.ThreadTrace ignored = traceOnThread(TRACE_PREFIX + "get_role_type")) {
             RoleType roleType;
 //            Set<? extends RoleType> inferred;
