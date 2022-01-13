@@ -29,12 +29,14 @@ import com.vaticle.typedb.core.concept.thing.Relation;
 import com.vaticle.typedb.core.concept.thing.Thing;
 import com.vaticle.typedb.core.concept.type.RoleType;
 import com.vaticle.typedb.core.concept.type.ThingType;
+import com.vaticle.typedb.core.logic.LogicManager;
+import com.vaticle.typedb.core.pattern.Conjunction;
 import com.vaticle.typedb.core.pattern.constraint.thing.HasConstraint;
 import com.vaticle.typedb.core.pattern.variable.ThingVariable;
-import com.vaticle.typedb.core.pattern.variable.TypeVariable;
 import com.vaticle.typedb.core.pattern.variable.Variable;
 import com.vaticle.typedb.core.pattern.variable.VariableRegistry;
 import com.vaticle.typedb.core.reasoner.Reasoner;
+import com.vaticle.typeql.lang.pattern.variable.BoundVariable;
 import com.vaticle.typeql.lang.pattern.variable.Reference;
 import com.vaticle.typeql.lang.query.TypeQLDelete;
 
@@ -44,15 +46,17 @@ import java.util.Map;
 import java.util.Set;
 
 import static com.vaticle.factory.tracing.client.FactoryTracingThreadStatic.traceOnThread;
+import static com.vaticle.typedb.common.collection.Collections.list;
+import static com.vaticle.typedb.core.common.exception.ErrorMessage.Pattern.UNSATISFIABLE_PATTERN;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.ThingWrite.DELETE_RELATION_CONSTRAINT_TOO_MANY;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.ThingWrite.ILLEGAL_ANONYMOUS_RELATION_IN_DELETE;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.ThingWrite.ILLEGAL_ANONYMOUS_VARIABLE_IN_DELETE;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.ThingWrite.ILLEGAL_IS_CONSTRAINT;
-import static com.vaticle.typedb.core.common.exception.ErrorMessage.ThingWrite.ILLEGAL_TYPE_VARIABLE_IN_DELETE;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.ThingWrite.INVALID_DELETE_HAS;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.ThingWrite.INVALID_DELETE_THING;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.ThingWrite.INVALID_DELETE_THING_DIRECT;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.ThingWrite.THING_IID_NOT_INSERTABLE;
+import static com.vaticle.typedb.core.common.iterator.Iterators.iterate;
 import static com.vaticle.typedb.core.common.parameters.Arguments.Query.Producer.EXHAUSTIVE;
 import static com.vaticle.typedb.core.query.common.Util.getExplicitRoleType;
 
@@ -71,26 +75,27 @@ public class Deleter {
         this.context.producer(Either.first(EXHAUSTIVE));
     }
 
-    public static Deleter create(Reasoner reasoner, TypeQLDelete query, Context.Query context) {
+    public static Deleter create(Reasoner reasoner, LogicManager logicMgr, TypeQLDelete query, Context.Query context) {
         try (FactoryTracingThreadStatic.ThreadTrace ignored = traceOnThread(TRACE_PREFIX + "create")) {
-            VariableRegistry registry = VariableRegistry.createFromThings(query.variables(), false);
-            registry.variables().forEach(Deleter::validate);
-
+            Conjunction delete = registerAndValidate(logicMgr, query.variables());
             assert query.match().namedVariablesUnbound().containsAll(query.namedVariablesUnbound());
             Matcher matcher = Matcher.create(reasoner, query.match().get(query.namedVariablesUnbound()));
-            return new Deleter(matcher, registry.things(), context);
+            Set<ThingVariable> vars = iterate(delete.variables()).filter(Variable::isThing).map(Variable::asThing).toSet();
+            return new Deleter(matcher, vars, context);
         }
     }
 
-    public static void validate(Variable var) {
-        try (FactoryTracingThreadStatic.ThreadTrace ignored = traceOnThread(TRACE_PREFIX + "validate")) {
-            if (var.isType()) validate(var.asType());
-            else validate(var.asThing());
-        }
+    static Conjunction registerAndValidate(LogicManager logicMgr, List<? extends BoundVariable> variables) {
+        VariableRegistry registry = VariableRegistry.createFromThings(variables, false);
+        Conjunction delete = new Conjunction(registry.variables(), list());
+        logicMgr.typeInference().infer(delete, false);
+        validate(delete);
+        return delete;
     }
 
-    private static void validate(TypeVariable var) {
-        if (!var.reference().isLabel()) throw TypeDBException.of(ILLEGAL_TYPE_VARIABLE_IN_DELETE, var.reference());
+    private static void validate(Conjunction delete) {
+        if (!delete.isCoherent()) throw TypeDBException.of(UNSATISFIABLE_PATTERN);
+        iterate(delete.variables()).filter(Variable::isThing).map(Variable::asThing).forEachRemaining(Deleter::validate);
     }
 
     private static void validate(ThingVariable var) {

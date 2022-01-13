@@ -31,6 +31,8 @@ import com.vaticle.typedb.core.concept.thing.Thing;
 import com.vaticle.typedb.core.concept.type.AttributeType;
 import com.vaticle.typedb.core.concept.type.RoleType;
 import com.vaticle.typedb.core.concept.type.ThingType;
+import com.vaticle.typedb.core.logic.LogicManager;
+import com.vaticle.typedb.core.pattern.Conjunction;
 import com.vaticle.typedb.core.pattern.constraint.thing.HasConstraint;
 import com.vaticle.typedb.core.pattern.constraint.thing.IsaConstraint;
 import com.vaticle.typedb.core.pattern.constraint.thing.ValueConstraint;
@@ -42,6 +44,8 @@ import com.vaticle.typedb.core.pattern.variable.VariableRegistry;
 import com.vaticle.typedb.core.reasoner.Reasoner;
 import com.vaticle.typedb.core.traversal.common.Identifier;
 import com.vaticle.typedb.core.traversal.common.Identifier.Variable.Retrievable;
+import com.vaticle.typeql.lang.TypeQL;
+import com.vaticle.typeql.lang.pattern.variable.BoundVariable;
 import com.vaticle.typeql.lang.pattern.variable.UnboundVariable;
 import com.vaticle.typeql.lang.query.TypeQLInsert;
 import com.vaticle.typeql.lang.query.TypeQLMatch;
@@ -54,6 +58,8 @@ import java.util.Map;
 import java.util.Set;
 
 import static com.vaticle.factory.tracing.client.FactoryTracingThreadStatic.traceOnThread;
+import static com.vaticle.typedb.common.collection.Collections.list;
+import static com.vaticle.typedb.core.common.exception.ErrorMessage.Pattern.UNSATISFIABLE_PATTERN;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.ThingWrite.ATTRIBUTE_VALUE_MISSING;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.ThingWrite.ATTRIBUTE_VALUE_TOO_MANY;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.ThingWrite.ILLEGAL_ABSTRACT_WRITE;
@@ -93,11 +99,9 @@ public class Inserter {
         this.context.producer(Either.first(EXHAUSTIVE));
     }
 
-    public static Inserter create(Reasoner reasoner, ConceptManager conceptMgr, TypeQLInsert query, Context.Query context) {
+    public static Inserter create(Reasoner reasoner, LogicManager logicMgr, ConceptManager conceptMgr, TypeQLInsert query, Context.Query context) {
         try (FactoryTracingThreadStatic.ThreadTrace ignored = traceOnThread(TRACE_PREFIX + "create")) {
-            VariableRegistry registry = VariableRegistry.createFromThings(query.variables());
-            registry.variables().forEach(Inserter::validate);
-
+            Conjunction insert = registerAndValidate(logicMgr, query.variables());
             Matcher matcher = null;
             if (query.match().isPresent()) {
                 TypeQLMatch.Unfiltered match = query.match().get();
@@ -107,19 +111,22 @@ public class Inserter {
                 matcher = Matcher.create(reasoner, match.get(filter));
             }
 
-            return new Inserter(matcher, conceptMgr, registry.things(), context);
+            Set<ThingVariable> vars = iterate(insert.variables()).filter(Variable::isThing).map(Variable::asThing).toSet();
+            return new Inserter(matcher, conceptMgr, vars, context);
         }
     }
 
-    public static void validate(Variable var) {
-        try (FactoryTracingThreadStatic.ThreadTrace ignored = traceOnThread(TRACE_PREFIX + "validate")) {
-            if (var.isType()) validate(var.asType());
-            else validate(var.asThing());
-        }
+    static Conjunction registerAndValidate(LogicManager logicMgr, List<? extends BoundVariable> variables) {
+        VariableRegistry registry = VariableRegistry.createFromThings(variables);
+        Conjunction insert = new Conjunction(registry.variables(), list());
+        logicMgr.typeInference().infer(insert, true);
+        validate(insert);
+        return insert;
     }
 
-    private static void validate(TypeVariable var) {
-        if (!var.reference().isLabel()) throw TypeDBException.of(ILLEGAL_TYPE_VARIABLE_IN_INSERT, var.reference());
+    public static void validate(Conjunction insert) {
+        if (!insert.isCoherent()) throw TypeDBException.of(UNSATISFIABLE_PATTERN);
+        iterate(insert.variables()).filter(Variable::isThing).map(Variable::asThing).forEachRemaining(Inserter::validate);
     }
 
     private static void validate(ThingVariable var) {

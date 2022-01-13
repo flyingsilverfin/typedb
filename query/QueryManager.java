@@ -123,7 +123,7 @@ public class QueryManager {
         if (context.sessionType().isSchema()) throw conceptMgr.exception(SESSION_SCHEMA_VIOLATION);
         if (context.transactionType().isRead()) throw conceptMgr.exception(TRANSACTION_DATA_READ_VIOLATION);
         try (ThreadTrace ignored = traceOnThread(TRACE_PREFIX + "insert")) {
-            return Inserter.create(reasoner, conceptMgr, query, context).execute().onError(conceptMgr::exception);
+            return Inserter.create(reasoner, logicMgr, conceptMgr, query, context).execute().onError(conceptMgr::exception);
         } catch (Exception exception) {
             throw conceptMgr.exception(exception);
         }
@@ -137,7 +137,7 @@ public class QueryManager {
         if (context.sessionType().isSchema()) throw conceptMgr.exception(SESSION_SCHEMA_VIOLATION);
         if (context.transactionType().isRead()) throw conceptMgr.exception(TRANSACTION_DATA_READ_VIOLATION);
         try (ThreadTrace ignored = traceOnThread(TRACE_PREFIX + "delete")) {
-            Deleter.create(reasoner, query, context).execute();
+            Deleter.create(reasoner, logicMgr, query, context).execute();
         } catch (Exception exception) {
             throw conceptMgr.exception(exception);
         }
@@ -151,7 +151,7 @@ public class QueryManager {
         if (context.sessionType().isSchema()) throw conceptMgr.exception(SESSION_SCHEMA_VIOLATION);
         if (context.transactionType().isRead()) throw conceptMgr.exception(TRANSACTION_DATA_READ_VIOLATION);
         try (ThreadTrace ignored = traceOnThread(TRACE_PREFIX + "update")) {
-            return Updater.create(reasoner, conceptMgr, query, context).execute().onError(conceptMgr::exception);
+            return Updater.create(reasoner, logicMgr, conceptMgr, query, context).execute().onError(conceptMgr::exception);
         } catch (Exception exception) {
             throw conceptMgr.exception(exception);
         }

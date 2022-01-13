@@ -196,7 +196,7 @@ public class Conjunction implements Pattern, Cloneable {
     @Override
     public Conjunction clone() {
         return new Conjunction(VariableCloner.cloneFromConjunction(this).variables(),
-                               iterate(this.negations).map(Negation::clone).toList());
+                iterate(this.negations).map(Negation::clone).toList());
     }
 
     @Override
@@ -209,8 +209,8 @@ public class Conjunction implements Pattern, Cloneable {
                         .collect(Collectors.joining("" + SEMICOLON + SPACE)))
                 .filter(s -> !s.isEmpty())
                 .collect(Collectors.joining("; " + NEW_LINE,
-                                            "" + CURLY_OPEN + SPACE,
-                                            "" + SEMICOLON + SPACE + negationsToString + CURLY_CLOSE));
+                        "" + CURLY_OPEN + SPACE,
+                        "" + SEMICOLON + SPACE + negationsToString + CURLY_CLOSE));
 
     }
 

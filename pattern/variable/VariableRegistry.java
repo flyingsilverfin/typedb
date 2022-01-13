@@ -74,11 +74,11 @@ public class VariableRegistry {
         }
     }
 
-    public static VariableRegistry createFromThings(List<com.vaticle.typeql.lang.pattern.variable.ThingVariable<?>> variables) {
+    public static VariableRegistry createFromThings(List<? extends BoundVariable> variables) {
         return createFromThings(variables, true);
     }
 
-    public static VariableRegistry createFromThings(List<com.vaticle.typeql.lang.pattern.variable.ThingVariable<?>> variables, boolean allowDerived) {
+    public static VariableRegistry createFromThings(List<? extends BoundVariable> variables, boolean allowDerived) {
         try (FactoryTracingThreadStatic.ThreadTrace ignored = traceOnThread(TRACE_PREFIX + "things")) {
             return createFromVariables(variables, null, allowDerived);
         }

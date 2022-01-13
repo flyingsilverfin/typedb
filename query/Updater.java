@@ -24,8 +24,10 @@ import com.vaticle.typedb.core.common.iterator.FunctionalIterator;
 import com.vaticle.typedb.core.common.parameters.Context;
 import com.vaticle.typedb.core.concept.ConceptManager;
 import com.vaticle.typedb.core.concept.answer.ConceptMap;
+import com.vaticle.typedb.core.logic.LogicManager;
+import com.vaticle.typedb.core.pattern.Conjunction;
 import com.vaticle.typedb.core.pattern.variable.ThingVariable;
-import com.vaticle.typedb.core.pattern.variable.VariableRegistry;
+import com.vaticle.typedb.core.pattern.variable.Variable;
 import com.vaticle.typedb.core.reasoner.Reasoner;
 import com.vaticle.typeql.lang.pattern.variable.UnboundVariable;
 import com.vaticle.typeql.lang.query.TypeQLUpdate;
@@ -63,19 +65,18 @@ public class Updater {
         this.context = context;
     }
 
-    public static Updater create(Reasoner reasoner, ConceptManager conceptMgr, TypeQLUpdate query, Context.Query context) {
+    public static Updater create(Reasoner reasoner, LogicManager logicMgr, ConceptManager conceptMgr, TypeQLUpdate query, Context.Query context) {
         try (FactoryTracingThreadStatic.ThreadTrace ignored = traceOnThread(TRACE_PREFIX + "create")) {
-            VariableRegistry deleteRegistry = VariableRegistry.createFromThings(query.deleteVariables(), false);
-            deleteRegistry.variables().forEach(Deleter::validate);
-
-            VariableRegistry insertRegistry = VariableRegistry.createFromThings(query.insertVariables());
-            insertRegistry.variables().forEach(Inserter::validate);
+            Conjunction delete = Deleter.registerAndValidate(logicMgr, query.deleteVariables());
+            Conjunction insert = Inserter.registerAndValidate(logicMgr, query.insertVariables());
 
             assert query.match().namedVariablesUnbound().containsAll(query.namedDeleteVariablesUnbound());
             HashSet<UnboundVariable> filter = new HashSet<>(query.namedDeleteVariablesUnbound());
             filter.addAll(query.namedInsertVariablesUnbound());
             Matcher matcher = Matcher.create(reasoner, query.match().get(list(filter)));
-            return new Updater(matcher, conceptMgr, deleteRegistry.things(), insertRegistry.things(), context);
+            Set<ThingVariable> deleteVars = iterate(delete.variables()).filter(Variable::isThing).map(Variable::asThing).toSet();
+            Set<ThingVariable> insertVars = iterate(insert.variables()).filter(Variable::isThing).map(Variable::asThing).toSet();
+            return new Updater(matcher, conceptMgr, deleteVars, insertVars, context);
         }
     }
 
