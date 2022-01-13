@@ -66,6 +66,7 @@ import java.util.Set;
 import static com.vaticle.typedb.common.collection.Collections.list;
 import static com.vaticle.typedb.common.collection.Collections.set;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.ILLEGAL_STATE;
+import static com.vaticle.typedb.core.common.exception.ErrorMessage.Pattern.UNSATISFIABLE_PATTERN_VARIABLE;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Pattern.UNSATISFIABLE_SUB_PATTERN;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.TypeRead.ROLE_TYPE_NOT_FOUND;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.TypeRead.TYPE_NOT_FOUND;
@@ -301,6 +302,10 @@ public class TypeInference {
                 props.clearLabels();
                 props.labels(intersection);
             }
+            if (props.labels().isEmpty()) {
+                conjunction.setCoherent(false);
+                throw TypeDBException.of(UNSATISFIABLE_PATTERN_VARIABLE, conjunction, id);
+            }
         }
 
         private void registerOwns(TypeVariable resolver, OwnsConstraint ownsConstraint) {
@@ -420,7 +425,10 @@ public class TypeInference {
          */
         private void registerIID(TypeVariable resolver, IIDConstraint constraint) {
             TypeVertex type = graphMgr.schema().convert(VertexIID.Thing.of(constraint.iid()).type());
-            if (type == null) throw TypeDBException.of(UNSATISFIABLE_SUB_PATTERN, conjunction, constraint);
+            if (type == null) {
+                conjunction.setCoherent(false);
+                throw TypeDBException.of(UNSATISFIABLE_SUB_PATTERN, conjunction, constraint);
+            }
             restrict(resolver.id(), iterate(type));
         }
 
@@ -476,6 +484,7 @@ public class TypeInference {
                 });
                 resolverValueTypes.put(resolver.id(), valueTypes);
             } else if (!resolverValueTypes.get(resolver.id()).containsAll(valueTypes)) {
+                conjunction.setCoherent(false);
                 throw TypeDBException.of(UNSATISFIABLE_SUB_PATTERN, conjunction, constraint);
             }
             registerSubAttribute(resolver);
