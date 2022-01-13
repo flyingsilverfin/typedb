@@ -51,7 +51,6 @@ import java.util.stream.Collectors;
 import static com.vaticle.typedb.common.collection.Collections.set;
 import static com.vaticle.typedb.core.common.collection.Bytes.MB;
 import static com.vaticle.typedb.core.common.parameters.Arguments.Session.Type.DATA;
-import static com.vaticle.typedb.core.common.parameters.Arguments.Session.Type.SCHEMA;
 import static com.vaticle.typedb.core.common.parameters.Arguments.Transaction.Type.WRITE;
 import static com.vaticle.typedb.core.common.test.Util.assertThrows;
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -707,7 +706,7 @@ public class TypeInferenceTest {
     }
 
     @Test
-    public void all_things_is_empty_set() throws IOException {
+    public void all_things() throws IOException {
         define_standard_schema("basic-schema");
         TypeInference typeInference = transaction.logic().typeInference();
 

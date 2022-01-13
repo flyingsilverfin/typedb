@@ -157,7 +157,7 @@ public class RelationConstraint extends ThingConstraint implements AlphaEquivale
         private final int hash;
 
         public RolePlayer(TypeVariable roleType, ThingVariable player, int repetition) {
-            assert roleType.reference().isName() ||
+            assert roleType.id().isName() || roleType.id().isAnonymous() ||
                     (roleType.label().isPresent() && roleType.label().get().scope().isPresent());
             if (player == null) throw new NullPointerException("Null player");
             this.roleType = roleType;

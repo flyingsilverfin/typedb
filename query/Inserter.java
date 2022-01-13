@@ -73,7 +73,7 @@ import static com.vaticle.typedb.core.concurrent.executor.Executors.async1;
 import static com.vaticle.typedb.core.concurrent.producer.Producers.async;
 import static com.vaticle.typedb.core.concurrent.producer.Producers.produce;
 import static com.vaticle.typedb.core.query.QueryManager.PARALLELISATION_SPLIT_MIN;
-import static com.vaticle.typedb.core.query.common.Util.getRoleType;
+import static com.vaticle.typedb.core.query.common.Util.getExplicitRoleType;
 
 public class Inserter {
 
@@ -277,7 +277,7 @@ public class Inserter {
                 if (var.relation().isPresent()) {
                     var.relation().get().players().forEach(rolePlayer -> {
                         Thing player = insert(rolePlayer.player());
-                        RoleType roleType = getRoleType(relation, rolePlayer);
+                        RoleType roleType = getExplicitRoleType(relation, player, rolePlayer);
                         relation.addPlayer(roleType, player);
                     });
                 } else { // var.relation().size() > 1

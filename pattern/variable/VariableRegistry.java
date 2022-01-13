@@ -38,7 +38,6 @@ import static com.vaticle.factory.tracing.client.FactoryTracingThreadStatic.trac
 import static com.vaticle.typedb.common.collection.Collections.set;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.ILLEGAL_STATE;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Pattern.ANONYMOUS_CONCEPT_VARIABLE;
-import static com.vaticle.typedb.core.common.exception.ErrorMessage.Pattern.ANONYMOUS_TYPE_VARIABLE;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Pattern.UNBOUNDED_CONCEPT_VARIABLE;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Pattern.VARIABLE_CONTRADICTION;
 import static java.util.Collections.unmodifiableSet;
@@ -51,7 +50,8 @@ public class VariableRegistry {
     private final boolean allowDerived;
     private final Map<Reference, TypeVariable> types;
     private final Map<Reference, ThingVariable> things;
-    private final Set<ThingVariable> anonymous;
+    private final Set<ThingVariable> anonymousThings;
+    private final Set<TypeVariable> anonymousTypes;
 
     private VariableRegistry(@Nullable VariableRegistry bounds) {
         this(bounds, true);
@@ -62,7 +62,8 @@ public class VariableRegistry {
         this.allowDerived = allowDerived;
         types = new HashMap<>();
         things = new HashMap<>();
-        anonymous = new HashSet<>();
+        anonymousThings = new HashSet<>();
+        anonymousTypes = new HashSet<>();
     }
 
     public static VariableRegistry createFromTypes(List<com.vaticle.typeql.lang.pattern.variable.TypeVariable> variables) {
@@ -130,26 +131,34 @@ public class VariableRegistry {
     }
 
     public TypeVariable register(com.vaticle.typeql.lang.pattern.variable.TypeVariable typeQLVar) {
-        if (typeQLVar.reference().isAnonymous()) throw TypeDBException.of(ANONYMOUS_TYPE_VARIABLE);
-        return computeTypeIfAbsent(
-                typeQLVar.reference(), ref -> new TypeVariable(Identifier.Variable.of(ref.asReferable()))
-        ).constrainType(typeQLVar.constraints(), this);
+        TypeVariable typeDBVar;
+        if (typeQLVar.reference().isAnonymous()) {
+            typeDBVar = new TypeVariable(Identifier.Variable.of(typeQLVar.reference().asAnonymous(), anonymousCounter()));
+            anonymousTypes.add(typeDBVar);
+        } else {
+            typeDBVar = computeTypeIfAbsent(
+                    typeQLVar.reference(), ref -> new TypeVariable(Identifier.Variable.of(ref.asReferable()))
+            );
+        }
+        return typeDBVar.constrainType(typeQLVar.constraints(), this);
     }
 
     public ThingVariable register(com.vaticle.typeql.lang.pattern.variable.ThingVariable<?> typeQLVar) {
         ThingVariable typeDBVar;
         if (typeQLVar.reference().isAnonymous()) {
             typeDBVar = new ThingVariable(Identifier.Variable.of(typeQLVar.reference().asAnonymous(), anonymousCounter()));
-            anonymous.add(typeDBVar);
+            anonymousThings.add(typeDBVar);
         } else {
-            typeDBVar = computeThingIfAbsent(typeQLVar.reference(), r -> new ThingVariable(Identifier.Variable.of(r.asReferable())));
+            typeDBVar = computeThingIfAbsent(
+                    typeQLVar.reference(), r -> new ThingVariable(Identifier.Variable.of(r.asReferable()))
+            );
         }
         return typeDBVar.constrainThing(typeQLVar.constraints(), this);
     }
 
     public int anonymousCounter() {
-        if (bounds != null) return bounds.anonymousCounter() + anonymous.size();
-        else return anonymous.size();
+        if (bounds != null) return bounds.anonymousCounter() + anonymousThings.size() + anonymousTypes.size();
+        else return anonymousThings.size() + anonymousTypes.size();
     }
 
     public boolean allowsDerived() {
@@ -157,18 +166,19 @@ public class VariableRegistry {
     }
 
     public Set<TypeVariable> types() {
-        return set(types.values());
+        return set(types.values(), anonymousTypes);
     }
 
     public Set<ThingVariable> things() {
-        return set(things.values(), anonymous);
+        return set(things.values(), anonymousThings);
     }
 
     public Set<Variable> variables() {
         Set<Variable> output = new HashSet<>();
         output.addAll(types.values());
         output.addAll(things.values());
-        output.addAll(anonymous);
+        output.addAll(anonymousThings);
+        output.addAll(anonymousTypes);
         return unmodifiableSet(output);
     }
 

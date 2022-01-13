@@ -180,7 +180,6 @@ public class Rule {
         if (!then.isCoherent()) throw TypeDBException.of(RULE_THEN_CANNOT_BE_SATISFIED, structure.label(), then);
     }
 
-
     /**
      * Remove type hints in the `then` pattern that are not valid in the `when` pattern
      */

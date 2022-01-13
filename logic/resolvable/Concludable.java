@@ -170,14 +170,9 @@ public abstract class Concludable extends Resolvable<Conjunction> {
     * we could take information such as negated constraints into account.
      */
     boolean unificationSatisfiable(TypeVariable concludableTypeVar, TypeVariable conclusionTypeVar, ConceptManager conceptMgr) {
-
-        if (!concludableTypeVar.inferredTypes().isEmpty() && !conclusionTypeVar.inferredTypes().isEmpty()) {
-            return !Collections.disjoint(subtypeLabels(concludableTypeVar.inferredTypes(), conceptMgr).toSet(),
-                    conclusionTypeVar.inferredTypes());
-        } else {
-            // if either variable is allowed to be any type (ie empty set), its possible to do unification
-            return true;
-        }
+        assert !concludableTypeVar.inferredTypes().isEmpty() && !conclusionTypeVar.inferredTypes().isEmpty();
+        return !Collections.disjoint(subtypeLabels(concludableTypeVar.inferredTypes(), conceptMgr).toSet(),
+                conclusionTypeVar.inferredTypes());
     }
 
     /*
@@ -191,10 +186,8 @@ public abstract class Concludable extends Resolvable<Conjunction> {
     * take into account if an attribute owned is a key but the unification target requires a different value
      */
     boolean unificationSatisfiable(ThingVariable concludableThingVar, ThingVariable conclusionThingVar) {
-        boolean satisfiable = true;
-        if (!concludableThingVar.inferredTypes().isEmpty() && !conclusionThingVar.inferredTypes().isEmpty()) {
-            satisfiable = !Collections.disjoint(concludableThingVar.inferredTypes(), conclusionThingVar.inferredTypes());
-        }
+        assert !concludableThingVar.inferredTypes().isEmpty() && !conclusionThingVar.inferredTypes().isEmpty();
+        boolean satisfiable = !Collections.disjoint(concludableThingVar.inferredTypes(), conclusionThingVar.inferredTypes());
 
         if (!concludableThingVar.value().isEmpty() && !conclusionThingVar.value().isEmpty()) {
             // TODO: detect value contradictions between constant predicates

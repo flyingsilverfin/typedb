@@ -172,7 +172,7 @@ public class TypeInference {
 
     private Optional<Map<Identifier.Variable.Retrievable, Set<Label>>> executeTypeResolvers(TraversalBuilder traversalBuilder) {
         return logicCache.resolver().get(traversalBuilder.traversal().structure(), structure ->
-                traversalEng.combination(traversalBuilder.traversal(), thingVariableIds(traversalBuilder)).map(result -> {
+                traversalEng.combination(traversalBuilder.traversal(), retrievableThingIds(traversalBuilder)).map(result -> {
                             Map<Identifier.Variable.Retrievable, Set<Label>> mapping = new HashMap<>();
                             result.forEach((id, types) -> {
                                 Optional<Variable> originalVar = traversalBuilder.getOriginalVariable(id);
@@ -187,7 +187,7 @@ public class TypeInference {
         );
     }
 
-    private Set<Identifier.Variable.Retrievable> thingVariableIds(TraversalBuilder traversalBuilder) {
+    private Set<Identifier.Variable.Retrievable> retrievableThingIds(TraversalBuilder traversalBuilder) {
         return iterate(traversalBuilder.resolverToOriginal.values()).filter(Variable::isThing).map(var -> {
             assert var.id().isRetrievable();
             return var.id().asRetrievable();
@@ -259,9 +259,8 @@ public class TypeInference {
         private TypeVariable register(TypeVariable var) {
             if (originalToResolver.containsKey(var.id())) return originalToResolver.get(var.id());
             TypeVariable resolver;
-            if (var.label().isPresent() && var.label().get().scope().isPresent()) {
+            if (var.id().isLabel() && var.label().get().scope().isPresent()) {
                 resolver = new TypeVariable(newSystemId());
-                traversal.labels(resolver.id(), var.inferredTypes());
             } else {
                 resolver = var;
             }
@@ -408,10 +407,6 @@ public class TypeInference {
                 traversal.equalTypes(resolver.id(), register(isaConstraint.type()).id());
             } else {
                 throw TypeDBException.of(ILLEGAL_STATE);
-            }
-            if (isaConstraint.type().label().isPresent()) {
-                restrict(resolver.id(), graphMgr.schema().getSubtypes(
-                        graphMgr.schema().getType(isaConstraint.type().label().get().properLabel())));
             }
         }
 

@@ -30,7 +30,9 @@ import java.util.Set;
 import static com.vaticle.typedb.common.collection.Collections.set;
 import static com.vaticle.typedb.common.util.Objects.className;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.ILLEGAL_STATE;
+import static com.vaticle.typedb.core.common.exception.ErrorMessage.Pattern.ANONYMOUS_TYPE_VARIABLE_CONSTRAINT;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Pattern.INVALID_CASTING;
+import static com.vaticle.typedb.core.common.iterator.Iterators.iterate;
 
 public abstract class TypeConstraint extends Constraint {
 
@@ -41,6 +43,9 @@ public abstract class TypeConstraint extends Constraint {
         if (owner == null) throw new NullPointerException("Null owner");
         this.owner = owner;
         variables = Collections.unmodifiableSet(set(additionalVariables, set(owner)));
+        if (iterate(variables).anyMatch(var -> var.id().isAnonymous())) {
+            throw TypeDBException.of(ANONYMOUS_TYPE_VARIABLE_CONSTRAINT);
+        }
     }
 
     public static TypeConstraint of(TypeVariable owner, com.vaticle.typeql.lang.pattern.constraint.TypeConstraint constraint,

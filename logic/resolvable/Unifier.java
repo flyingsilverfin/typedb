@@ -46,6 +46,9 @@ import java.util.stream.Collectors;
 import static com.vaticle.typedb.common.collection.Collections.set;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Reasoner.REVERSE_UNIFICATION_MISSING_CONCEPT;
 
+/*
+TODO This class will now not have to deal with optionally not present role types. But they may be anonymous!
+ */
 public class Unifier {
 
     private final Map<Retrievable, Set<Variable>> unifier;
@@ -202,7 +205,7 @@ public class Unifier {
         }
 
         public void addVariableType(com.vaticle.typedb.core.pattern.variable.TypeVariable source, Variable target) {
-            assert source.id().isVariable();
+            assert source.id().isVariable(); // TODO this is no longer true
             unifier.computeIfAbsent(source.id().asRetrievable(), (s) -> new HashSet<>()).add(target);
             requirements.types(source.id(), source.inferredTypes());
             unifiedRequirements.types(target, source.inferredTypes());

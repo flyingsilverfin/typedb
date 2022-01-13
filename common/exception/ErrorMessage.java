@@ -249,8 +249,8 @@ public abstract class ErrorMessage extends com.vaticle.typedb.common.exception.E
                 new Pattern(1, "The class '%s' cannot be casted to '%s'.");
         public static final Pattern ANONYMOUS_CONCEPT_VARIABLE =
                 new Pattern(2, "Attempted to refer to a concept using an anonymous variable. Their intended use is for inserting things.");
-        public static final Pattern ANONYMOUS_TYPE_VARIABLE =
-                new Pattern(3, "Attempted to refer to a type using an anonymous variable. Their intended use is for inserting things.");
+        public static final Pattern ANONYMOUS_TYPE_VARIABLE_CONSTRAINT =
+                new Pattern(3, "Query may not constrain an anonymous type variable");
         public static final Pattern UNBOUNDED_CONCEPT_VARIABLE =
                 new Pattern(4, "Invalid query containing unbounded concept variable '%s'.");
         public static final Pattern UNBOUNDED_NEGATION =
