@@ -70,6 +70,7 @@ import static com.vaticle.typedb.core.common.exception.ErrorMessage.Pattern.UNSA
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Pattern.UNSATISFIABLE_SUB_PATTERN;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.TypeRead.ROLE_TYPE_NOT_FOUND;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.TypeRead.TYPE_NOT_FOUND;
+import static com.vaticle.typedb.core.common.iterator.Iterators.empty;
 import static com.vaticle.typedb.core.common.iterator.Iterators.iterate;
 import static com.vaticle.typeql.lang.common.TypeQLToken.Type.ATTRIBUTE;
 import static com.vaticle.typeql.lang.common.TypeQLToken.Type.THING;
@@ -293,18 +294,19 @@ public class TypeInference {
         }
 
         private void restrict(Identifier.Variable id, FunctionalIterator<TypeVertex> types) {
+            Set<TypeVertex> ts = types.toSet();
             TraversalVertex.Properties.Type props = traversal.structure().typeVertex(id).props();
             Set<Label> existingLabels = props.labels();
-            if (existingLabels.isEmpty()) types.forEachRemaining(t -> existingLabels.add(t.properLabel()));
+            if (existingLabels.isEmpty()) ts.iterator().forEachRemaining(t -> existingLabels.add(t.properLabel()));
             else {
-                Set<Label> intersection = types.filter(t -> existingLabels.contains(t.properLabel()))
+                Set<Label> intersection = iterate(ts).filter(t -> existingLabels.contains(t.properLabel()))
                         .map(TypeVertex::properLabel).toSet();
                 props.clearLabels();
                 props.labels(intersection);
             }
             if (props.labels().isEmpty()) {
                 conjunction.setCoherent(false);
-                throw TypeDBException.of(UNSATISFIABLE_PATTERN_VARIABLE, conjunction, id);
+                throw TypeDBException.of(UNSATISFIABLE_PATTERN_VARIABLE, conjunction, resolverToOriginal.get(id));
             }
         }
 
@@ -351,29 +353,33 @@ public class TypeInference {
 
         private void registerValueType(TypeVariable resolver, ValueTypeConstraint valueTypeConstraint) {
             traversal.valueType(resolver.id(), valueTypeConstraint.valueType());
-            inferTypesByValueType(resolver, valueTypeConstraint.valueType());
+            inferTypesByValueType(resolver, set(valueTypeConstraint.valueType()));
         }
 
-        private void inferTypesByValueType(TypeVariable resolver, ValueType valueType) {
-            switch (valueType) {
-                case STRING:
-                    restrict(resolver.id(), graphMgr.schema().attributeTypes(Encoding.ValueType.STRING));
-                    break;
-                case LONG:
-                    restrict(resolver.id(), graphMgr.schema().attributeTypes(Encoding.ValueType.LONG));
-                    break;
-                case DOUBLE:
-                    restrict(resolver.id(), graphMgr.schema().attributeTypes(Encoding.ValueType.DOUBLE));
-                    break;
-                case BOOLEAN:
-                    restrict(resolver.id(), graphMgr.schema().attributeTypes(Encoding.ValueType.BOOLEAN));
-                    break;
-                case DATETIME:
-                    restrict(resolver.id(), graphMgr.schema().attributeTypes(Encoding.ValueType.DATETIME));
-                    break;
-                default:
-                    throw TypeDBException.of(ILLEGAL_STATE);
+        private void inferTypesByValueType(TypeVariable resolver, Set<ValueType> valueTypes) {
+            FunctionalIterator<TypeVertex> attrTypes = empty();
+            for (ValueType valueType : valueTypes) {
+                switch (valueType) {
+                    case STRING:
+                        attrTypes = attrTypes.link(graphMgr.schema().attributeTypes(Encoding.ValueType.STRING));
+                        break;
+                    case LONG:
+                        attrTypes = attrTypes.link(graphMgr.schema().attributeTypes(Encoding.ValueType.LONG));
+                        break;
+                    case DOUBLE:
+                        attrTypes = attrTypes.link(graphMgr.schema().attributeTypes(Encoding.ValueType.DOUBLE));
+                        break;
+                    case BOOLEAN:
+                        attrTypes = attrTypes.link(graphMgr.schema().attributeTypes(Encoding.ValueType.BOOLEAN));
+                        break;
+                    case DATETIME:
+                        attrTypes = attrTypes.link(graphMgr.schema().attributeTypes(Encoding.ValueType.DATETIME));
+                        break;
+                    default:
+                        throw TypeDBException.of(ILLEGAL_STATE);
+                }
             }
+            restrict(resolver.id(), attrTypes);
         }
 
         private TypeVariable register(ThingVariable var) {
@@ -477,11 +483,9 @@ public class TypeInference {
                         .map(Encoding.ValueType::typeQLValueType).toSet();
             }
 
-            if (resolverValueTypes.get(resolver.id()).isEmpty()) {
-                valueTypes.forEach(valueType -> {
-                    traversal.valueType(resolver.id(), valueType);
-                    inferTypesByValueType(resolver, valueType);
-                });
+            if (!valueTypes.isEmpty() && resolverValueTypes.get(resolver.id()).isEmpty()) {
+                traversal.valueType(resolver.id(), valueTypes);
+                inferTypesByValueType(resolver, valueTypes);
                 resolverValueTypes.put(resolver.id(), valueTypes);
             } else if (!resolverValueTypes.get(resolver.id()).containsAll(valueTypes)) {
                 conjunction.setCoherent(false);

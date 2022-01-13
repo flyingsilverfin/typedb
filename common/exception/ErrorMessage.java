@@ -278,9 +278,9 @@ public abstract class ErrorMessage extends com.vaticle.typedb.common.exception.E
         public static final Pattern UNSATISFIABLE_PATTERN =
                 new Pattern(16, "The pattern '%s' can never be satisfied the current schema.");
         public static final Pattern UNSATISFIABLE_SUB_PATTERN =
-                new Pattern(17, "The pattern '%s' can never be satisfied the current schema, due to '$s'.");
+                new Pattern(17, "The pattern '%s' can never be satisfied the current schema, due to '%s'.");
         public static final Pattern UNSATISFIABLE_PATTERN_VARIABLE =
-                new Pattern(17, "The pattern '%s' can never be satisfied the current schema, due to contradicting types for '$s'.");
+                new Pattern(18, "The pattern '%s' can never be satisfied the current schema, due to contradicting types for '%s'.");
 
         private static final String codePrefix = "QRY";
         private static final String messagePrefix = "Invalid Query Pattern";
@@ -351,10 +351,10 @@ public abstract class ErrorMessage extends com.vaticle.typedb.common.exception.E
                 new ThingWrite(14, "Attempted to re-insert pre-existing thing of matched variable '%s' as a new instance (isa) of type '%s'.");
         public static final ThingWrite THING_ISA_MISSING =
                 new ThingWrite(15, "The thing variable '%s' cannot be inserted as a new instance without providing its type (isa).");
-        public static final ThingWrite ILLEGAL_TYPE_VARIABLE_IN_INSERT =
-                new ThingWrite(16, "The type variable '%s' must represent exactly one possible insertable type, rather than '%s'.");
-        public static final ThingWrite ILLEGAL_TYPE_VARIABLE_IN_DELETE =
-                new ThingWrite(17, "Illegal type variable '%s' found in delete query. Types can only be referred to by their labels in delete queries or then clauses.");
+        public static final ThingWrite AMBIGUOUS_TYPE_VARIABLE_IN_INSERT =
+                new ThingWrite(16, "Ambiguous type variable '%s' in insert could be any of the types '%s'. Insert variables must represent exactly 1 type.");
+//        public static final ThingWrite ILLEGAL_TYPE_VARIABLE_IN_DELETE =  // TODO
+//                new ThingWrite(17, "Illegal type variable '%s' found in delete query. Types can only be referred to by their labels in delete queries or then clauses.");
         public static final ThingWrite ILLEGAL_ANONYMOUS_RELATION_IN_DELETE =
                 new ThingWrite(18, "Illegal anonymous relation in delete query: '%s'.  You must match the relation variable by name, and then delete it.");
         public static final ThingWrite ILLEGAL_ANONYMOUS_VARIABLE_IN_DELETE =
