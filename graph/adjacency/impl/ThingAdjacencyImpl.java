@@ -129,7 +129,7 @@ public abstract class ThingAdjacencyImpl implements ThingAdjacency {
                         ASC,
                         comparableEdge -> comparableEdge.edge().from(),
                         vertex -> ComparableEdge.Thing.byInIID(
-                                new ThingEdgeImpl.Target(encoding, owner, vertex, optimisedType)
+                                new ThingEdgeImpl.Target(encoding, vertex, owner, optimisedType)
                         )
                 );
             }
@@ -152,7 +152,7 @@ public abstract class ThingAdjacencyImpl implements ThingAdjacency {
                             ASC,
                             comparableEdge -> KeyValue.of(comparableEdge.edge().from(), comparableEdge.edge().optimised().get()),
                             relationAndRole -> ComparableEdge.Thing.byInIID(
-                                    new ThingEdgeImpl.Target(encoding, owner, relationAndRole.key(), optimisedType)
+                                    new ThingEdgeImpl.Target(encoding, relationAndRole.key(), owner, optimisedType)
                             )
                     );
                 }

@@ -131,7 +131,8 @@ public class Materialiser {
                     .materialise(conditionAns, tx.traversal(), tx.concepts())
                     .map(conclusionAns -> new ConceptMap(filterRetrievable(conclusionAns)))
                     .filter(thenConcludable::isInferredAnswer)
-                    .forEachRemaining(ans -> record(conditionAns, ans)));
+                    .forEachRemaining(ans -> record(conditionAns, ans))
+            );
             return requiresReiteration;
         }
 
