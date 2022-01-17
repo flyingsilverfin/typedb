@@ -370,9 +370,9 @@ public class TypeInferenceTest {
     @Test
     public void value_comparision_between_double_long() throws IOException {
         define_custom_schema("define" +
-                                     " house-number sub attribute, value long;" +
-                                     " length sub attribute, value double;" +
-                                     " name sub attribute, value string;"
+                " house-number sub attribute, value long;" +
+                " length sub attribute, value double;" +
+                " name sub attribute, value string;"
         );
 
         TypeInference typeInference = transaction.logic().typeInference();
@@ -452,25 +452,25 @@ public class TypeInferenceTest {
     @Test
     public void relation_staggered_role_hierarchy() {
         define_custom_schema("define" +
-                                     " person sub entity," +
-                                     "  plays partnership:partner," +
-                                     "  plays marriage:spouse;" +
-                                     "" +
-                                     " man sub person," +
-                                     "  plays hetero-marriage:husband;" +
-                                     "" +
-                                     " woman sub person," +
-                                     "   plays hetero-marriage:wife;" +
-                                     "" +
-                                     " partnership sub relation," +
-                                     "  relates partner;" +
-                                     "" +
-                                     " marriage sub partnership," +
-                                     "  relates spouse as partner;" +
-                                     "" +
-                                     " hetero-marriage sub marriage," +
-                                     "  relates husband as spouse," +
-                                     "  relates wife as spouse;");
+                " person sub entity," +
+                "  plays partnership:partner," +
+                "  plays marriage:spouse;" +
+                "" +
+                " man sub person," +
+                "  plays hetero-marriage:husband;" +
+                "" +
+                " woman sub person," +
+                "   plays hetero-marriage:wife;" +
+                "" +
+                " partnership sub relation," +
+                "  relates partner;" +
+                "" +
+                " marriage sub partnership," +
+                "  relates spouse as partner;" +
+                "" +
+                " hetero-marriage sub marriage," +
+                "  relates husband as spouse," +
+                "  relates wife as spouse;");
         TypeInference typeInference = transaction.logic().typeInference();
 
         String queryString = "match $r (spouse: $yoko, $role: $john) isa $m; $john isa man;";
@@ -522,6 +522,7 @@ public class TypeInferenceTest {
         Map<String, Set<String>> expected = new HashMap<>() {{
             put("$yoko", set("man", "woman", "person"));
             put("$_0", set("marriage"));
+            put("$_1", set("marriage:husband", "marriage:spouse", "marriage:wife"));
             put("$_marriage", set("marriage"));
         }};
 
@@ -543,6 +544,7 @@ public class TypeInferenceTest {
             put("$john", set("man"));
             put("$role", set("marriage:husband", "marriage:wife", "marriage:spouse", "relation:role"));
             put("$r", set("marriage"));
+            put("$_0", set("marriage:husband", "marriage:spouse", "marriage:wife"));
             put("$a", set("person", "man", "woman"));
             put("$_marriage:husband", set("marriage:husband"));
             put("$_marriage", set("marriage"));
@@ -690,8 +692,8 @@ public class TypeInferenceTest {
     @Test
     public void has_with_minimal_cycle() {
         define_custom_schema("define " +
-                                     "unit sub attribute, value string, owns unit, owns ref;" +
-                                     "ref sub attribute, value long;");
+                "unit sub attribute, value string, owns unit, owns ref;" +
+                "ref sub attribute, value long;");
         TypeInference typeInference = transaction.logic().typeInference();
         String queryString = "match" +
                 "  $a has $a;";
@@ -717,7 +719,7 @@ public class TypeInferenceTest {
 
         Map<String, Set<String>> expected = new HashMap<>() {{
             put("$x", set("animal", "mammal", "reptile", "tortoise", "person", "man", "woman", "dog", "name", "email",
-                          "marriage", "triangle", "right-angled-triangle", "square", "perimeter", "area", "hypotenuse-length", "label"));
+                    "marriage", "triangle", "right-angled-triangle", "square", "perimeter", "area", "hypotenuse-length", "label"));
             put("$_thing", set("thing"));
         }};
 
@@ -870,11 +872,11 @@ public class TypeInferenceTest {
     @Test
     public void overridden_relates_are_valid() {
         define_custom_schema("define" +
-                                     " marriage sub relation, relates spouse;" +
-                                     " hetero-marriage sub marriage," +
-                                     "   relates husband as spouse, relates wife as spouse;" +
-                                     " person sub entity, plays marriage:spouse, plays hetero-marriage:husband," +
-                                     "   plays hetero-marriage:wife;"
+                " marriage sub relation, relates spouse;" +
+                " hetero-marriage sub marriage," +
+                "   relates husband as spouse, relates wife as spouse;" +
+                " person sub entity, plays marriage:spouse, plays hetero-marriage:husband," +
+                "   plays hetero-marriage:wife;"
         );
         TypeInference typeInference = transaction.logic().typeInference();
         String queryString = "match $m (spouse: $x, spouse: $y) isa marriage;";
@@ -1051,8 +1053,8 @@ public class TypeInferenceTest {
     @Test
     public void infer_key_attributes() {
         define_custom_schema("define" +
-                                     " person sub entity, owns name @key;" +
-                                     " name sub attribute, value string;"
+                " person sub entity, owns name @key;" +
+                " name sub attribute, value string;"
         );
 
         TypeInference typeInference = transaction.logic().typeInference();
@@ -1073,9 +1075,9 @@ public class TypeInferenceTest {
     @Test
     public void role_labels_reduced_by_full_type_resolver() {
         define_custom_schema("define" +
-                                     " person sub entity, plays partnership:partner;" +
-                                     " partnership sub relation, relates partner;" +
-                                     " business sub relation, relates partner;"
+                " person sub entity, plays partnership:partner;" +
+                " partnership sub relation, relates partner;" +
+                " business sub relation, relates partner;"
         );
 
         TypeInference typeInference = transaction.logic().typeInference();
@@ -1125,10 +1127,10 @@ public class TypeInferenceTest {
     @Test
     public void cannot_insert_abstract_attributes() {
         define_custom_schema("define " +
-                                     " person sub entity, owns name;" +
-                                     " woman sub person, owns maiden-name as name;" +
-                                     " name sub attribute, value string, abstract;" +
-                                     " maiden-name sub name, value string;");
+                " person sub entity, owns name;" +
+                " woman sub person, owns maiden-name as name;" +
+                " name sub attribute, value string, abstract;" +
+                " maiden-name sub name, value string;");
         String queryString = "match $x isa woman, has name 'smith';";
         Disjunction disjunction = createDisjunction(queryString);
         transaction.logic().typeInference().infer(disjunction);
@@ -1142,9 +1144,9 @@ public class TypeInferenceTest {
     @Test
     public void cannot_insert_if_relation_type_too_general() {
         define_custom_schema("define" +
-                                     " person sub entity, plays marriage:husband, plays marriage:wife;" +
-                                     " partnership sub relation, relates partner;" +
-                                     " marriage sub partnership, relates husband as partner, relates wife as partner;");
+                " person sub entity, plays marriage:husband, plays marriage:wife;" +
+                " partnership sub relation, relates partner;" +
+                " marriage sub partnership, relates husband as partner, relates wife as partner;");
         String queryString = "match $x isa person; (wife: $x) isa partnership;";
         Disjunction disjunction = createDisjunction(queryString);
         transaction.logic().typeInference().infer(disjunction);
@@ -1158,9 +1160,9 @@ public class TypeInferenceTest {
     @Test
     public void cannot_insert_if_role_is_too_general() {
         define_custom_schema("define" +
-                                     " person sub entity, plays marriage:husband, plays marriage:wife;" +
-                                     " partnership sub relation, relates partner;" +
-                                     " marriage sub partnership, relates husband as partner, relates wife as partner;");
+                " person sub entity, plays marriage:husband, plays marriage:wife;" +
+                " partnership sub relation, relates partner;" +
+                " marriage sub partnership, relates husband as partner, relates wife as partner;");
         String queryString = "match $x isa person; (partner: $x) isa marriage;";
         Disjunction disjunction = createDisjunction(queryString);
         transaction.logic().typeInference().infer(disjunction);
@@ -1174,22 +1176,21 @@ public class TypeInferenceTest {
     @Test
     public void variable_relations_allowed_only_if_all_possibilities_are_insertable() {
         define_custom_schema("define" +
-                                     " person sub entity, plays marriage:husband, plays marriage:wife;" +
-                                     " partnership sub relation, relates partner;" +
-                                     " marriage sub partnership, relates husband as partner, relates wife as partner;");
+                " person sub entity, plays marriage:husband, plays marriage:wife;" +
+                " partnership sub relation, relates partner;" +
+                " marriage sub partnership, relates husband as partner, relates wife as partner;");
         transaction.logic().putRule(
                 "marriage-rule",
                 TypeQL.parsePattern("{$x isa person; $t isa marriage;}").asConjunction(),
                 TypeQL.parseVariable("(wife: $x) isa $t").asThing());
     }
 
-
     @Test
     public void nested_negation_outer_scope_correctly_reduces_resolved_types() {
         define_custom_schema("define " +
-                                     "person sub entity, plays marriage:spouse;" +
-                                     "woman sub person;" +
-                                     "marriage sub relation, relates spouse;");
+                "person sub entity, plays marriage:spouse;" +
+                "woman sub person;" +
+                "marriage sub relation, relates spouse;");
 
         String minimallyRestricted = "match $x isa person; not { ($x) isa marriage; };";
         Disjunction disjunction = createDisjunction(minimallyRestricted);
@@ -1197,6 +1198,7 @@ public class TypeInferenceTest {
         HashMap<String, Set<String>> expected = new HashMap<>() {{
             put("$x", set("person", "woman"));
             put("$_0", set("marriage"));
+            put("$_1", set("marriage:spouse"));
             put("$_marriage", set("marriage"));
         }};
         // test the inner negation
@@ -1208,12 +1210,12 @@ public class TypeInferenceTest {
         expected = new HashMap<>() {{
             put("$x", set("woman"));
             put("$_0", set("marriage"));
+            put("$_1", set("marriage:spouse"));
             put("$_marriage", set("marriage"));
         }};
         // test the inner negation
         assertEquals(expected, resolvedTypeMap(restrictedDisjunction.conjunctions().get(0).negations().iterator().next().disjunction().conjunctions().get(0)));
     }
-
 
     /**
      * If the type resolver conflates anonymous or generated variables between the inner or outer nestings,
@@ -1222,23 +1224,23 @@ public class TypeInferenceTest {
     @Test
     public void nested_negation_is_satisfiable() {
         define_custom_schema("define session sub entity,\n" +
-                                     "          plays reported-fault:parent-session,\n" +
-                                     "          plays unanswered-question:parent-session;\n" +
-                                     "      fault sub entity,\n" +
-                                     "          plays reported-fault:relevant-fault,\n" +
-                                     "          plays fault-identification:identified-fault;\n" +
-                                     "      question sub entity,\n" +
-                                     "          plays fault-identification:identifying-question,\n" +
-                                     "          plays unanswered-question:question-not-answered;\n" +
-                                     "      reported-fault sub relation,\n" +
-                                     "          relates relevant-fault,\n" +
-                                     "          relates parent-session;\n" +
-                                     "      unanswered-question sub relation,\n" +
-                                     "          relates question-not-answered,\n" +
-                                     "          relates parent-session;\n" +
-                                     "      fault-identification sub relation,\n" +
-                                     "          relates identifying-question,\n" +
-                                     "          relates identified-fault;\n"
+                "          plays reported-fault:parent-session,\n" +
+                "          plays unanswered-question:parent-session;\n" +
+                "      fault sub entity,\n" +
+                "          plays reported-fault:relevant-fault,\n" +
+                "          plays fault-identification:identified-fault;\n" +
+                "      question sub entity,\n" +
+                "          plays fault-identification:identifying-question,\n" +
+                "          plays unanswered-question:question-not-answered;\n" +
+                "      reported-fault sub relation,\n" +
+                "          relates relevant-fault,\n" +
+                "          relates parent-session;\n" +
+                "      unanswered-question sub relation,\n" +
+                "          relates question-not-answered,\n" +
+                "          relates parent-session;\n" +
+                "      fault-identification sub relation,\n" +
+                "          relates identifying-question,\n" +
+                "          relates identified-fault;\n"
         );
         String query = "match (relevant-fault: $flt, parent-session: $ts) isa reported-fault;\n" +
                 "          not {\n" +
@@ -1248,5 +1250,47 @@ public class TypeInferenceTest {
         Disjunction disjunction = createDisjunction(query);
         transaction.logic().typeInference().infer(disjunction);
         assertTrue(disjunction.conjunctions().get(0).negations().iterator().next().disjunction().conjunctions().get(0).isCoherent());
+    }
+
+    @Test
+    public void variable_types_are_inferred() {
+        define_custom_schema("define " +
+                "person sub entity," +
+                "    owns first-name," +
+                "    owns last-name," +
+                "    owns age," +
+                "    plays employment:employee;" +
+                "company sub entity," +
+                "    plays employment:employer;" +
+                "employment sub relation," +
+                "    relates employee," +
+                "    relates employer;" +
+                "name sub attribute, value string, abstract;" +
+                "first-name sub name;" +
+                "last-name sub name;" +
+                "age sub attribute, value long;");
+
+
+        String query = "match $x isa $rel-type; $rel-type relates $role-type; $role-type type employment:employee;";
+        Disjunction disjunction = createDisjunction(query);
+        transaction.logic().typeInference().infer(disjunction);
+
+        HashMap<String, Set<String>> expected = new HashMap<>() {{
+            put("$x", set("employment"));
+            put("$rel-type", set("employment"));
+            put("$role-type", set("employment:employee"));
+        }};
+        assertEquals(expected, resolvedTypeMap(disjunction.conjunctions().get(0)));
+
+        query = "match $x isa $t; $t plays $role-type; $role-type type employment:employee;";
+        disjunction = createDisjunction(query);
+        transaction.logic().typeInference().infer(disjunction);
+
+        expected = new HashMap<>() {{
+            put("$x", set("person"));
+            put("$t", set("person"));
+            put("$role-type", set("employment:employee"));
+        }};
+        assertEquals(expected, resolvedTypeMap(disjunction.conjunctions().get(0)));
     }
 }

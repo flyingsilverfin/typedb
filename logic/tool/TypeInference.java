@@ -156,7 +156,9 @@ public class TypeInference {
 
     private TraversalBuilder builder(Conjunction conjunction, List<Conjunction> scopingConjunctions, GraphManager graphMgr, boolean insertable) {
         TraversalBuilder currentBuilder = null;
-        if (!scopingConjunctions.isEmpty()) {
+        if (scopingConjunctions.isEmpty()) {
+            currentBuilder = new TraversalBuilder(conjunction, insertable, graphMgr);
+        } else {
             Set<Reference.Name> names = iterate(conjunction.variables()).filter(v -> v.reference().isName())
                     .map(v -> v.reference().asName()).toSet();
             for (Conjunction scoping : scopingConjunctions) {
@@ -167,14 +169,14 @@ public class TypeInference {
                 }
             }
             currentBuilder = new TraversalBuilder(conjunction, currentBuilder, insertable, graphMgr);
-        } else currentBuilder = new TraversalBuilder(conjunction, insertable, graphMgr);
+        }
         currentBuilder.traversal().filter(currentBuilder.retrievedResolvers());
         return currentBuilder;
     }
 
     private Optional<Map<Identifier.Variable.Retrievable, Set<Label>>> executeTypeResolvers(TraversalBuilder traversalBuilder) {
         return logicCache.resolver().get(traversalBuilder.traversal().structure(), structure ->
-                traversalEng.combination(traversalBuilder.traversal(), retrievableThingIds(traversalBuilder)).map(result -> {
+                traversalEng.combination(traversalBuilder.traversal(), requireConcreteTypes(traversalBuilder)).map(result -> {
                             Map<Identifier.Variable.Retrievable, Set<Label>> mapping = new HashMap<>();
                             result.forEach((id, types) -> {
                                 Optional<Variable> originalVar = traversalBuilder.getOriginalVariable(id);
@@ -189,11 +191,14 @@ public class TypeInference {
         );
     }
 
-    private Set<Identifier.Variable.Retrievable> retrievableThingIds(TraversalBuilder traversalBuilder) {
-        return iterate(traversalBuilder.resolverToOriginal.values()).filter(Variable::isThing).map(var -> {
-            assert var.id().isRetrievable();
-            return var.id().asRetrievable();
-        }).toSet();
+    /*
+    Any Thing variable must be an instance of a concrete type
+    Any Anonymous type variable can only usefully represent concrete types
+     */
+    private Set<Identifier.Variable.Retrievable> requireConcreteTypes(TraversalBuilder traversalBuilder) {
+        return iterate(traversalBuilder.resolverToOriginal.values())
+                .filter(var -> var.isThing() || (var.isType() && var.id().isAnonymous()))
+                .map(var -> var.id().asRetrievable()).toSet();
     }
 
     private static class TraversalBuilder {
@@ -333,7 +338,7 @@ public class TypeInference {
             TypeVariable roleResolver = register(relatesConstraint.role());
             traversal.relates(resolver.id(), roleResolver.id());
             restrict(resolver.id(), graphMgr.schema().relationTypes());
-            restrict(resolver.id(), graphMgr.schema().roleTypes());
+            restrict(roleResolver.id(), graphMgr.schema().roleTypes());
         }
 
         private void registerSub(TypeVariable resolver, SubConstraint subConstraint) {
