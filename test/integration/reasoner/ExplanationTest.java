@@ -488,10 +488,10 @@ public class ExplanationTest {
         }
     }
 
-    private List<Explanation> assertSingleExplainableExplanations(ConceptMap ans, int anonymousConcepts, int explainablesCount,
+    private List<Explanation> assertSingleExplainableExplanations(ConceptMap ans, int anonymousThings, int explainablesCount,
                                                                   int explanationsCount, RocksTransaction txn) {
         List<ConceptMap.Explainable> explainables = ans.explainables().iterator().toList();
-        assertEquals(anonymousConcepts, iterate(ans.concepts().keySet()).filter(Identifier::isAnonymous).count());
+        assertEquals(anonymousThings, iterate(ans.concepts().keySet()).filter(id -> id.isAnonymous() && ans.get(id).isThing()).count());
         assertEquals(explainablesCount, explainables.size());
         ConceptMap.Explainable explainable = explainables.iterator().next();
         assertNotEquals(NOT_IDENTIFIED, explainable.id());
