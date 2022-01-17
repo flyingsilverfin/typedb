@@ -178,8 +178,8 @@ public class GraphProcedure implements PermutationProcedure {
         assertWithinFilterBounds(filter);
         return async(startVertex().iterator(graphMgr, params).map(
                 // TODO we can reduce the size of the distinct() set if the traversal engine doesn't overgenerate as much
-                v -> new GraphIterator(graphMgr, v, this, params, filter).distinct()
-        ), parallelisation);
+                v -> new GraphIterator(graphMgr, v, this, params, filter)
+        ), parallelisation).distinct();
     }
 
     @Override
@@ -192,8 +192,8 @@ public class GraphProcedure implements PermutationProcedure {
         assertWithinFilterBounds(filter);
         return startVertex().iterator(graphMgr, params).flatMap(
                 // TODO we can reduce the size of the distinct() set if the traversal engine doesn't overgenerate as much
-                sv -> new GraphIterator(graphMgr, sv, this, params, filter).distinct()
-        );
+                sv -> new GraphIterator(graphMgr, sv, this, params, filter)
+        ).distinct();
     }
 
     @Override

@@ -28,7 +28,7 @@ def vaticle_typeql_lang_java():
     git_repository(
         name = "vaticle_typeql_lang_java",
         remote = "https://github.com/flyingsilverfin/typeql-lang-java",
-        commit = "1e10a75c77efc2b5702a78bde5307ba9176888d9", # sync-marker: do not remove this comment, this is used for sync-dependencies by @vaticle_typeql_lang_java
+        commit = "79c1c81433c479b8a747d03ab0588c85a9e0ad0c", # sync-marker: do not remove this comment, this is used for sync-dependencies by @vaticle_typeql_lang_java
     )
 
 def vaticle_typedb_common():
