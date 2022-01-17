@@ -86,13 +86,13 @@ public interface RootResolver<TOP extends Top> {
 
         @Override
         public void submitAnswer(Finished answer) {
-            LOG.debug("Submitting answer: {}", answer);
+            LOG.trace("Submitting answer: {}", answer);
             onAnswer.accept(answer);
         }
 
         @Override
         public void submitFail(int iteration) {
-            LOG.debug("Submitting fail in iteration: {}", iteration);
+            LOG.trace("Submitting fail in iteration: {}", iteration);
             onFail.accept(iteration);
         }
 
@@ -192,7 +192,7 @@ public interface RootResolver<TOP extends Top> {
 
         @Override
         public void submitAnswer(Finished answer) {
-            LOG.debug("Submitting answer: {}", answer);
+            LOG.trace("Submitting answer: {}", answer);
             onAnswer.accept(answer);
         }
 
@@ -278,7 +278,7 @@ public interface RootResolver<TOP extends Top> {
 
         @Override
         public void submitAnswer(Top.Explain.Finished answer) {
-            LOG.debug("Submitting answer: {}", answer);
+            LOG.trace("Submitting answer: {}", answer);
             onAnswer.accept(answer);
         }
 

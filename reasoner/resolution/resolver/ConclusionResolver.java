@@ -124,7 +124,7 @@ public class ConclusionResolver extends Resolver<ConclusionResolver> {
 
     @Override
     protected void initialiseDownstreamResolvers() {
-        LOG.debug("{}: initialising downstream resolvers", name());
+        LOG.trace("{}: initialising downstream resolvers", name());
         try {
             ruleResolver = registry.registerCondition(conclusion.rule().condition());
             isInitialised = true;
@@ -161,7 +161,7 @@ public class ConclusionResolver extends Resolver<ConclusionResolver> {
     }
 
     private ConclusionRequestState<?> createRequestState(Request fromUpstream, int iteration) {
-        LOG.debug("{}: Creating a new ConclusionResponse for request: {}", name(), fromUpstream);
+        LOG.trace("{}: Creating a new ConclusionResponse for request: {}", name(), fromUpstream);
 
         ConclusionRequestState<?> requestState;
         if (fromUpstream.partialAnswer().asConclusion().isExplain()) {

@@ -144,7 +144,7 @@ public abstract class ConjunctionResolver<RESOLVER extends ConjunctionResolver<R
 
     @Override
     protected void initialiseDownstreamResolvers() {
-        LOG.debug("{}: initialising downstream resolvers", name());
+        LOG.trace("{}: initialising downstream resolvers", name());
         Set<Concludable> concludables = concludablesTriggeringRules();
         Set<Retrievable> retrievables = Retrievable.extractFrom(conjunction(), concludables);
         resolvables.addAll(concludables);
@@ -170,7 +170,7 @@ public abstract class ConjunctionResolver<RESOLVER extends ConjunctionResolver<R
 
     @Override
     protected RequestState requestStateCreate(Request fromUpstream, int iteration) {
-        LOG.debug("{}: Creating a new RequestState for request: {}", name(), fromUpstream);
+        LOG.trace("{}: Creating a new RequestState for request: {}", name(), fromUpstream);
         Plans.Plan plan = plans.create(fromUpstream, resolvables, negateds);
         assert !plan.isEmpty() && fromUpstream.partialAnswer().isCompound();
         RequestState requestState = requestStateNew(iteration);
@@ -182,7 +182,7 @@ public abstract class ConjunctionResolver<RESOLVER extends ConjunctionResolver<R
     protected RequestState requestStateReiterate(Request fromUpstream, RequestState requestStatePrior,
                                                   int newIteration) {
         assert newIteration > requestStatePrior.iteration();
-        LOG.debug("{}: Updating RequestState for iteration '{}'", name(), newIteration);
+        LOG.trace("{}: Updating RequestState for iteration '{}'", name(), newIteration);
         Plans.Plan plan = plans.create(fromUpstream, resolvables, negateds);
         assert !plan.isEmpty() && fromUpstream.partialAnswer().isCompound();
         RequestState requestStateNextIteration = requestStateForIteration(requestStatePrior, newIteration);

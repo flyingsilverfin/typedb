@@ -118,7 +118,7 @@ public class RetrievableResolver extends Resolver<RetrievableResolver> {
     }
 
     protected RetrievableRequestState createRequestState(Request fromUpstream, int iteration) {
-        LOG.debug("{}: Creating a new RequestState for iteration:{}, request: {}", name(), iteration, fromUpstream);
+        LOG.trace("{}: Creating a new RequestState for iteration:{}, request: {}", name(), iteration, fromUpstream);
         assert fromUpstream.partialAnswer().isRetrievable();
         Driver<? extends Resolver<?>> root = fromUpstream.partialAnswer().root();
         cacheRegistersByRoot.putIfAbsent(root, new HashMap<>());

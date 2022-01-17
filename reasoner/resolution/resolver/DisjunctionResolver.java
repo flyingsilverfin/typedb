@@ -73,7 +73,7 @@ public abstract class DisjunctionResolver<RESOLVER extends DisjunctionResolver<R
 
     @Override
     protected void initialiseDownstreamResolvers() {
-        LOG.debug("{}: initialising downstream resolvers", name());
+        LOG.trace("{}: initialising downstream resolvers", name());
         for (com.vaticle.typedb.core.pattern.Conjunction conjunction : disjunction.conjunctions()) {
             try {
                 downstreamResolvers.put(registry.nested(conjunction), conjunction);
@@ -87,7 +87,7 @@ public abstract class DisjunctionResolver<RESOLVER extends DisjunctionResolver<R
 
     @Override
     protected RequestState requestStateCreate(Request fromUpstream, int iteration) {
-        LOG.debug("{}: Creating a new RequestState for request: {}", name(), fromUpstream);
+        LOG.trace("{}: Creating a new RequestState for request: {}", name(), fromUpstream);
         assert fromUpstream.partialAnswer().isCompound();
         RequestState requestState = new RequestState(iteration);
         for (Driver<ConjunctionResolver.Nested> conjunctionResolver : downstreamResolvers.keySet()) {
@@ -102,7 +102,7 @@ public abstract class DisjunctionResolver<RESOLVER extends DisjunctionResolver<R
     @Override
     protected RequestState requestStateReiterate(Request fromUpstream, RequestState requestStatePrior,
                                                   int newIteration) {
-        LOG.debug("{}: Updating RequestState for iteration '{}'", name(), newIteration);
+        LOG.trace("{}: Updating RequestState for iteration '{}'", name(), newIteration);
 
         assert newIteration > requestStatePrior.iteration() && fromUpstream.partialAnswer().isCompound();
 

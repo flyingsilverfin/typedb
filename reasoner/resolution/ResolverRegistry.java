@@ -129,7 +129,7 @@ public class ResolverRegistry {
     }
 
     public ResolverView.FilteredNegation negated(Negated negated, Conjunction upstream) {
-        LOG.debug("Creating Negation resolver for : {}", negated);
+        LOG.trace("Creating Negation resolver for : {}", negated);
         Actor.Driver<NegationResolver> negatedResolver = Actor.driver(driver -> new NegationResolver(
                 driver, negated, this, traversalEngine, conceptMgr, resolutionTracing
         ), executorService);
@@ -147,7 +147,7 @@ public class ResolverRegistry {
     }
 
     public Actor.Driver<ConditionResolver> registerCondition(Rule.Condition ruleCondition) {
-        LOG.debug("Register retrieval for rule condition actor: '{}'", ruleCondition);
+        LOG.trace("Register retrieval for rule condition actor: '{}'", ruleCondition);
         Actor.Driver<ConditionResolver> resolver = ruleConditions.computeIfAbsent(ruleCondition.rule(), (r) -> Actor.driver(
                 driver -> new ConditionResolver(driver, ruleCondition, this, traversalEngine,
                                                 conceptMgr, logicMgr, resolutionTracing), executorService
@@ -159,7 +159,7 @@ public class ResolverRegistry {
     }
 
     public Actor.Driver<ConclusionResolver> registerConclusion(Rule.Conclusion conclusion) {
-        LOG.debug("Register retrieval for rule conclusion actor: '{}'", conclusion);
+        LOG.trace("Register retrieval for rule conclusion actor: '{}'", conclusion);
         Actor.Driver<ConclusionResolver> resolver = ruleConclusions.computeIfAbsent(conclusion.rule(), r -> Actor.driver(
                 driver -> new ConclusionResolver(driver, conclusion, this,
                                                  traversalEngine, conceptMgr, resolutionTracing), executorService
@@ -179,7 +179,7 @@ public class ResolverRegistry {
     }
 
     private ResolverView.FilteredRetrievable registerRetrievable(com.vaticle.typedb.core.logic.resolvable.Retrievable retrievable) {
-        LOG.debug("Register RetrievableResolver: '{}'", retrievable.pattern());
+        LOG.trace("Register RetrievableResolver: '{}'", retrievable.pattern());
         Actor.Driver<RetrievableResolver> resolver = Actor.driver(driver -> new RetrievableResolver(
                 driver, retrievable, this, traversalEngine, conceptMgr, resolutionTracing
         ), executorService);
@@ -190,7 +190,7 @@ public class ResolverRegistry {
 
     // note: must be thread safe. We could move to a ConcurrentHashMap if we create an alpha-equivalence wrapper
     private synchronized ResolverView.MappedConcludable registerConcludable(Concludable concludable) {
-        LOG.debug("Register ConcludableResolver: '{}'", concludable.pattern());
+        LOG.trace("Register ConcludableResolver: '{}'", concludable.pattern());
         for (Map.Entry<Concludable, Actor.Driver<ConcludableResolver>> c : concludableResolvers.entrySet()) {
             // TODO: This needs to be optimised from a linear search to use an alpha hash
             AlphaEquivalence alphaEquality = concludable.alphaEquals(c.getKey());
@@ -209,7 +209,7 @@ public class ResolverRegistry {
     }
 
     public Actor.Driver<ConjunctionResolver.Nested> nested(Conjunction conjunction) {
-        LOG.debug("Creating Conjunction resolver for : {}", conjunction);
+        LOG.trace("Creating Conjunction resolver for : {}", conjunction);
         Actor.Driver<ConjunctionResolver.Nested> resolver = Actor.driver(driver -> new ConjunctionResolver.Nested(
                 driver, conjunction, this, traversalEngine, conceptMgr, logicMgr, resolutionTracing
         ), executorService);
@@ -219,7 +219,7 @@ public class ResolverRegistry {
     }
 
     public Actor.Driver<DisjunctionResolver.Nested> nested(Disjunction disjunction) {
-        LOG.debug("Creating Disjunction resolver for : {}", disjunction);
+        LOG.trace("Creating Disjunction resolver for : {}", disjunction);
         Actor.Driver<DisjunctionResolver.Nested> resolver = Actor.driver(driver -> new DisjunctionResolver.Nested(
                 driver, disjunction, this, traversalEngine, conceptMgr, resolutionTracing
         ), executorService);

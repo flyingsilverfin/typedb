@@ -82,7 +82,7 @@ public class NegationResolver extends Resolver<NegationResolver> {
 
     @Override
     protected void initialiseDownstreamResolvers() {
-        LOG.debug("{}: initialising downstream resolvers", name());
+        LOG.trace("{}: initialising downstream resolvers", name());
 
         Disjunction disjunction = negated.pattern();
         if (disjunction.conjunctions().size() == 1) {

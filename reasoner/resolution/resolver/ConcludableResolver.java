@@ -189,7 +189,7 @@ public class ConcludableResolver extends Resolver<ConcludableResolver> {
 
     @Override
     protected void initialiseDownstreamResolvers() {
-        LOG.debug("{}: initialising downstream resolvers", name());
+        LOG.trace("{}: initialising downstream resolvers", name());
         concludable.getApplicableRules(conceptMgr, logicMgr).forEachRemaining(rule -> concludable.getUnifiers(rule)
                 .forEachRemaining(unifier -> {
                     if (isTerminated()) return;
@@ -241,7 +241,7 @@ public class ConcludableResolver extends Resolver<ConcludableResolver> {
     }
 
     protected CachingRequestState<?, ConceptMap> createRequestState(Request fromUpstream, int iteration) {
-        LOG.debug("{}: Creating new Responses for iteration{}, request: {}", name(), iteration, fromUpstream);
+        LOG.trace("{}: Creating new Responses for iteration{}, request: {}", name(), iteration, fromUpstream);
         Driver<? extends Resolver<?>> root = fromUpstream.partialAnswer().root();
         cacheRegistersByRoot.putIfAbsent(root, new HashMap<>());
         Map<ConceptMap, AnswerCache<?, ConceptMap>> cacheRegister = cacheRegistersByRoot.get(root);

@@ -333,7 +333,7 @@ public class GraphPlanner implements Planner {
     private void optimise(GraphManager graph, boolean singleUse) {
         updateObjective(graph);
         if (isUpToDate() && isOptimal()) {
-            if (LOG.isDebugEnabled()) LOG.debug("GraphPlanner still optimal and up-to-date");
+            if (LOG.isDebugEnabled()) LOG.trace("GraphPlanner still optimal and up-to-date");
             return;
         }
 
@@ -355,7 +355,7 @@ public class GraphPlanner implements Planner {
 
         isUpToDate = true;
         totalDuration -= allocatedDuration - between(start, endSolver).toMillis();
-        printDebug(start, endSolver, end);
+        printTrace(start, endSolver, end);
     }
 
     private void throwPlanningError() {
@@ -365,12 +365,12 @@ public class GraphPlanner implements Planner {
         throw TypeDBException.of(UNEXPECTED_PLANNING_ERROR);
     }
 
-    private void printDebug(Instant start, Instant endSolver, Instant end) {
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("Optimisation status         : {}", optimiser.status().name());
-            LOG.debug("Solver duration             : {} (ms)", between(start, endSolver).toMillis());
-            LOG.debug("Procedure creation duration : {} (ms)", between(endSolver, end).toMillis());
-            LOG.debug("Total duration ------------ : {} (ms)", between(start, end).toMillis());
+    private void printTrace(Instant start, Instant endSolver, Instant end) {
+        if (LOG.isTraceEnabled()) {
+            LOG.trace("Optimisation status         : {}", optimiser.status().name());
+            LOG.trace("Solver duration             : {} (ms)", between(start, endSolver).toMillis());
+            LOG.trace("Procedure creation duration : {} (ms)", between(endSolver, end).toMillis());
+            LOG.trace("Total duration ------------ : {} (ms)", between(start, end).toMillis());
         }
     }
 
