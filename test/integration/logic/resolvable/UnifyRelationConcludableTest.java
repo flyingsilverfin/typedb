@@ -169,7 +169,7 @@ public class UnifyRelationConcludableTest {
                                 "$x isa driving-hire;" +
                                 "$y isa driving-hire;" +
                                 "$z isa driving-hire;"
-                                  ).asInsert()
+                        ).asInsert()
                 );
                 tx.commit();
             }
@@ -224,6 +224,14 @@ public class UnifyRelationConcludableTest {
     private Set<Label> roleHierarchy(String roleType, String typeScope) {
         return type(Label.of(roleType, typeScope))
                 .getSubtypes()
+                .map(Type::getLabel)
+                .toSet();
+    }
+
+    private Set<Label> concreteRoleHierarchy(String roleType, String typeScope) {
+        return type(Label.of(roleType, typeScope))
+                .getSubtypes()
+                .filter(type -> !type.isAbstract())
                 .map(Type::getLabel)
                 .toSet();
     }
@@ -493,6 +501,44 @@ public class UnifyRelationConcludableTest {
         assertFalse(unified.hasNext());
     }
 
+    @Test
+    public void relation_anonymous_role_type() {
+        List<Unifier> unifiers = unifiers(
+                "{ ($p) isa employment; }",
+                rule(
+                        "($employee: $x) isa $employment",
+                        "{ $x isa person; $employment type employment; $employee type employment:employee; }")
+        ).toList();
+        Set<Map<String, Set<String>>> result = iterate(unifiers).map(u -> getStringMapping(u.mapping())).toSet();
+        Set<Map<String, Set<String>>> expected = set(
+                new HashMap<String, Set<String>>() {{
+                    put("$p", set("$x"));
+                    put("$_0", set("$_0"));
+                    put("$_1", set("$employee"));
+                }}
+        );
+
+        assertEquals(expected, result);
+
+        Unifier unifier = unifiers.get(0);
+        // test requirements
+        assertEquals(
+                typeHierarchy("employment"),
+                unifier.requirements().isaExplicit().get(Variable.anon(0)));
+        assertEquals(2, unifier.requirements().isaExplicit().size());
+        assertEquals(2, unifier.requirements().types().size());
+        assertEquals(
+                type(Label.of("employment")).asRelationType().getSubtypes()
+                        .flatMap(RelationType::getRelates).filter(t -> t.asRoleType().getPlayers().first().isPresent())
+                        .map(Type::getLabel).toSet(),
+                unifier.requirements().types().get(Variable.anon(1))
+        );
+        assertEquals(
+                typeHierarchy("employment"),
+                unifier.requirements().types().get(Variable.label("employment")));
+        assertEquals(0, unifier.requirements().predicates().size());
+    }
+
     //TODO tests below do not test for requirements and unifier application to answers
 
     //[Single VARIABLE ROLE in parent]
@@ -503,8 +549,8 @@ public class UnifyRelationConcludableTest {
         Concludable.Relation queryConcludable = concludables.iterator().next().asRelation();
 
         Rule rule = createRule("three-people-are-employed",
-                               "{ $x isa person; $y isa person; $z isa person; }",
-                               "(employee: $x, employee: $y, employee: $z) isa employment", logicMgr);
+                "{ $x isa person; $y isa person; $z isa person; }",
+                "(employee: $x, employee: $y, employee: $z) isa employment", logicMgr);
 
         FunctionalIterator<Unifier> unifier = queryConcludable.unify(rule.conclusion(), conceptMgr);
         Set<Map<String, Set<String>>> result = unifier.map(u -> getStringMapping(u.mapping())).toSet();
@@ -537,8 +583,8 @@ public class UnifyRelationConcludableTest {
         Concludable.Relation queryConcludable = concludables.iterator().next().asRelation();
 
         Rule rule = createRule("the-same-person-is-employed-twice",
-                               "{ $x isa person; $y isa person; $employment type employment; $employee type employment:employee; }",
-                               "($employee: $x, $employee: $x) isa $employment", logicMgr);
+                "{ $x isa person; $y isa person; $employment type employment; $employee type employment:employee; }",
+                "($employee: $x, $employee: $x) isa $employment", logicMgr);
 
         FunctionalIterator<Unifier> unifier = queryConcludable.unify(rule.conclusion(), conceptMgr);
         Set<Map<String, Set<String>>> result = unifier.map(u -> getStringMapping(u.mapping())).toSet();
@@ -560,8 +606,8 @@ public class UnifyRelationConcludableTest {
         Concludable.Relation queryConcludable = concludables.iterator().next().asRelation();
 
         Rule rule = createRule("three-people-are-employed",
-                               "{ $x isa person; $y isa person; $z isa person; }",
-                               "(employee: $x, employee: $y, employee: $z) isa employment", logicMgr);
+                "{ $x isa person; $y isa person; $z isa person; }",
+                "(employee: $x, employee: $y, employee: $z) isa employment", logicMgr);
 
         FunctionalIterator<Unifier> unifier = queryConcludable.unify(rule.conclusion(), conceptMgr);
         Set<Map<String, Set<String>>> result = unifier.map(u -> getStringMapping(u.mapping())).toSet();
@@ -609,9 +655,9 @@ public class UnifyRelationConcludableTest {
         Concludable.Relation queryConcludable = concludables.iterator().next().asRelation();
 
         Rule rule = createRule("two-people-are-employed",
-                               "{ $x isa person; $y isa person; $employment type employment; " +
-                                       "$employee type employment:employee; $employer type employment:employer; }",
-                               "($employee: $x, $employee: $y) isa $employment", logicMgr);
+                "{ $x isa person; $y isa person; $employment type employment; " +
+                        "$employee type employment:employee; $employer type employment:employer; }",
+                "($employee: $x, $employee: $y) isa $employment", logicMgr);
 
         FunctionalIterator<Unifier> unifier = queryConcludable.unify(rule.conclusion(), conceptMgr);
         Set<Map<String, Set<String>>> result = unifier.map(u -> getStringMapping(u.mapping())).toSet();
@@ -638,8 +684,8 @@ public class UnifyRelationConcludableTest {
         Concludable.Relation queryConcludable = concludables.iterator().next().asRelation();
 
         Rule rule = createRule("two-people-are-employed-one-is-also-the-employer",
-                               "{ $x isa person; $y isa person; }",
-                               "(employee: $x, employer: $x, employee: $y) isa employment", logicMgr);
+                "{ $x isa person; $y isa person; }",
+                "(employee: $x, employer: $x, employee: $y) isa employment", logicMgr);
 
         List<Unifier> unifier = queryConcludable.unify(rule.conclusion(), conceptMgr).toList();
         List<Map<String, Set<String>>> result = iterate(unifier).map(u -> getStringMapping(u.mapping())).toList();
@@ -667,8 +713,8 @@ public class UnifyRelationConcludableTest {
         Concludable.Relation queryConcludable = concludables.iterator().next().asRelation();
 
         Rule rule = createRule("two-people-are-employed-one-is-also-the-employer",
-                               "{ $x isa person; $y isa person; }",
-                               "(employee: $x, employer: $x, employee: $y) isa employment", logicMgr);
+                "{ $x isa person; $y isa person; }",
+                "(employee: $x, employer: $x, employee: $y) isa employment", logicMgr);
 
         FunctionalIterator<Unifier> unifier = queryConcludable.unify(rule.conclusion(), conceptMgr);
         Set<Map<String, Set<String>>> result = unifier.map(u -> getStringMapping(u.mapping())).toSet();
@@ -715,8 +761,8 @@ public class UnifyRelationConcludableTest {
         Concludable.Relation queryConcludable = concludables.iterator().next().asRelation();
 
         Rule rule = createRule("two-people-are-employed-one-is-also-the-employer",
-                               "{ $x isa person; $y isa person; }",
-                               "(employee: $x, employer: $x, employee: $y) isa employment", logicMgr);
+                "{ $x isa person; $y isa person; }",
+                "(employee: $x, employer: $x, employee: $y) isa employment", logicMgr);
 
         FunctionalIterator<Unifier> unifier = queryConcludable.unify(rule.conclusion(), conceptMgr);
         Set<Map<String, Set<String>>> result = unifier.map(u -> getStringMapping(u.mapping())).toSet();
@@ -756,8 +802,8 @@ public class UnifyRelationConcludableTest {
         Concludable.Relation queryConcludable = concludables.iterator().next().asRelation();
 
         Rule rule = createRule("two-people-are-employed",
-                               "{ $x isa person; $y isa person; $employment type employment; $employee type employment:employee; }",
-                               "($employee: $x, $employee: $y) isa $employment", logicMgr);
+                "{ $x isa person; $y isa person; $employment type employment; $employee type employment:employee; }",
+                "($employee: $x, $employee: $y) isa $employment", logicMgr);
 
         FunctionalIterator<Unifier> unifier = queryConcludable.unify(rule.conclusion(), conceptMgr);
         Set<Map<String, Set<String>>> result = unifier.map(u -> getStringMapping(u.mapping())).toSet();
@@ -779,8 +825,8 @@ public class UnifyRelationConcludableTest {
         Concludable.Relation queryConcludable = concludables.iterator().next().asRelation();
 
         Rule rule = createRule("a-person-is-employed-twice",
-                               "{ $x isa person; $employment type employment; $employee type employment:employee; }",
-                               "($employee: $x, $employee: $x) isa $employment", logicMgr);
+                "{ $x isa person; $employment type employment; $employee type employment:employee; }",
+                "($employee: $x, $employee: $x) isa $employment", logicMgr);
 
         List<Unifier> unifiers = queryConcludable.unify(rule.conclusion(), conceptMgr).toList();
         Set<Map<String, Set<String>>> result = iterate(unifiers).map(u -> getStringMapping(u.mapping())).toSet();
@@ -834,8 +880,8 @@ public class UnifyRelationConcludableTest {
         Concludable.Relation queryConcludable = concludables.iterator().next().asRelation();
 
         Rule rule = createRule("a-person-is-employed-twice",
-                               "{ $x isa person; $employment type employment; $employee type employment:employee; }",
-                               "($employee: $x, $employee: $x) isa $employment", logicMgr);
+                "{ $x isa person; $employment type employment; $employee type employment:employee; }",
+                "($employee: $x, $employee: $x) isa $employment", logicMgr);
 
         FunctionalIterator<Unifier> unifier = queryConcludable.unify(rule.conclusion(), conceptMgr);
         Set<Map<String, Set<String>>> result = unifier.map(u -> getStringMapping(u.mapping())).toSet();
@@ -856,9 +902,9 @@ public class UnifyRelationConcludableTest {
         Concludable.Relation queryConcludable = concludables.iterator().next().asRelation();
 
         Rule rule = createRule("one-employee-one-employer",
-                               "{ $x isa person; $y isa organisation; " +
-                                       "$employee type employment:employee; $employer type employment:employer; }",
-                               "($employee: $x, $employer: $y) isa employment", logicMgr);
+                "{ $x isa person; $y isa organisation; " +
+                        "$employee type employment:employee; $employer type employment:employer; }",
+                "($employee: $x, $employer: $y) isa employment", logicMgr);
 
         FunctionalIterator<Unifier> unifier = queryConcludable.unify(rule.conclusion(), conceptMgr);
         Set<Map<String, Set<String>>> result = unifier.map(u -> getStringMapping(u.mapping())).toSet();
@@ -1026,7 +1072,7 @@ public class UnifyRelationConcludableTest {
         Concludable.Relation queryConcludable = concludables.iterator().next().asRelation();
 
         Rule rule = createRule("people-are-self-friends", "{ $x isa person; }",
-                               " (friend: $x) isa friendship ", logicMgr);
+                " (friend: $x) isa friendship ", logicMgr);
 
         List<Unifier> unifiers = queryConcludable.unify(rule.conclusion(), conceptMgr).toList();
         assertEquals(1, unifiers.size());
@@ -1090,7 +1136,7 @@ public class UnifyRelationConcludableTest {
         Concludable.Relation queryConcludable = concludables.iterator().next().asRelation();
 
         Rule rule = createRule("people-are-self-friends", "{ $x isa person; }",
-                               " (friend: $x) isa friendship ", logicMgr);
+                " (friend: $x) isa friendship ", logicMgr);
 
         List<Unifier> unifiers = queryConcludable.unify(rule.conclusion(), conceptMgr).toList();
         assertEquals(1, unifiers.size());
@@ -1161,7 +1207,7 @@ public class UnifyRelationConcludableTest {
             String parent = parents.get(parentIndex);
             assertEquals(
                     String.format("Unexpected unification outcome at index [%s]:\nconjunction: %s\nconclusion: %s\nconditions: %s\n",
-                                  parentIndex, parent, rule.conclusion(), rule.condition()),
+                            parentIndex, parent, rule.conclusion(), rule.condition()),
                     unifiableParents.contains(parentIndex), unifiers(parent, rule).hasNext()
             );
         }
@@ -1181,7 +1227,7 @@ public class UnifyRelationConcludableTest {
                     labelledTypes.putAll(requiredRetrievableConcepts);
                     //TODO if want to use with iids add instance requirements
                     FunctionalIterator<ConceptMap> unified = unifier.unUnify(labelledTypes,
-                                                                             new Unifier.Requirements.Instance(map()))
+                            new Unifier.Requirements.Instance(map()))
                             .map(u -> {
                                 Map<Variable.Retrievable, Concept> concepts = u.concepts().entrySet().stream()
                                         .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
