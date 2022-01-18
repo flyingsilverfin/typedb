@@ -197,6 +197,45 @@ public class ExplanationTest {
     }
 
     @Test
+    public void test_relation_explainable_variable_type() {
+        try (RocksSession session = typedb.session(database, Arguments.Session.Type.SCHEMA)) {
+            try (RocksTransaction txn = singleThreadElgTransaction(session, Arguments.Transaction.Type.WRITE)) {
+                ConceptManager conceptMgr = txn.concepts();
+                LogicManager logicMgr = txn.logic();
+
+                EntityType person = conceptMgr.putEntityType("person");
+                AttributeType name = conceptMgr.putAttributeType("name", AttributeType.ValueType.STRING);
+                person.setOwns(name);
+                RelationType friendship = conceptMgr.putRelationType("friendship");
+                friendship.setRelates("friend");
+                RelationType marriage = conceptMgr.putRelationType("marriage");
+                marriage.setRelates("husband");
+                marriage.setRelates("wife");
+                person.setPlays(friendship.getRelates("friend"));
+                person.setPlays(marriage.getRelates("husband"));
+                person.setPlays(marriage.getRelates("wife"));
+                logicMgr.putRule(
+                        "marriage-is-friendship",
+                        TypeQL.parsePattern("{ $x isa person; $y isa person; (husband: $x, wife: $y) isa marriage; }").asConjunction(),
+                        TypeQL.parseVariable("(friend: $x, friend: $y) isa friendship").asThing());
+                txn.commit();
+            }
+        }
+        try (RocksSession session = typedb.session(database, Arguments.Session.Type.DATA)) {
+            try (RocksTransaction txn = singleThreadElgTransaction(session, Arguments.Transaction.Type.WRITE)) {
+                txn.query().insert(TypeQL.parseQuery("insert $x isa person, has name 'Zack'; $y isa person, has name 'Yasmin'; (husband: $x, wife: $y) isa marriage;").asInsert());
+                txn.commit();
+            }
+            try (RocksTransaction txn = singleThreadElgTransaction(session, Arguments.Transaction.Type.READ, (new Options.Transaction().explain(true)))) {
+                List<ConceptMap> ans = txn.query().match(TypeQL.parseQuery("match (friend: $p1, friend: $p2) isa $friendship;").asMatch()).toList();
+                assertEquals(6, ans.size());
+                assertFalse(ans.get(0).explainables().isEmpty());
+                assertSingleExplainableExplanations(ans.get(0), 1, 1, 1, txn);
+            }
+        }
+    }
+
+    @Test
     public void test_relation_explainable_multiple_ways() {
         try (RocksSession session = typedb.session(database, Arguments.Session.Type.SCHEMA)) {
             try (RocksTransaction txn = singleThreadElgTransaction(session, Arguments.Transaction.Type.WRITE)) {
@@ -478,7 +517,7 @@ public class ExplanationTest {
                 Explanation explanation = explanations.get(0);
 
                 assertEquals(txn.logic().getRule("marriage-is-friendship"), explanation.rule());
-                assertEquals(2, explanation.variableMapping().size());
+                assertEquals(3, explanation.variableMapping().size());
                 assertEquals(3, explanation.conclusionAnswer().concepts().size());
 
                 ConceptMap marriageIsFriendshipAnswer = explanation.conditionAnswer();
