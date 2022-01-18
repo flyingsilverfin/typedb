@@ -137,9 +137,7 @@ public abstract class AnswerStateImpl implements AnswerState {
 
                 @Override
                 public FinishedImpl finish(ConceptMap conceptMap) {
-                    ConceptMap answer = conceptMap;
-                    if (!explainable()) answer = conceptMap.filter(filter());
-                    return FinishedImpl.create(filter(), answer, root(), explainable());
+                    return FinishedImpl.create(filter(), conceptMap, root(), explainable());
                 }
 
             }

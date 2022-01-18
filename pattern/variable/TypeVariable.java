@@ -249,6 +249,14 @@ public class TypeVariable extends Variable implements AlphaEquivalent<TypeVariab
         // TODO: create vertex properties first, then the vertex itself, then edges
         //       that way, we can make properties to be 'final' objects that are
         //       included in equality and hashCode of vertices
+
+        // TODO: this is a hack, see `RelationConstraint.addTo()`. We should not be adding all variables before constraints
+        // TODO: the best solution for this is to add constraints, which add their own variables. In the meantime we exclude anonymous type vars
+        if (id().isAnonymous()) {
+            assert constraints().isEmpty();
+            return;
+        }
+
         if (!inferredTypes().isEmpty()) traversal.labels(id(), inferredTypes());
         constraints().forEach(constraint -> constraint.addTo(traversal));
     }

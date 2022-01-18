@@ -293,18 +293,25 @@ public class QueryTest {
                 }
 
                 try (TypeDB.Transaction transaction = session.transaction(Arguments.Transaction.Type.WRITE)) {
-                    String deleteString = "match $x isa thing; delete $x isa thing;";
-                    TypeQLDelete deleteQuery = TypeQL.parseQuery(deleteString);
-                    transaction.query().delete(deleteQuery);
-                    transaction.commit();
+                    String match = "match $r ($x) isa relation;";
+                    TypeQLMatch deleteQuery = TypeQL.parseQuery(match).asMatch();
+                    List<ConceptMap> answers = transaction.query().match(deleteQuery).toList();
+                    System.out.println(answers.size());
                 }
-
-                try (TypeDB.Transaction transaction = session.transaction(Arguments.Transaction.Type.READ)) {
-                    String matchString = "match $x isa thing;";
-                    TypeQLMatch matchQuery = TypeQL.parseQuery(matchString);
-                    FunctionalIterator<ConceptMap> answers = transaction.query().match(matchQuery);
-                    assertFalse(answers.hasNext());
-                }
+//
+//                try (TypeDB.Transaction transaction = session.transaction(Arguments.Transaction.Type.WRITE)) {
+//                    String deleteString = "match $x isa thing; delete $x isa thing;";
+//                    TypeQLDelete deleteQuery = TypeQL.parseQuery(deleteString);
+//                    transaction.query().delete(deleteQuery);
+//                    transaction.commit();
+//                }
+//
+//                try (TypeDB.Transaction transaction = session.transaction(Arguments.Transaction.Type.READ)) {
+//                    String matchString = "match $x isa thing;";
+//                    TypeQLMatch matchQuery = TypeQL.parseQuery(matchString);
+//                    FunctionalIterator<ConceptMap> answers = transaction.query().match(matchQuery);
+//                    assertFalse(answers.hasNext());
+//                }
             }
         }
     }

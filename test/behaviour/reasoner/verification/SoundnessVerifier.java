@@ -92,11 +92,11 @@ class SoundnessVerifier {
             });
         } else {
             throw new SoundnessException(String.format("Soundness testing found an answer within an explanation that " +
-                                                               "should not be present for rule \"%s\"" +
-                                                               ".\nAnswer:\n%s\nIncorrectly derived from " +
-                                                               "condition:\n%s",
-                                                       explanation.rule().getLabel(), explanation.conclusionAnswer(),
-                                                       explanation.conditionAnswer()));
+                            "should not be present for rule \"%s\"" +
+                            ".\nAnswer:\n%s\nIncorrectly derived from " +
+                            "condition:\n%s",
+                    explanation.rule().getLabel(), explanation.conclusionAnswer(),
+                    explanation.conditionAnswer()));
         }
     }
 

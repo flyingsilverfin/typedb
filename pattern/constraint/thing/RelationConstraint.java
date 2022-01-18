@@ -95,6 +95,8 @@ public class RelationConstraint extends ThingConstraint implements AlphaEquivale
                 traversal.playing(player.id(), role);
                 traversal.isa(role, roleType.id());
             } else {
+                // TODO we should not add the role type variable if it is anonymous, not even separately. This may involve
+                // TODO flipping conjunctions to own constraints instead of variables
                 assert !roleType.inferredTypes().isEmpty();
                 traversal.rolePlayer(owner.id(), player.id(), roleType.inferredTypes(), rep);
             }
