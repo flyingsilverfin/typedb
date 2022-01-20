@@ -252,6 +252,7 @@ public class TypeVariable extends Variable implements AlphaEquivalent<TypeVariab
 
         // TODO: this is a hack, see `RelationConstraint.addTo()`. We should not be adding all variables before constraints
         // TODO: the best solution for this is to add constraints, which add their own variables. In the meantime we exclude anonymous type vars
+        // TODO: this needs to be done so we don't over-generate all variations of answers with different anonymous type variables when we don't need to
         if (id().isAnonymous()) {
             assert constraints().isEmpty();
             return;
