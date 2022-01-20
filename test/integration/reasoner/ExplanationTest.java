@@ -196,6 +196,13 @@ public class ExplanationTest {
         }
     }
 
+    /**
+     * TODO: this test exposes the fact that a variable type (eg. `match $r isa $relation;`) that unifies with a label type,
+     * will not have a valid mapping in the Explanation. However, we decide this is actually consistent,
+     * since the conclusion answer does not return an answer for that labelled type (eg. from `then { (friend: $x) isa friendship; }`)
+     * Ie. the mapping takes variables/answers from the query to variables and answers in the conclusion,
+     * but there is no answer in the conclusion for the variable.
+     */
     @Test
     public void test_relation_explainable_variable_type() {
         try (RocksSession session = typedb.session(database, Arguments.Session.Type.SCHEMA)) {

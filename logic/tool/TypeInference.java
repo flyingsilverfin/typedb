@@ -299,12 +299,11 @@ public class TypeInference {
         }
 
         private void restrict(Identifier.Variable id, FunctionalIterator<TypeVertex> types) {
-            Set<TypeVertex> ts = types.toSet();
             TraversalVertex.Properties.Type props = traversal.structure().typeVertex(id).props();
             Set<Label> existingLabels = props.labels();
-            if (existingLabels.isEmpty()) ts.iterator().forEachRemaining(t -> existingLabels.add(t.properLabel()));
+            if (existingLabels.isEmpty()) types.forEachRemaining(t -> existingLabels.add(t.properLabel()));
             else {
-                Set<Label> intersection = iterate(ts).filter(t -> existingLabels.contains(t.properLabel()))
+                Set<Label> intersection = types.filter(t -> existingLabels.contains(t.properLabel()))
                         .map(TypeVertex::properLabel).toSet();
                 props.clearLabels();
                 props.labels(intersection);

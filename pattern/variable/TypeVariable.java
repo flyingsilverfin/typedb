@@ -50,6 +50,7 @@ import static com.vaticle.typedb.core.common.exception.ErrorMessage.Pattern.MULT
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Pattern.MULTIPLE_TYPE_CONSTRAINT_REGEX;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Pattern.MULTIPLE_TYPE_CONSTRAINT_SUB;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Pattern.MULTIPLE_TYPE_CONSTRAINT_VALUE_TYPE;
+import static com.vaticle.typedb.core.common.iterator.Iterators.iterate;
 
 public class TypeVariable extends Variable implements AlphaEquivalent<TypeVariable> {
 
@@ -253,7 +254,7 @@ public class TypeVariable extends Variable implements AlphaEquivalent<TypeVariab
         // TODO: this is a hack, see `RelationConstraint.addTo()`. We should not be adding all variables before constraints
         // TODO: the best solution for this is to add constraints, which add their own variables. In the meantime we exclude anonymous type vars
         // TODO: this needs to be done so we don't over-generate all variations of answers with different anonymous type variables when we don't need to
-        if (id().isAnonymous()) {
+        if (id().isAnonymous() && iterate(constraining()).filter(c -> c.isThing() && c.asThing().isRelation()).count() == 1) {
             assert constraints().isEmpty();
             return;
         }

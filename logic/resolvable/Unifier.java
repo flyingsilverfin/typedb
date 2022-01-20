@@ -205,7 +205,7 @@ public class Unifier {
         }
 
         public void addVariableType(com.vaticle.typedb.core.pattern.variable.TypeVariable source, Variable target) {
-            assert source.id().isVariable(); // TODO this is no longer true
+            assert source.id().isVariable();
             unifier.computeIfAbsent(source.id().asRetrievable(), (s) -> new HashSet<>()).add(target);
             requirements.types(source.id(), source.inferredTypes());
             unifiedRequirements.types(target, source.inferredTypes());

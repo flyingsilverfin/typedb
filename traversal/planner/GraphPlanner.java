@@ -333,7 +333,7 @@ public class GraphPlanner implements Planner {
     private void optimise(GraphManager graph, boolean singleUse) {
         updateObjective(graph);
         if (isUpToDate() && isOptimal()) {
-            if (LOG.isDebugEnabled()) LOG.trace("GraphPlanner still optimal and up-to-date");
+            if (LOG.isTraceEnabled()) LOG.trace("GraphPlanner still optimal and up-to-date");
             return;
         }
 
