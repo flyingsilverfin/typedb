@@ -180,13 +180,14 @@ public class Deleter {
                 Thing thing = detached.get(var);
                 ThingType type = thing.getType();
                 if (var.isa().isPresent() && !thing.isDeleted()) {
-                    Label typeLabel = var.isa().get().type().label().get().properLabel();
+                    Set<Label> typeLabels = var.isa().get().type().inferredTypes();
                     if (var.isa().get().isExplicit()) {
-                        if (type.getLabel().equals(typeLabel)) thing.delete();
-                        else throw TypeDBException.of(INVALID_DELETE_THING_DIRECT, var.reference(), typeLabel);
+                        if (typeLabels.size() == 1 && type.getLabel().equals(typeLabels.iterator().next())) {
+                            thing.delete();
+                        } else throw TypeDBException.of(INVALID_DELETE_THING_DIRECT, var.reference(), typeLabels);
                     } else {
-                        if (type.getSupertypes().anyMatch(t -> t.getLabel().equals(typeLabel))) thing.delete();
-                        else throw TypeDBException.of(INVALID_DELETE_THING, var.reference(), typeLabel);
+                        if (type.getSupertypes().anyMatch(t -> typeLabels.contains(t.getLabel()))) thing.delete();
+                        else throw TypeDBException.of(INVALID_DELETE_THING, var.reference(), typeLabels);
                     }
                 }
             }

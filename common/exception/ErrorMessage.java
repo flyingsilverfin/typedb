@@ -353,16 +353,14 @@ public abstract class ErrorMessage extends com.vaticle.typedb.common.exception.E
                 new ThingWrite(15, "The thing variable '%s' cannot be inserted as a new instance without providing its type (isa).");
         public static final ThingWrite AMBIGUOUS_TYPE_VARIABLE_IN_INSERT =
                 new ThingWrite(16, "Ambiguous type variable '%s' in insert could be any of the types '%s'. Insert variables must represent exactly 1 type.");
-//        public static final ThingWrite ILLEGAL_TYPE_VARIABLE_IN_DELETE =  // TODO
-//                new ThingWrite(17, "Illegal type variable '%s' found in delete query. Types can only be referred to by their labels in delete queries or then clauses.");
         public static final ThingWrite ILLEGAL_ANONYMOUS_RELATION_IN_DELETE =
                 new ThingWrite(18, "Illegal anonymous relation in delete query: '%s'.  You must match the relation variable by name, and then delete it.");
         public static final ThingWrite ILLEGAL_ANONYMOUS_VARIABLE_IN_DELETE =
                 new ThingWrite(19, "Illegal anonymous variable in delete query: '%s'.  You can only delete named variables that were matched.");
         public static final ThingWrite INVALID_DELETE_THING =
-                new ThingWrite(20, "The thing '%s' cannot be deleted, as the provided type '%s' is not a valid type or supertype.");
+                new ThingWrite(20, "The thing '%s' cannot be deleted, as the provided variable representing type(s) '%s' is not a valid type or supertype.");
         public static final ThingWrite INVALID_DELETE_THING_DIRECT =
-                new ThingWrite(21, "The thing '%s' cannot be deleted, as the provided direct type '%s' is not valid.");
+                new ThingWrite(21, "The thing '%s' cannot be deleted, as the provided direct variable representing type(s) '%s' is not valid.");
         public static final ThingWrite INVALID_DELETE_HAS =
                 new ThingWrite(22, "Invalid attempt to delete attribute ownership. The thing '%s' does not have attribute '%s'.");
         public static final ThingWrite ILLEGAL_IS_CONSTRAINT =
