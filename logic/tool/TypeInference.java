@@ -48,7 +48,6 @@ import com.vaticle.typedb.core.traversal.GraphTraversal;
 import com.vaticle.typedb.core.traversal.TraversalEngine;
 import com.vaticle.typedb.core.traversal.common.Identifier;
 import com.vaticle.typedb.core.traversal.common.Identifier.Variable.Retrievable;
-import com.vaticle.typedb.core.traversal.common.VertexMap;
 import com.vaticle.typedb.core.traversal.graph.TraversalVertex;
 
 import java.util.Comparator;
@@ -59,7 +58,6 @@ import java.util.Set;
 
 import static com.vaticle.typedb.common.collection.Collections.set;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.ILLEGAL_STATE;
-import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.UNIMPLEMENTED;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Pattern.UNSATISFIABLE_PATTERN_VARIABLE;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Pattern.UNSATISFIABLE_PATTERN_VARIABLE_VALUE;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Pattern.UNSATISFIABLE_SUB_PATTERN;
@@ -98,55 +96,63 @@ public class TypeInference {
     }
 
     private void infer(Conjunction conjunction, Map<Identifier.Variable.Name, Set<Label>> bounds, boolean insertable) {
-        propagateLabels(conjunction, graphMgr);
+        propagateLabels(conjunction);
         if (isSchemaQuery(conjunction)) return;
-        InferenceTraversal inferenceTraversal = new InferenceTraversal(conjunction, bounds, insertable, graphMgr, traversalEng);
+        applyBounds(conjunction, bounds);
+        InferenceTraversal inferenceTraversal = new InferenceTraversal(conjunction, insertable, graphMgr, traversalEng);
         // TODO this still needs work
-        Optional<Map<Retrievable, Set<Label>>> inferredTypes = inferenceTraversal.typeCombination(logicCache);
-        inferenceTraversal.applyInferredTypes(inferredTypes.orElse(null));
+        Optional<Map<Retrievable, Set<Label>>> inferenceVarTypes = inferenceTraversal.typeCombination(logicCache);
+        inferenceTraversal.applyInferredTypes(inferenceVarTypes.orElse(null));
 
         if (!conjunction.negations().isEmpty()) {
-            Map<Retrievable.Name, Set<Label>> namedInferences = namedInferences(conjunction);
-            namedInferences.putAll(bounds);
-            conjunction.negations().forEach(negation -> infer(negation.disjunction(), namedInferences));
+            Map<Retrievable.Name, Set<Label>> inferredTypes = namedInferredTypes(conjunction);
+            inferredTypes.putAll(bounds);
+            conjunction.negations().forEach(negation -> infer(negation.disjunction(), inferredTypes));
         }
     }
 
-    private static void propagateLabels(Conjunction conj, GraphManager graphMgr) {
-        iterate(conj.variables()).filter(v -> v.isType() && v.asType().label().isPresent()).forEachRemaining(typeVar -> {
-            Label label = typeVar.asType().label().get().properLabel();
-            if (label.scope().isPresent()) {
-                String scope = label.scope().get();
-                Set<Label> labels = graphMgr.schema().resolveRoleTypeLabels(label);
-                if (labels.isEmpty()) throw TypeDBException.of(ROLE_TYPE_NOT_FOUND, label.name(), scope);
-                typeVar.addInferredTypes(labels);
-            } else {
-                TypeVertex type = graphMgr.schema().getType(label);
-                if (type == null) throw TypeDBException.of(TYPE_NOT_FOUND, label);
-                typeVar.addInferredTypes(label);
+    private void applyBounds(Conjunction conjunction, Map<Identifier.Variable.Name, Set<Label>> bounds) {
+        conjunction.variables().forEach(var -> {
+            if (var.id().isName() && bounds.containsKey(var.id().asName())) {
+                if (var.inferredTypes().isEmpty()) var.addInferredTypes(bounds.get(var.id().asName()));
+                else var.retainInferredTypes(bounds.get(var.id().asName()));
             }
         });
-    }
-
-    private Map<Retrievable.Name, Set<Label>> namedInferences(Conjunction conjunction) {
-        Map<Retrievable.Name, Set<Label>> namedInferences = new HashMap<>();
-        iterate(conjunction.variables()).filter(var -> var.id().isName()).forEachRemaining(var -> {
-            namedInferences.put(var.id().asName(), var.inferredTypes());
-        });
-        return namedInferences;
     }
 
     private boolean isSchemaQuery(Conjunction conjunction) {
         return iterate(conjunction.variables()).noneMatch(Variable::isThing);
     }
 
+    private Map<Retrievable.Name, Set<Label>> namedInferredTypes(Conjunction conjunction) {
+        Map<Retrievable.Name, Set<Label>> namedInferences = new HashMap<>();
+        iterate(conjunction.variables()).filter(var -> var.id().isName()).forEachRemaining(var ->
+                namedInferences.put(var.id().asName(), var.inferredTypes())
+        );
+        return namedInferences;
+    }
+
     public FunctionalIterator<Map<Identifier.Variable.Name, Label>> typePermutations(Conjunction conjunction, boolean insertable) {
-        propagateLabels(conjunction, graphMgr);
+        propagateLabels(conjunction);
         InferenceTraversal inferenceTraversal = new InferenceTraversal(
-                conjunction, new HashMap<>(), insertable, graphMgr, traversalEng
+                conjunction, insertable, graphMgr, traversalEng
         );
         // TODO this still needs work
         return inferenceTraversal.typePermutations().map(inferenceTraversal::toOriginalVars);
+    }
+
+    private void propagateLabels(Conjunction conj) {
+        iterate(conj.variables()).filter(v -> v.isType() && v.asType().label().isPresent()).forEachRemaining(typeVar -> {
+            Label label = typeVar.asType().label().get().properLabel();
+            if (label.scope().isPresent()) {
+                Set<Label> labels = graphMgr.schema().resolveRoleTypeLabels(label);
+                if (labels.isEmpty()) throw TypeDBException.of(ROLE_TYPE_NOT_FOUND, label.name(), label.scope().get());
+                typeVar.addInferredTypes(labels);
+            } else {
+                if (graphMgr.schema().getType(label) == null) throw TypeDBException.of(TYPE_NOT_FOUND, label);
+                typeVar.addInferredTypes(label);
+            }
+        });
     }
 
     private static class InferenceTraversal {
@@ -154,7 +160,6 @@ public class TypeInference {
         private static final Identifier.Variable ROOT_ATTRIBUTE_ID = Identifier.Variable.label(ATTRIBUTE.toString());
 
         private final Conjunction conjunction;
-        private final Map<Identifier.Variable.Name, Set<Label>> bounds;
         private final GraphManager graphMgr;
         private final TraversalEngine traversalEng;
         private final boolean insertable;
@@ -164,10 +169,9 @@ public class TypeInference {
         private final Map<Identifier.Variable, Variable> inferenceToOriginal;
         private int nextGeneratedID;
 
-        private InferenceTraversal(Conjunction conjunction, Map<Identifier.Variable.Name, Set<Label>> bounds,
-                                   boolean insertable, GraphManager graphMgr, TraversalEngine traversalEng) {
+        private InferenceTraversal(Conjunction conjunction, boolean insertable, GraphManager graphMgr,
+                                   TraversalEngine traversalEng) {
             this.conjunction = conjunction;
-            this.bounds = bounds;
             this.graphMgr = graphMgr;
             this.traversalEng = traversalEng;
             this.insertable = insertable;
@@ -176,13 +180,18 @@ public class TypeInference {
             this.inferenceToOriginal = new HashMap<>();
             this.nextGeneratedID = largestAnonymousVar(conjunction) + 1;
             conjunction.variables().forEach(this::register);
-            traversal.filter(iterate(inferenceToOriginal.keySet()).filter(Identifier::isRetrievable).map(Identifier.Variable::asRetrievable).toSet());
+            traversal.filter(iterate(inferenceToOriginal.keySet()).filter(Identifier::isRetrievable)
+                    .map(Identifier.Variable::asRetrievable).toSet());
         }
 
         private Optional<Map<Retrievable, Set<Label>>> typeCombination(LogicCache logicCache) {
             return logicCache.inference().get(
                     traversal,
-                    traversal -> traversalEng.combination(traversal, thingInferenceVars()).map(this::toLabels)
+                    traversal -> traversalEng.combination(traversal, thingInferenceVars()).map(types -> {
+                        HashMap<Retrievable, Set<Label>> labels = new HashMap<>();
+                        types.forEach((id, ts) -> labels.put(id, iterate(ts).map(TypeVertex::properLabel).toSet()));
+                        return labels;
+                    })
             );
         }
 
@@ -222,12 +231,6 @@ public class TypeInference {
             }
         }
 
-        private Map<Retrievable, Set<Label>> toLabels(Map<Retrievable, Set<TypeVertex>> types) {
-            HashMap<Retrievable, Set<Label>> labels = new HashMap<>();
-            types.forEach((id, ts) -> labels.put(id, iterate(ts).map(TypeVertex::properLabel).toSet()));
-            return labels;
-        }
-
         private static int largestAnonymousVar(Conjunction conjunction) {
             return iterate(conjunction.variables()).filter(var -> var.id().isAnonymous())
                     .map(var -> var.id().asAnonymous().anonymousId()).stream().max(Comparator.naturalOrder()).orElse(0);
@@ -246,9 +249,6 @@ public class TypeInference {
             originalToInference.put(var.id(), inferenceVar);
             inferenceToOriginal.putIfAbsent(inferenceVar.id(), var);
             if (!var.inferredTypes().isEmpty()) restrictTypes(inferenceVar.id(), iterate(var.inferredTypes()));
-            if (var.id().isName() && bounds.containsKey(var.id().asName())) {
-                restrictTypes(inferenceVar.id(), iterate(bounds.get(var.id().asName())));
-            }
 
             for (TypeConstraint constraint : var.constraints()) {
                 if (constraint.isAbstract()) registerAbstract(inferenceVar);
@@ -309,9 +309,7 @@ public class TypeInference {
             TypeVariable inferenceVar = new TypeVariable(var.id());
             originalToInference.put(var.id(), inferenceVar);
             inferenceToOriginal.putIfAbsent(inferenceVar.id(), var);
-            if (var.id().isName() && bounds.containsKey(var.id().asName())) {
-                restrictTypes(inferenceVar.id(), iterate(bounds.get(var.id().asName())));
-            }
+            if (!var.inferredTypes().isEmpty()) restrictTypes(inferenceVar.id(), iterate(var.inferredTypes()));
 
             var.value().forEach(constraint -> registerValue(inferenceVar, constraint));
             var.isa().ifPresent(constraint -> registerIsa(inferenceVar, constraint));
