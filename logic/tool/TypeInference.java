@@ -50,7 +50,6 @@ import com.vaticle.typedb.core.traversal.common.Identifier;
 import com.vaticle.typedb.core.traversal.common.Identifier.Variable.Retrievable;
 import com.vaticle.typedb.core.traversal.graph.TraversalVertex;
 
-import javax.annotation.Nullable;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Map;
@@ -59,6 +58,7 @@ import java.util.Set;
 
 import static com.vaticle.typedb.common.collection.Collections.set;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.ILLEGAL_STATE;
+import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.UNIMPLEMENTED;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Pattern.UNSATISFIABLE_PATTERN_VARIABLE;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Pattern.UNSATISFIABLE_PATTERN_VARIABLE_VALUE;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Pattern.UNSATISFIABLE_SUB_PATTERN;
@@ -84,8 +84,8 @@ public class TypeInference {
         infer(disjunction, new HashMap<>());
     }
 
-    private void infer(Disjunction disjunction, Map<Identifier.Variable.Name, Set<Label>> namedInferences) {
-        disjunction.conjunctions().forEach(conjunction -> infer(conjunction, namedInferences, false));
+    private void infer(Disjunction disjunction, Map<Identifier.Variable.Name, Set<Label>> bounds) {
+        disjunction.conjunctions().forEach(conjunction -> infer(conjunction, bounds, false));
     }
 
     public void infer(Conjunction conjunction) {
@@ -96,13 +96,13 @@ public class TypeInference {
         infer(conjunction, new HashMap<>(), insertable);
     }
 
-    private void infer(Conjunction conjunction, Map<Identifier.Variable.Name, Set<Label>> scopingInferences, boolean insertable) {
+    private void infer(Conjunction conjunction, Map<Identifier.Variable.Name, Set<Label>> bounds, boolean insertable) {
         propagateLabels(conjunction, graphMgr);
         if (isSchemaQuery(conjunction)) return;
-        ConjunctionInference.run(conjunction, scopingInferences, insertable, logicCache, graphMgr, traversalEng);
+        ConjunctionInference.execute(conjunction, bounds, insertable, logicCache, graphMgr, traversalEng);
         if (!conjunction.negations().isEmpty()) {
             Map<Retrievable.Name, Set<Label>> namedInferences = namedInferences(conjunction);
-            namedInferences.putAll(scopingInferences);
+            namedInferences.putAll(bounds);
             conjunction.negations().forEach(negation -> infer(negation.disjunction(), namedInferences));
         }
     }
@@ -140,7 +140,7 @@ public class TypeInference {
         private static final Identifier.Variable ROOT_ATTRIBUTE_ID = Identifier.Variable.label(ATTRIBUTE.toString());
 
         private final Conjunction conjunction;
-        private final Map<Identifier.Variable.Name, Set<Label>> scopingInferences;
+        private final Map<Identifier.Variable.Name, Set<Label>> bounds;
         private final LogicCache logicCache;
         private final GraphManager graphMgr;
         private final TraversalEngine traversalEng;
@@ -151,10 +151,10 @@ public class TypeInference {
         private final Map<Identifier.Variable, Variable> inferenceToOriginal;
         private int nextGeneratedID;
 
-        private ConjunctionInference(Conjunction conjunction, Map<Identifier.Variable.Name, Set<Label>> scopingInferences,
+        private ConjunctionInference(Conjunction conjunction, Map<Identifier.Variable.Name, Set<Label>> bounds,
                                      boolean insertable, LogicCache logicCache, GraphManager graphMgr, TraversalEngine traversalEng) {
             this.conjunction = conjunction;
-            this.scopingInferences = scopingInferences;
+            this.bounds = bounds;
             this.logicCache = logicCache;
             this.graphMgr = graphMgr;
             this.traversalEng = traversalEng;
@@ -163,21 +163,15 @@ public class TypeInference {
             this.originalToInference = new HashMap<>();
             this.inferenceToOriginal = new HashMap<>();
             this.nextGeneratedID = largestAnonymousVar(conjunction) + 1;
-            conjunction.variables().forEach(this::toInferenceVar);
+            conjunction.variables().forEach(this::register);
             traversal.filter(iterate(inferenceToOriginal.keySet()).filter(Identifier::isRetrievable).map(Identifier.Variable::asRetrievable).toSet());
         }
 
-        static void run(Conjunction conjunction, Map<Identifier.Variable.Name, Set<Label>> scopingInferences,
-                        boolean insertable, LogicCache logicCache, GraphManager graphMgr, TraversalEngine traversalEng) {
-            ConjunctionInference conjunctionInference = new ConjunctionInference(
-                    conjunction, scopingInferences, insertable, logicCache, graphMgr, traversalEng
-            );
-            conjunctionInference.runInference();
-        }
-
-        private static int largestAnonymousVar(Conjunction conjunction) {
-            return iterate(conjunction.variables()).filter(var -> var.id().isAnonymous())
-                    .map(var -> var.id().asAnonymous().anonymousId()).stream().max(Comparator.naturalOrder()).orElse(0);
+        static void execute(Conjunction conjunction, Map<Identifier.Variable.Name, Set<Label>> bounds,
+                            boolean insertable, LogicCache logicCache, GraphManager graphMgr, TraversalEngine traversalEng) {
+            new ConjunctionInference(
+                    conjunction, bounds, insertable, logicCache, graphMgr, traversalEng
+            ).runInference();
         }
 
         private void runInference() {
@@ -210,21 +204,26 @@ public class TypeInference {
             return labels;
         }
 
-        private void toInferenceVar(Variable variable) {
-            if (variable.isType()) toInferenceVar(variable.asType());
-            else if (variable.isThing()) toInferenceVar(variable.asThing());
+        private static int largestAnonymousVar(Conjunction conjunction) {
+            return iterate(conjunction.variables()).filter(var -> var.id().isAnonymous())
+                    .map(var -> var.id().asAnonymous().anonymousId()).stream().max(Comparator.naturalOrder()).orElse(0);
+        }
+
+        private void register(Variable variable) {
+            if (variable.isType()) register(variable.asType());
+            else if (variable.isThing()) register(variable.asThing());
             else throw TypeDBException.of(ILLEGAL_STATE);
         }
 
-        private TypeVariable toInferenceVar(TypeVariable var) {
+        private TypeVariable register(TypeVariable var) {
             if (originalToInference.containsKey(var.id())) return originalToInference.get(var.id());
 
-            TypeVariable inferenceVar = new TypeVariable(generateVariableID());
+            TypeVariable inferenceVar = new TypeVariable(newID());
             originalToInference.put(var.id(), inferenceVar);
             inferenceToOriginal.putIfAbsent(inferenceVar.id(), var);
             if (!var.inferredTypes().isEmpty()) restrictTypes(inferenceVar.id(), iterate(var.inferredTypes()));
-            if (var.id().isName() && scopingInferences.containsKey(var.id().asName())) {
-                restrictTypes(inferenceVar.id(), iterate(scopingInferences.get(var.id().asName())));
+            if (var.id().isName() && bounds.containsKey(var.id().asName())) {
+                restrictTypes(inferenceVar.id(), iterate(bounds.get(var.id().asName())));
             }
 
             for (TypeConstraint constraint : var.constraints()) {
@@ -237,6 +236,7 @@ public class TypeInference {
                 else if (constraint.isSub()) registerSub(inferenceVar, constraint.asSub());
                 else if (constraint.isValueType()) registerValueType(inferenceVar, constraint.asValueType());
                 else if (!constraint.isLabel()) throw TypeDBException.of(ILLEGAL_STATE);
+                else throw TypeDBException.of(UNIMPLEMENTED);
             }
             return inferenceVar;
         }
@@ -246,16 +246,16 @@ public class TypeInference {
         }
 
         private void registerIsType(TypeVariable resolver, com.vaticle.typedb.core.pattern.constraint.type.IsConstraint isConstraint) {
-            traversal.equalTypes(resolver.id(), toInferenceVar(isConstraint.variable()).id());
+            traversal.equalTypes(resolver.id(), register(isConstraint.variable()).id());
         }
 
         private void registerOwns(TypeVariable inferenceVar, OwnsConstraint ownsConstraint) {
-            TypeVariable attrVar = toInferenceVar(ownsConstraint.attribute());
+            TypeVariable attrVar = register(ownsConstraint.attribute());
             traversal.owns(inferenceVar.id(), attrVar.id(), ownsConstraint.isKey());
         }
 
         private void registerPlays(TypeVariable inferenceVar, PlaysConstraint playsConstraint) {
-            TypeVariable roleVar = toInferenceVar(playsConstraint.role());
+            TypeVariable roleVar = register(playsConstraint.role());
             traversal.plays(inferenceVar.id(), roleVar.id());
         }
 
@@ -266,12 +266,12 @@ public class TypeInference {
         }
 
         private void registerRelates(TypeVariable inferenceVar, RelatesConstraint relatesConstraint) {
-            TypeVariable roleVar = toInferenceVar(relatesConstraint.role());
+            TypeVariable roleVar = register(relatesConstraint.role());
             traversal.relates(inferenceVar.id(), roleVar.id());
         }
 
         private void registerSub(TypeVariable inferenceVar, SubConstraint subConstraint) {
-            TypeVariable superVar = toInferenceVar(subConstraint.type());
+            TypeVariable superVar = register(subConstraint.type());
             traversal.sub(inferenceVar.id(), superVar.id(), !subConstraint.isExplicit());
         }
 
@@ -280,59 +280,58 @@ public class TypeInference {
             restrictTypesByValueType(resolver, set(Encoding.ValueType.of(valueTypeConstraint.valueType())));
         }
 
-
-        private TypeVariable toInferenceVar(ThingVariable var) {
+        private TypeVariable register(ThingVariable var) {
             if (originalToInference.containsKey(var.id())) return originalToInference.get(var.id());
 
             TypeVariable inferenceVar = new TypeVariable(var.id());
             originalToInference.put(var.id(), inferenceVar);
             inferenceToOriginal.putIfAbsent(inferenceVar.id(), var);
-            if (var.id().isName() && scopingInferences.containsKey(var.id().asName())) {
-                restrictTypes(inferenceVar.id(), iterate(scopingInferences.get(var.id().asName())));
+            if (var.id().isName() && bounds.containsKey(var.id().asName())) {
+                restrictTypes(inferenceVar.id(), iterate(bounds.get(var.id().asName())));
             }
 
             var.value().forEach(constraint -> registerValue(inferenceVar, constraint));
             var.isa().ifPresent(constraint -> registerIsa(inferenceVar, constraint));
             var.is().forEach(constraint -> registerIs(inferenceVar, constraint));
             var.has().forEach(constraint -> registerHas(inferenceVar, constraint));
-            if (insertable)
+            if (insertable) {
                 var.relation().ifPresent(constraint -> registerInsertableRelation(inferenceVar, constraint));
-            else var.relation().ifPresent(constraint -> registerRelation(inferenceVar, constraint));
+            } else var.relation().ifPresent(constraint -> registerRelation(inferenceVar, constraint));
             var.iid().ifPresent(constraint -> registerIID(inferenceVar, constraint));
             return inferenceVar;
         }
 
         private void registerValue(TypeVariable inferenceVar, ValueConstraint<?> constraint) {
-            Set<Encoding.ValueType> comparableValueTypes;
+            Set<Encoding.ValueType> predicateValueTypes;
             if (constraint.isVariable()) {
-                TypeVariable comparableVar = toInferenceVar(constraint.asVariable().value());
-                registerSubAttribute(comparableVar);
-                comparableValueTypes = traversal.structure().typeVertex(comparableVar.id()).props().valueTypes();
+                TypeVariable var = register(constraint.asVariable().value());
+                registerSubAttribute(var);
+                predicateValueTypes = traversal.structure().typeVertex(var.id()).props().valueTypes();
             } else {
-                comparableValueTypes = set(Encoding.ValueType.of(constraint.value().getClass()));
+                predicateValueTypes = set(Encoding.ValueType.of(constraint.value().getClass()));
             }
 
-            Set<Encoding.ValueType> valueTypes = iterate(comparableValueTypes)
+            Set<Encoding.ValueType> valueTypes = iterate(predicateValueTypes)
                     .flatMap(valueType -> iterate(valueType.comparables())).toSet();
             if (!valueTypes.isEmpty()) {
                 restrictValueTypes(inferenceVar.id(), iterate(valueTypes));
-                restrictTypesByValueType(inferenceVar, valueTypes);
+                restrictTypesByValueType(inferenceVar, traversal.structure().typeVertex(inferenceVar.id()).props().valueTypes());
             }
             registerSubAttribute(inferenceVar);
         }
 
         private void registerIsa(TypeVariable inferenceVar, IsaConstraint isaConstraint) {
             if (!isaConstraint.isExplicit() && !insertable) {
-                traversal.sub(inferenceVar.id(), toInferenceVar(isaConstraint.type()).id(), true);
+                traversal.sub(inferenceVar.id(), register(isaConstraint.type()).id(), true);
             } else if (isaConstraint.type().id().isName() || isaConstraint.type().id().isLabel()) {
-                traversal.equalTypes(inferenceVar.id(), toInferenceVar(isaConstraint.type()).id());
+                traversal.equalTypes(inferenceVar.id(), register(isaConstraint.type()).id());
             } else {
                 throw TypeDBException.of(ILLEGAL_STATE);
             }
         }
 
         private void registerIs(TypeVariable inferenceVar, IsConstraint isConstraint) {
-            traversal.equalTypes(inferenceVar.id(), toInferenceVar(isConstraint.variable()).id());
+            traversal.equalTypes(inferenceVar.id(), register(isConstraint.variable()).id());
         }
 
         /**
@@ -349,17 +348,17 @@ public class TypeInference {
         }
 
         private void registerHas(TypeVariable inferenceVar, HasConstraint hasConstraint) {
-            TypeVariable attrVar = toInferenceVar(hasConstraint.attribute());
+            TypeVariable attrVar = register(hasConstraint.attribute());
             traversal.owns(inferenceVar.id(), attrVar.id(), false);
             registerSubAttribute(attrVar);
         }
 
         private void registerRelation(TypeVariable inferenceVar, RelationConstraint constraint) {
             for (RelationConstraint.RolePlayer rolePlayer : constraint.players()) {
-                TypeVariable playerVar = toInferenceVar(rolePlayer.player());
-                TypeVariable roleInstanceVar = new TypeVariable(generateVariableID());
+                TypeVariable playerVar = register(rolePlayer.player());
+                TypeVariable roleInstanceVar = new TypeVariable(newID());
                 if (rolePlayer.roleType().isPresent()) {
-                    TypeVariable roleTypeVar = toInferenceVar(rolePlayer.roleType().get());
+                    TypeVariable roleTypeVar = register(rolePlayer.roleType().get());
                     traversal.sub(roleInstanceVar.id(), roleTypeVar.id(), true);
                 }
                 traversal.relates(inferenceVar.id(), roleInstanceVar.id());
@@ -369,12 +368,12 @@ public class TypeInference {
 
         private void registerInsertableRelation(TypeVariable inferenceVar, RelationConstraint constraint) {
             for (RelationConstraint.RolePlayer rolePlayer : constraint.players()) {
-                TypeVariable playerVar = toInferenceVar(rolePlayer.player());
+                TypeVariable playerVar = register(rolePlayer.player());
                 TypeVariable roleTypeVar;
                 if (rolePlayer.roleType().isPresent()) {
-                    roleTypeVar = toInferenceVar(rolePlayer.roleType().get());
+                    roleTypeVar = register(rolePlayer.roleType().get());
                 } else {
-                    roleTypeVar = new TypeVariable(generateVariableID());
+                    roleTypeVar = new TypeVariable(newID());
                 }
                 traversal.relates(inferenceVar.id(), roleTypeVar.id());
                 traversal.plays(playerVar.id(), roleTypeVar.id());
@@ -440,7 +439,7 @@ public class TypeInference {
             restrictTypes(resolver.id(), attrTypes.map(TypeVertex::properLabel));
         }
 
-        private Identifier.Variable generateVariableID() {
+        private Identifier.Variable newID() {
             return Identifier.Variable.anon(nextGeneratedID++);
         }
     }
