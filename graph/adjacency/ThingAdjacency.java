@@ -19,12 +19,18 @@
 package com.vaticle.typedb.core.graph.adjacency;
 
 import com.vaticle.typedb.core.common.iterator.FunctionalIterator;
+import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Order;
+import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Seekable;
 import com.vaticle.typedb.core.graph.common.Encoding;
+import com.vaticle.typedb.core.graph.edge.Edge;
 import com.vaticle.typedb.core.graph.edge.ThingEdge;
+import com.vaticle.typedb.core.graph.edge.impl.ThingEdgeImpl;
 import com.vaticle.typedb.core.graph.iid.EdgeIID;
 import com.vaticle.typedb.core.graph.iid.IID;
 import com.vaticle.typedb.core.graph.vertex.ThingVertex;
 import com.vaticle.typedb.core.graph.vertex.TypeVertex;
+
+import static com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.ASC;
 
 public interface ThingAdjacency {
 
@@ -41,7 +47,10 @@ public interface ThingAdjacency {
 
     SortedIteratorBuilder edge(Encoding.Edge.Thing.Optimised encoding, TypeVertex roleType, IID... lookAhead);
 
-    IteratorBuilder edge(Encoding.Edge.Thing.Optimised encoding);
+        OutEdgeIterator.Optimised edge(Encoding.Edge.Thing.Optimised encoding, TypeVertex roleType, IID... lookAhead);
+    }
+
+    UnsortedEdgeIterator edge(Encoding.Edge.Thing.Optimised encoding);
 
     /**
      * Returns an edge of type {@code encoding} that connects to an {@code adjacent}
@@ -64,22 +73,109 @@ public interface ThingAdjacency {
      */
     ThingEdge edge(Encoding.Edge.Thing encoding, ThingVertex adjacent, ThingVertex optimised);
 
-    interface IteratorBuilder {
+    // TODO we should end up with only seekable iterators available
 
-        FunctionalIterator<ThingVertex> from();
+    class UnsortedEdgeIterator {
 
-        FunctionalIterator<ThingVertex> to();
+        private final FunctionalIterator<ThingEdge> edgeIterator;
 
-        FunctionalIterator<ThingEdge> get();
+        public UnsortedEdgeIterator(FunctionalIterator<ThingEdge> edgeIterator) {
+            this.edgeIterator = edgeIterator;
+        }
+
+        public FunctionalIterator<ThingVertex> from() {
+            return edgeIterator.map(Edge::from);
+        }
+
+        public FunctionalIterator<ThingVertex> to() {
+            return edgeIterator.map(Edge::to);
+        }
     }
 
-    interface SortedIteratorBuilder {
+    class InEdgeIterator extends EdgeIterator.In<ThingEdge, EdgeIID.Thing, ThingVertex> {
 
-        FunctionalIterator.Sorted<ThingVertex> from();
+        final Encoding.Edge.Thing encoding;
 
-        FunctionalIterator.Sorted<ThingVertex> to();
+        public InEdgeIterator(ThingVertex owner,
+                              Seekable<ComparableEdge<ThingEdge, EdgeIID.Thing>, Order.Asc> edges,
+                              Encoding.Edge.Thing encoding) {
+            super(owner, edges);
+            this.encoding = encoding;
+        }
 
-        FunctionalIterator.Sorted.Forwardable<DirectedEdge> get();
+        @Override
+        ThingEdge targetEdge(ThingVertex targetFrom) {
+            return new ThingEdgeImpl.Target(encoding, targetFrom, owner, null);
+        }
+
+        public static class Optimised extends InEdgeIterator {
+
+            private final TypeVertex optimisedType;
+
+            public Optimised(ThingVertex owner,
+                             Seekable<ComparableEdge<ThingEdge, EdgeIID.Thing>, Order.Asc> edges,
+                             Encoding.Edge.Thing encoding,
+                             TypeVertex optimisedType) {
+                super(owner, edges, encoding);
+                this.optimisedType = optimisedType;
+            }
+
+            Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> fromAndOptimised() {
+                return edges.mapSorted(
+                        ASC,
+                        comparableEdge -> KeyValue.of(comparableEdge.edge().from(), comparableEdge.edge().optimised().get()),
+                        fromAndOptimised -> ComparableEdge.byInIID(targetEdge(fromAndOptimised.key()))
+                );
+            }
+
+            @Override
+            ThingEdge targetEdge(ThingVertex targetFrom) {
+                return new ThingEdgeImpl.Target(encoding, targetFrom, owner, optimisedType);
+            }
+        }
+    }
+
+    class OutEdgeIterator extends EdgeIterator.Out<ThingEdge, EdgeIID.Thing, ThingVertex> {
+
+        final Encoding.Edge.Thing encoding;
+
+        public OutEdgeIterator(ThingVertex owner,
+                               Seekable<ComparableEdge<ThingEdge, EdgeIID.Thing>, Order.Asc> edges,
+                               Encoding.Edge.Thing encoding) {
+            super(owner, edges);
+            this.encoding = encoding;
+        }
+
+        @Override
+        ThingEdge targetEdge(ThingVertex targetTo) {
+            return new ThingEdgeImpl.Target(encoding, owner, targetTo, null);
+        }
+
+        public static class Optimised extends ThingAdjacency.OutEdgeIterator {
+
+            private final TypeVertex optimisedType;
+
+            public Optimised(ThingVertex owner,
+                             Seekable<ComparableEdge<ThingEdge, EdgeIID.Thing>, Order.Asc> edges,
+                             Encoding.Edge.Thing encoding,
+                             TypeVertex optimisedType) {
+                super(owner, edges, encoding);
+                this.optimisedType = optimisedType;
+            }
+
+            Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> fromAndOptimised() {
+                return edges.mapSorted(
+                        ASC,
+                        comparableEdge -> KeyValue.of(comparableEdge.edge().to(), comparableEdge.edge().optimised().get()),
+                        toAndOptimised -> ComparableEdge.byOutIID(targetEdge(toAndOptimised.key()))
+                );
+            }
+
+            @Override
+            ThingEdge targetEdge(ThingVertex targetTo) {
+                return new ThingEdgeImpl.Target(encoding, owner, targetTo, optimisedType);
+            }
+        }
     }
 
     interface Write extends ThingAdjacency {
