@@ -39,14 +39,112 @@ public interface ThingAdjacency {
 
         InEdgeIterator edge(Encoding.Edge.Thing.Base encoding, IID... lookAhead);
 
-        InEdgeIterator.Optimised edge(Encoding.Edge.Thing.Optimised encoding, TypeVertex roleType, IID... lookAhead);
+        OptimisedInEdgeIterator edge(Encoding.Edge.Thing.Optimised encoding, TypeVertex roleType, IID... lookAhead);
+
+        @Override
+        default boolean isIn() {
+            return true;
+        }
+
+        class InEdgeIterator extends EdgeIterator.In<ThingEdge, EdgeIID.Thing, ThingVertex> {
+
+            final Encoding.Edge.Thing encoding;
+
+            public InEdgeIterator(ThingVertex owner,
+                                  Seekable<ComparableEdge<ThingEdge, EdgeIID.Thing>, Order.Asc> edges,
+                                  Encoding.Edge.Thing encoding) {
+                super(owner, edges);
+                this.encoding = encoding;
+            }
+
+            @Override
+            ThingEdge targetEdge(ThingVertex targetFrom) {
+                return new ThingEdgeImpl.Target(encoding, targetFrom, owner, null);
+            }
+
+        }
+
+        class OptimisedInEdgeIterator extends InEdgeIterator {
+
+            private final TypeVertex optimisedType;
+
+            public OptimisedInEdgeIterator(ThingVertex owner,
+                                           Seekable<ComparableEdge<ThingEdge, EdgeIID.Thing>, Order.Asc> edges,
+                                           Encoding.Edge.Thing encoding,
+                                           TypeVertex optimisedType) {
+                super(owner, edges, encoding);
+                this.optimisedType = optimisedType;
+            }
+
+            Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> fromAndOptimised() {
+                return edges.mapSorted(
+                        ASC,
+                        comparableEdge -> KeyValue.of(comparableEdge.edge().from(), comparableEdge.edge().optimised().get()),
+                        fromAndOptimised -> ComparableEdge.byInIID(targetEdge(fromAndOptimised.key()))
+                );
+            }
+
+            @Override
+            ThingEdge targetEdge(ThingVertex targetFrom) {
+                return new ThingEdgeImpl.Target(encoding, targetFrom, owner, optimisedType);
+            }
+        }
     }
 
     interface Out extends ThingAdjacency {
 
         OutEdgeIterator edge(Encoding.Edge.Thing.Base encoding, IID... lookAhead);
 
-        OutEdgeIterator.Optimised edge(Encoding.Edge.Thing.Optimised encoding, TypeVertex roleType, IID... lookAhead);
+        OptimisedOutEdgeIterator edge(Encoding.Edge.Thing.Optimised encoding, TypeVertex roleType, IID... lookAhead);
+
+        @Override
+        default boolean isOut() {
+            return true;
+        }
+
+        class OutEdgeIterator extends EdgeIterator.Out<ThingEdge, EdgeIID.Thing, ThingVertex> {
+
+            final Encoding.Edge.Thing encoding;
+
+            public OutEdgeIterator(ThingVertex owner,
+                                   Seekable<ComparableEdge<ThingEdge, EdgeIID.Thing>, Order.Asc> edges,
+                                   Encoding.Edge.Thing encoding) {
+                super(owner, edges);
+                this.encoding = encoding;
+            }
+
+            @Override
+            ThingEdge targetEdge(ThingVertex targetTo) {
+                return new ThingEdgeImpl.Target(encoding, owner, targetTo, null);
+            }
+
+        }
+
+        class OptimisedOutEdgeIterator extends OutEdgeIterator {
+
+            private final TypeVertex optimisedType;
+
+            public OptimisedOutEdgeIterator(ThingVertex owner,
+                                            Seekable<ComparableEdge<ThingEdge, EdgeIID.Thing>, Order.Asc> edges,
+                                            Encoding.Edge.Thing encoding,
+                                            TypeVertex optimisedType) {
+                super(owner, edges, encoding);
+                this.optimisedType = optimisedType;
+            }
+
+            Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> fromAndOptimised() {
+                return edges.mapSorted(
+                        ASC,
+                        comparableEdge -> KeyValue.of(comparableEdge.edge().to(), comparableEdge.edge().optimised().get()),
+                        toAndOptimised -> ComparableEdge.byOutIID(targetEdge(toAndOptimised.key()))
+                );
+            }
+
+            @Override
+            ThingEdge targetEdge(ThingVertex targetTo) {
+                return new ThingEdgeImpl.Target(encoding, owner, targetTo, optimisedType);
+            }
+        }
     }
 
     UnsortedEdgeIterator edge(Encoding.Edge.Thing.Optimised encoding);
@@ -72,7 +170,13 @@ public interface ThingAdjacency {
      */
     ThingEdge edge(Encoding.Edge.Thing encoding, ThingVertex adjacent, ThingVertex optimised);
 
-    // TODO we should end up with only seekable iterators available
+    default boolean isIn() {
+        return false;
+    }
+
+    default boolean isOut() {
+        return false;
+    }
 
     class UnsortedEdgeIterator {
 
@@ -88,92 +192,6 @@ public interface ThingAdjacency {
 
         public FunctionalIterator<ThingVertex> to() {
             return edgeIterator.map(Edge::to);
-        }
-    }
-
-    class InEdgeIterator extends EdgeIterator.In<ThingEdge, EdgeIID.Thing, ThingVertex> {
-
-        final Encoding.Edge.Thing encoding;
-
-        public InEdgeIterator(ThingVertex owner,
-                              Seekable<ComparableEdge<ThingEdge, EdgeIID.Thing>, Order.Asc> edges,
-                              Encoding.Edge.Thing encoding) {
-            super(owner, edges);
-            this.encoding = encoding;
-        }
-
-        @Override
-        ThingEdge targetEdge(ThingVertex targetFrom) {
-            return new ThingEdgeImpl.Target(encoding, targetFrom, owner, null);
-        }
-
-        public static class Optimised extends InEdgeIterator {
-
-            private final TypeVertex optimisedType;
-
-            public Optimised(ThingVertex owner,
-                             Seekable<ComparableEdge<ThingEdge, EdgeIID.Thing>, Order.Asc> edges,
-                             Encoding.Edge.Thing encoding,
-                             TypeVertex optimisedType) {
-                super(owner, edges, encoding);
-                this.optimisedType = optimisedType;
-            }
-
-            Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> fromAndOptimised() {
-                return edges.mapSorted(
-                        ASC,
-                        comparableEdge -> KeyValue.of(comparableEdge.edge().from(), comparableEdge.edge().optimised().get()),
-                        fromAndOptimised -> ComparableEdge.byInIID(targetEdge(fromAndOptimised.key()))
-                );
-            }
-
-            @Override
-            ThingEdge targetEdge(ThingVertex targetFrom) {
-                return new ThingEdgeImpl.Target(encoding, targetFrom, owner, optimisedType);
-            }
-        }
-    }
-
-    class OutEdgeIterator extends EdgeIterator.Out<ThingEdge, EdgeIID.Thing, ThingVertex> {
-
-        final Encoding.Edge.Thing encoding;
-
-        public OutEdgeIterator(ThingVertex owner,
-                               Seekable<ComparableEdge<ThingEdge, EdgeIID.Thing>, Order.Asc> edges,
-                               Encoding.Edge.Thing encoding) {
-            super(owner, edges);
-            this.encoding = encoding;
-        }
-
-        @Override
-        ThingEdge targetEdge(ThingVertex targetTo) {
-            return new ThingEdgeImpl.Target(encoding, owner, targetTo, null);
-        }
-
-        public static class Optimised extends ThingAdjacency.OutEdgeIterator {
-
-            private final TypeVertex optimisedType;
-
-            public Optimised(ThingVertex owner,
-                             Seekable<ComparableEdge<ThingEdge, EdgeIID.Thing>, Order.Asc> edges,
-                             Encoding.Edge.Thing encoding,
-                             TypeVertex optimisedType) {
-                super(owner, edges, encoding);
-                this.optimisedType = optimisedType;
-            }
-
-            Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> fromAndOptimised() {
-                return edges.mapSorted(
-                        ASC,
-                        comparableEdge -> KeyValue.of(comparableEdge.edge().to(), comparableEdge.edge().optimised().get()),
-                        toAndOptimised -> ComparableEdge.byOutIID(targetEdge(toAndOptimised.key()))
-                );
-            }
-
-            @Override
-            ThingEdge targetEdge(ThingVertex targetTo) {
-                return new ThingEdgeImpl.Target(encoding, owner, targetTo, optimisedType);
-            }
         }
     }
 

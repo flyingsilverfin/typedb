@@ -104,12 +104,12 @@ public abstract class EdgeIterator<
             this.comparableIID = comparableIID;
         }
 
-        static <EDGE extends Edge<?, EDGE_IID, ?>, EDGE_IID extends EdgeIID<?, ?, ?, ?>> ComparableEdge<EDGE, EDGE_IID>
+        public static <EDGE extends Edge<?, EDGE_IID, ?>, EDGE_IID extends EdgeIID<?, ?, ?, ?>> ComparableEdge<EDGE, EDGE_IID>
         byInIID(EDGE edge) {
             return new ComparableEdge<>(edge, edge.inIID());
         }
 
-        static <EDGE extends Edge<?, EDGE_IID, ?>, EDGE_IID extends EdgeIID<?, ?, ?, ?>> ComparableEdge<EDGE, EDGE_IID>
+        public static <EDGE extends Edge<?, EDGE_IID, ?>, EDGE_IID extends EdgeIID<?, ?, ?, ?>> ComparableEdge<EDGE, EDGE_IID>
         byOutIID(EDGE edge) {
             return new ComparableEdge<>(edge, edge.outIID());
         }
