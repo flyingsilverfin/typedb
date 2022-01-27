@@ -257,7 +257,7 @@ public class Encoding {
         PROPERTY_THEN(6),
         PROPERTY_VALUE(7),
         PROPERTY_VALUE_REF(8),
-        EDGE_ISA_IN(-40), // EDGE_ISA_OUT does not exist by design
+        EDGE_ISA_BACKWARD(-40), // EDGE_ISA_FORWARD does not exist by design
         EDGE_SUB_FORWARD(50),
         EDGE_SUB_BACKWARD(-50),
         EDGE_OWNS_FORWARD(51),
@@ -287,7 +287,7 @@ public class Encoding {
                 pair(PROPERTY_THEN.key, PROPERTY_THEN),
                 pair(PROPERTY_VALUE.key, PROPERTY_VALUE),
                 pair(PROPERTY_VALUE_REF.key, PROPERTY_VALUE_REF),
-                pair(EDGE_ISA_IN.key, EDGE_ISA_IN),
+                pair(EDGE_ISA_BACKWARD.key, EDGE_ISA_BACKWARD),
                 pair(EDGE_SUB_FORWARD.key, EDGE_SUB_FORWARD),
                 pair(EDGE_SUB_BACKWARD.key, EDGE_SUB_BACKWARD),
                 pair(EDGE_OWNS_FORWARD.key, EDGE_OWNS_FORWARD),
@@ -684,7 +684,7 @@ public class Encoding {
 
             @Override
             public Infix backward() {
-                return Infix.EDGE_ISA_IN;
+                return Infix.EDGE_ISA_BACKWARD;
             }
 
             @Override

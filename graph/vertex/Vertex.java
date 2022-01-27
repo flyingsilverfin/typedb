@@ -25,8 +25,7 @@ import com.vaticle.typedb.core.graph.iid.VertexIID;
 import static com.vaticle.typedb.common.util.Objects.className;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.ILLEGAL_CAST;
 
-public interface Vertex<VERTEX_IID extends VertexIID, VERTEX_ENCODING extends Encoding.Vertex> extends
-    Comparable<Vertex<VERTEX_IID, VERTEX_ENCODING>> {
+public interface Vertex<VERTEX_IID extends VertexIID, VERTEX_ENCODING extends Encoding.Vertex> {
 
     VERTEX_IID iid();
 

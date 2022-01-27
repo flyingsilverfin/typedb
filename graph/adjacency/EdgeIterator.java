@@ -18,126 +18,126 @@
 
 package com.vaticle.typedb.core.graph.adjacency;
 
+import com.vaticle.typedb.core.common.collection.KeyValue;
 import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator;
 import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Order;
 import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Seekable;
-import com.vaticle.typedb.core.graph.edge.Edge;
-import com.vaticle.typedb.core.graph.iid.EdgeIID;
-import com.vaticle.typedb.core.graph.vertex.Vertex;
-
-import java.util.List;
+import com.vaticle.typedb.core.graph.common.Encoding;
+import com.vaticle.typedb.core.graph.edge.ThingEdge;
+import com.vaticle.typedb.core.graph.edge.impl.ThingEdgeImpl;
+import com.vaticle.typedb.core.graph.vertex.ThingVertex;
+import com.vaticle.typedb.core.graph.vertex.TypeVertex;
 
 import static com.vaticle.typedb.common.collection.Collections.list;
 import static com.vaticle.typedb.core.common.iterator.Iterators.Sorted.iterateSorted;
 import static com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.ASC;
 
-public abstract class EdgeIterator<
-        EDGE extends Edge<?, EDGE_IID, VERTEX>,
-        EDGE_IID extends EdgeIID<?, ?, ?, ?>,
-        VERTEX extends Vertex<?, ?>> {
+public abstract class EdgeIterator {
 
-    final VERTEX owner;
-    final Seekable<ComparableEdge<EDGE, EDGE_IID>, Order.Asc> edges;
+    public static abstract class Thing<EDGE_VIEW extends ThingEdge.View<EDGE_VIEW>> {
 
-    EdgeIterator(VERTEX owner, Seekable<ComparableEdge<EDGE, EDGE_IID>, Order.Asc> edges) {
-        this.owner = owner;
-        this.edges = edges;
-    }
+        final ThingVertex owner;
+        final Seekable<EDGE_VIEW, Order.Asc> edges;
 
-    abstract static class In<
-            EDGE extends Edge<?, EDGE_IID, VERTEX>,
-            EDGE_IID extends EdgeIID<?, ?, ?, ?>,
-            VERTEX extends Vertex<?, ?>> extends EdgeIterator<EDGE, EDGE_IID, VERTEX> {
-
-        In(VERTEX owner, Seekable<ComparableEdge<EDGE, EDGE_IID>, Order.Asc> edges) {
-            super(owner, edges);
+        private Thing(ThingVertex owner, Seekable<EDGE_VIEW, Order.Asc> edges) {
+            this.owner = owner;
+            this.edges = edges;
         }
 
-        abstract EDGE targetEdge(VERTEX targetFrom);
+        public static class In extends Thing<ThingEdge.View.Backward> {
 
-        public Seekable<VERTEX, Order.Asc> from() {
-            return edges.mapSorted(
-                    ASC,
-                    comparableEdge -> comparableEdge.edge().from(),
-                    vertex -> ComparableEdge.byInIID(targetEdge(vertex))
-            );
+            final Encoding.Edge.Thing encoding;
+
+            public In(ThingVertex owner, Seekable<ThingEdge.View.Backward, Order.Asc> edges, Encoding.Edge.Thing encoding) {
+                super(owner, edges);
+                this.encoding = encoding;
+            }
+
+            public Seekable<ThingVertex, Order.Asc> from() {
+                return edges.mapSorted(ASC, ThingEdge.View.Backward::from, this::targetEdge);
+            }
+
+            public SortedIterator<ThingVertex, Order.Asc> to() {
+                return iterateSorted(ASC, list(owner));
+            }
+
+            ThingEdge.View.Backward targetEdge(ThingVertex targetFrom) {
+                return new ThingEdgeImpl.Target(encoding, targetFrom, owner, null).getBackward();
+            }
+
+            public static class Optimised extends In {
+
+                private final TypeVertex optimisedType;
+
+                public Optimised(ThingVertex owner,
+                                 Seekable<ThingEdge.View.Backward, Order.Asc> edges,
+                                 Encoding.Edge.Thing encoding,
+                                 TypeVertex optimisedType) {
+                    super(owner, edges, encoding);
+                    this.optimisedType = optimisedType;
+                }
+
+                public Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> fromAndOptimised() {
+                    return edges.mapSorted(
+                            ASC,
+                            edgeView -> KeyValue.of(edgeView.from(), edgeView.optimised().get()),
+                            fromAndOptimised -> targetEdge(fromAndOptimised.key())
+                    );
+                }
+
+                @Override
+                ThingEdge.View.Backward targetEdge(ThingVertex targetFrom) {
+                    return new ThingEdgeImpl.Target(encoding, targetFrom, owner, optimisedType).getBackward();
+                }
+            }
         }
 
-        public SortedIterator<VERTEX, Order.Asc> to() {
-            List<VERTEX> list = list(owner);
-            return iterateSorted(ASC, list);
-        }
-    }
+        public static class Out extends EdgeIterator.Thing<ThingEdge.View.Forward> {
 
-    abstract static class Out<
-            EDGE extends Edge<?, EDGE_IID, VERTEX>,
-            EDGE_IID extends EdgeIID<?, ?, ?, ?>,
-            VERTEX extends Vertex<?, ?>> extends EdgeIterator<EDGE, EDGE_IID, VERTEX> {
+            final Encoding.Edge.Thing encoding;
 
-        Out(VERTEX owner, Seekable<ComparableEdge<EDGE, EDGE_IID>, Order.Asc> edges) {
-            super(owner, edges);
-        }
+            public Out(ThingVertex owner, Seekable<ThingEdge.View.Forward, Order.Asc> edges, Encoding.Edge.Thing encoding) {
+                super(owner, edges);
+                this.encoding = encoding;
+            }
 
-        abstract EDGE targetEdge(VERTEX targetTo);
+            ThingEdge.View.Forward targetEdge(ThingVertex targetTo) {
+                return new ThingEdgeImpl.Target(encoding, owner, targetTo, null).getForward();
+            }
 
-        SortedIterator<VERTEX, Order.Asc> from() {
-            return iterateSorted(ASC, list(owner));
-        }
+            public SortedIterator<ThingVertex, Order.Asc> from() {
+                return iterateSorted(ASC, list(owner));
+            }
 
-        Seekable<VERTEX, Order.Asc> to() {
-            return edges.mapSorted(
-                    ASC,
-                    comparableEdge -> comparableEdge.edge().to(),
-                    vertex -> ComparableEdge.byOutIID(targetEdge(vertex))
-            );
-        }
-    }
+            public Seekable<ThingVertex, Order.Asc> to() {
+                return edges.mapSorted(ASC, ThingEdge.View.Forward::to, this::targetEdge);
+            }
 
-    public static class ComparableEdge<EDGE extends Edge<?, EDGE_IID, ?>, EDGE_IID extends EdgeIID<?, ?, ?, ?>>
-            implements Comparable<ComparableEdge<EDGE, EDGE_IID>> {
+            public static class Optimised extends Out {
 
-        private final EDGE edge;
-        private final EDGE_IID comparableIID;
+                private final TypeVertex optimisedType;
 
-        ComparableEdge(EDGE edge, EDGE_IID comparableIID) {
-            this.edge = edge;
-            this.comparableIID = comparableIID;
-        }
+                public Optimised(ThingVertex owner,
+                                 Seekable<ThingEdge.View.Forward, Order.Asc> edges,
+                                 Encoding.Edge.Thing encoding,
+                                 TypeVertex optimisedType) {
+                    super(owner, edges, encoding);
+                    this.optimisedType = optimisedType;
+                }
 
-        public static <EDGE extends Edge<?, EDGE_IID, ?>, EDGE_IID extends EdgeIID<?, ?, ?, ?>> ComparableEdge<EDGE, EDGE_IID>
-        byInIID(EDGE edge) {
-            return new ComparableEdge<>(edge, edge.inIID());
-        }
+                public Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> toAndOptimised() {
+                    return edges.mapSorted(
+                            ASC,
+                            edgeView -> KeyValue.of(edgeView.to(), edgeView.optimised().get()),
+                            toAndOptimised -> targetEdge(toAndOptimised.key())
+                    );
+                }
 
-        public static <EDGE extends Edge<?, EDGE_IID, ?>, EDGE_IID extends EdgeIID<?, ?, ?, ?>> ComparableEdge<EDGE, EDGE_IID>
-        byOutIID(EDGE edge) {
-            return new ComparableEdge<>(edge, edge.outIID());
-        }
-
-        public EDGE edge() {
-            return edge;
-        }
-
-        public EDGE_IID iid() {
-            return comparableIID;
-        }
-
-        @Override
-        public boolean equals(Object o) {
-            if (this == o) return true;
-            if (o == null || getClass() != o.getClass()) return false;
-            final ComparableEdge that = (ComparableEdge) o;
-            return iid().equals(that.iid());
-        }
-
-        @Override
-        public int hashCode() {
-            return iid().hashCode();
-        }
-
-        @Override
-        public int compareTo(ComparableEdge<EDGE, EDGE_IID> other) {
-            return iid().compareTo(other.iid());
+                @Override
+                ThingEdge.View.Forward targetEdge(ThingVertex targetTo) {
+                    return new ThingEdgeImpl.Target(encoding, owner, targetTo, optimisedType).getForward();
+                }
+            }
         }
     }
 }

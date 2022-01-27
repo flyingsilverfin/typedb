@@ -25,9 +25,9 @@ import com.vaticle.typedb.core.graph.common.Storage.Key;
 import static com.vaticle.typedb.core.common.collection.ByteArray.join;
 
 /**
- * Representation of the ordered on-disk bytes representing a forward or backward edge
+ * Representation of the ordered on-disk bytes for a forward or backward edge
  */
-public abstract class EdgeIID<
+public abstract class EdgeViewIID<
         EDGE_ENCODING extends Encoding.Edge,
         EDGE_INFIX extends InfixIID<EDGE_ENCODING>,
         VERTEX_IID extends VertexIID> extends PartitionedIID {
@@ -38,7 +38,7 @@ public abstract class EdgeIID<
     SuffixIID suffix;
     private int endIndex, infixIndex, suffixIndex;
 
-    EdgeIID(ByteArray bytes) {
+    EdgeViewIID(ByteArray bytes) {
         super(bytes);
     }
 
@@ -82,7 +82,7 @@ public abstract class EdgeIID<
         return readableString;
     }
 
-    public static class Type extends EdgeIID<Encoding.Edge.Type, InfixIID.Type, VertexIID.Type> {
+    public static class Type extends EdgeViewIID<Encoding.Edge.Type, InfixIID.Type, VertexIID.Type> {
 
         private static final int LENGTH = 2 * VertexIID.Type.LENGTH + InfixIID.Type.DEFAULT_LENGTH;
 
@@ -99,7 +99,7 @@ public abstract class EdgeIID<
             return new Type(join(start.bytes, infix.bytes(), end.bytes));
         }
 
-        public static Key.Prefix<EdgeIID.Type> prefix(VertexIID.Type vertex, InfixIID<?> infixIID) {
+        public static Key.Prefix<EdgeViewIID.Type> prefix(VertexIID.Type vertex, InfixIID<?> infixIID) {
             return new Key.Prefix<>(join(vertex.bytes, infixIID.bytes), Partition.DEFAULT, Type::of);
         }
 
@@ -128,7 +128,7 @@ public abstract class EdgeIID<
         }
     }
 
-    public static class Thing extends EdgeIID<Encoding.Edge.Thing, InfixIID.Thing, VertexIID.Thing> {
+    public static class Thing extends EdgeViewIID<Encoding.Edge.Thing, InfixIID.Thing, VertexIID.Thing> {
 
         Thing(ByteArray bytes) {
             super(bytes);
