@@ -78,12 +78,12 @@ public abstract class TypeEdgeImpl implements TypeEdge {
 
         @Override
         public EdgeIID.Type outIID() {
-            return EdgeIID.Type.of(from().iid(), encoding.out(), to().iid());
+            return EdgeIID.Type.of(from().iid(), encoding.forward(), to().iid());
         }
 
         @Override
         public EdgeIID.Type inIID() {
-            return EdgeIID.Type.of(to().iid(), encoding.in(), from().iid());
+            return EdgeIID.Type.of(to().iid(), encoding.backward(), from().iid());
         }
 
         @Override
@@ -135,11 +135,11 @@ public abstract class TypeEdgeImpl implements TypeEdge {
         @Override
         public void commit() {
             if (committed.compareAndSet(false, true)) {
-                if (encoding.out() != null) {
+                if (encoding.forward() != null) {
                     if (overridden != null) graph.storage().putUntracked(outIID(), overridden.iid().bytes());
                     else graph.storage().putUntracked(outIID());
                 }
-                if (encoding.in() != null) {
+                if (encoding.backward() != null) {
                     if (overridden != null) graph.storage().putUntracked(inIID(), overridden.iid().bytes());
                     else graph.storage().putUntracked(inIID());
                 }
@@ -218,16 +218,16 @@ public abstract class TypeEdgeImpl implements TypeEdge {
         public Persisted(TypeGraph graph, EdgeIID.Type iid, @Nullable VertexIID.Type overriddenIID) {
             super(graph, iid.encoding());
 
-            if (iid.isOutwards()) {
+            if (iid.isForward()) {
                 fromIID = iid.start();
                 toIID = iid.end();
                 outIID = iid;
-                inIID = EdgeIID.Type.of(iid.end(), iid.encoding().in(), iid.start());
+                inIID = EdgeIID.Type.of(iid.end(), iid.encoding().backward(), iid.start());
             } else {
                 fromIID = iid.end();
                 toIID = iid.start();
                 inIID = iid;
-                outIID = EdgeIID.Type.of(iid.end(), iid.encoding().out(), iid.start());
+                outIID = EdgeIID.Type.of(iid.end(), iid.encoding().forward(), iid.start());
             }
 
             deleted = new AtomicBoolean(false);

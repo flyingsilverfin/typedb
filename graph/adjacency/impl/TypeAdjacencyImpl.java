@@ -138,7 +138,7 @@ public abstract class TypeAdjacencyImpl implements TypeAdjacency {
         }
 
         private EdgeIID.Type edgeIID(Encoding.Edge.Type encoding, TypeVertex adjacent) {
-            return EdgeIID.Type.of(owner.iid(), direction.isOut() ? encoding.out() : encoding.in(), adjacent.iid());
+            return EdgeIID.Type.of(owner.iid(), direction.isOut() ? encoding.forward() : encoding.backward(), adjacent.iid());
         }
 
         private TypeEdge newPersistedEdge(EdgeIID.Type edge, ByteArray value) {
@@ -153,7 +153,7 @@ public abstract class TypeAdjacencyImpl implements TypeAdjacency {
             }
 
             Key.Prefix<EdgeIID.Type> prefix = EdgeIID.Type.prefix(
-                    owner.iid(), InfixIID.Type.of(direction.isOut() ? encoding.out() : encoding.in())
+                    owner.iid(), InfixIID.Type.of(direction.isOut() ? encoding.forward() : encoding.backward())
             );
             FunctionalIterator<TypeEdge> storageIterator = owner.graph().storage().iterate(prefix)
                     .map(kv -> cache(newPersistedEdge(EdgeIID.Type.of(kv.key().bytes()), kv.value())));

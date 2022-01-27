@@ -24,15 +24,17 @@ import com.vaticle.typedb.core.graph.common.Storage.Key;
 
 import static com.vaticle.typedb.core.common.collection.ByteArray.join;
 
+/**
+ * Representation of the ordered on-disk bytes representing a forward or backward edge
+ */
 public abstract class EdgeIID<
         EDGE_ENCODING extends Encoding.Edge,
         EDGE_INFIX extends InfixIID<EDGE_ENCODING>,
-        VERTEX_IID_START extends VertexIID,
-        VERTEX_IID_END extends VertexIID> extends PartitionedIID {
+        VERTEX_IID extends VertexIID> extends PartitionedIID {
 
     EDGE_INFIX infix;
-    VERTEX_IID_START start;
-    VERTEX_IID_END end;
+    VERTEX_IID start;
+    VERTEX_IID end;
     SuffixIID suffix;
     private int endIndex, infixIndex, suffixIndex;
 
@@ -42,9 +44,9 @@ public abstract class EdgeIID<
 
     abstract EDGE_INFIX infix();
 
-    abstract VERTEX_IID_START start();
+    abstract VERTEX_IID start();
 
-    abstract VERTEX_IID_END end();
+    abstract VERTEX_IID end();
 
     int infixIndex() {
         if (infixIndex == 0) infixIndex = start().bytes.length();
@@ -65,9 +67,8 @@ public abstract class EdgeIID<
         return infix().encoding();
     }
 
-    // TODO: rename to isForward()
-    public boolean isOutwards() {
-        return infix().isOutwards();
+    public boolean isForward() {
+        return infix().isForward();
     }
 
     @Override
@@ -81,7 +82,7 @@ public abstract class EdgeIID<
         return readableString;
     }
 
-    public static class Type extends EdgeIID<Encoding.Edge.Type, InfixIID.Type, VertexIID.Type, VertexIID.Type> {
+    public static class Type extends EdgeIID<Encoding.Edge.Type, InfixIID.Type, VertexIID.Type> {
 
         private static final int LENGTH = 2 * VertexIID.Type.LENGTH + InfixIID.Type.DEFAULT_LENGTH;
 
@@ -127,7 +128,7 @@ public abstract class EdgeIID<
         }
     }
 
-    public static class Thing extends EdgeIID<Encoding.Edge.Thing, InfixIID.Thing, VertexIID.Thing, VertexIID.Thing> {
+    public static class Thing extends EdgeIID<Encoding.Edge.Thing, InfixIID.Thing, VertexIID.Thing> {
 
         Thing(ByteArray bytes) {
             super(bytes);
