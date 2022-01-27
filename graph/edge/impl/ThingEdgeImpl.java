@@ -107,20 +107,20 @@ public abstract class ThingEdgeImpl implements ThingEdge {
         @Override
         public EdgeIID.Thing outIID() {
             if (encoding.isOptimisation()) {
-                return EdgeIID.Thing.of(from.iid(), InfixIID.Thing.of(encoding.out(), optimised.type().iid()),
+                return EdgeIID.Thing.of(from.iid(), InfixIID.Thing.of(encoding.forward(), optimised.type().iid()),
                         to.iid(), SuffixIID.of(optimised.iid().key()));
             } else {
-                return EdgeIID.Thing.of(from.iid(), InfixIID.Thing.of(encoding.out()), to.iid());
+                return EdgeIID.Thing.of(from.iid(), InfixIID.Thing.of(encoding.forward()), to.iid());
             }
         }
 
         @Override
         public EdgeIID.Thing inIID() {
             if (encoding.isOptimisation()) {
-                return EdgeIID.Thing.of(to.iid(), InfixIID.Thing.of(encoding.in(), optimised.type().iid()),
+                return EdgeIID.Thing.of(to.iid(), InfixIID.Thing.of(encoding.backward(), optimised.type().iid()),
                         from.iid(), SuffixIID.of(optimised.iid().key()));
             } else {
-                return EdgeIID.Thing.of(to.iid(), InfixIID.Thing.of(encoding.in()), from.iid());
+                return EdgeIID.Thing.of(to.iid(), InfixIID.Thing.of(encoding.backward()), from.iid());
             }
         }
 
@@ -244,20 +244,20 @@ public abstract class ThingEdgeImpl implements ThingEdge {
         @Override
         public EdgeIID.Thing outIID() {
             if (encoding.isOptimisation()) {
-                return EdgeIID.Thing.of(from.iid(), InfixIID.Thing.of(encoding.out(), optimisedType.iid()),
+                return EdgeIID.Thing.of(from.iid(), InfixIID.Thing.of(encoding.forward(), optimisedType.iid()),
                         to.iid(), SuffixIID.of(ByteArray.empty()));
             } else {
-                return EdgeIID.Thing.of(from.iid(), InfixIID.Thing.of(encoding.out()), to.iid());
+                return EdgeIID.Thing.of(from.iid(), InfixIID.Thing.of(encoding.forward()), to.iid());
             }
         }
 
         @Override
         public EdgeIID.Thing inIID() {
             if (encoding.isOptimisation()) {
-                return EdgeIID.Thing.of(to.iid(), InfixIID.Thing.of(encoding.in(), optimisedType.iid()),
+                return EdgeIID.Thing.of(to.iid(), InfixIID.Thing.of(encoding.backward(), optimisedType.iid()),
                         from.iid(), SuffixIID.of(ByteArray.empty()));
             } else {
-                return EdgeIID.Thing.of(to.iid(), InfixIID.Thing.of(encoding.in()), from.iid());
+                return EdgeIID.Thing.of(to.iid(), InfixIID.Thing.of(encoding.backward()), from.iid());
             }
         }
 
@@ -332,7 +332,7 @@ public abstract class ThingEdgeImpl implements ThingEdge {
         public Persisted(ThingGraph graph, EdgeIID.Thing iid) {
             super(graph, iid.encoding(), false);
 
-            if (iid.isOutwards()) {
+            if (iid.isForward()) {
                 fromIID = iid.start();
                 toIID = iid.end();
                 outIID = iid;

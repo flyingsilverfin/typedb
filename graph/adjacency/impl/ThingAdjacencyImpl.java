@@ -58,7 +58,7 @@ import static java.util.Arrays.copyOfRange;
 public abstract class ThingAdjacencyImpl implements ThingAdjacency {
 
     InfixIID.Thing directedInfixIID(Encoding.Edge.Thing encoding, IID... lookAhead) {
-        return isOut() ? InfixIID.Thing.of(encoding.out(), lookAhead) : InfixIID.Thing.of(encoding.in(), lookAhead);
+        return isOut() ? InfixIID.Thing.of(encoding.forward(), lookAhead) : InfixIID.Thing.of(encoding.backward(), lookAhead);
     }
 
     ComparableEdge<ThingEdge, EdgeIID.Thing> toComparable(ThingEdge edge) {
