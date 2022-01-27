@@ -39,6 +39,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import static com.vaticle.typedb.common.collection.Collections.set;
 import static com.vaticle.typedb.core.common.iterator.Iterators.iterate;
 import static com.vaticle.typeql.lang.common.TypeQLToken.Char.COLON;
 import static com.vaticle.typeql.lang.common.TypeQLToken.Char.COMMA;
@@ -225,9 +226,12 @@ public class RelationConstraint extends ThingConstraint implements AlphaEquivale
         }
 
         public RolePlayer clone(Conjunction.Cloner cloner) {
+            assert roleType != null ^ inferredRoleTypes != null;
             TypeVariable roleTypeClone = roleType == null ? null : cloner.cloneVariable(roleType);
             ThingVariable playerClone = cloner.cloneVariable(player);
-            return new RelationConstraint.RolePlayer(roleTypeClone, playerClone, repetition);
+            RolePlayer rpClone = new RolePlayer(roleTypeClone, playerClone, repetition);
+            if (roleType().isEmpty()) rpClone.setInferredRoleTypes(set(this.inferredRoleTypes));
+            return rpClone;
         }
     }
 
