@@ -180,11 +180,13 @@ public class RelationConstraint extends ThingConstraint implements AlphaEquivale
         }
 
         public static RolePlayer of(RolePlayer clone, VariableCloner cloner) {
-            return new RolePlayer(
+            RolePlayer rolePlayer = new RolePlayer(
                     clone.roleType().map(cloner::clone).orElse(null),
                     cloner.clone(clone.player()),
                     clone.repetition()
             );
+            if (clone.roleType().isEmpty()) rolePlayer.setInferredRoleTypes(clone.inferredRoleTypes);
+            return rolePlayer;
         }
 
         public int repetition() {
@@ -203,7 +205,7 @@ public class RelationConstraint extends ThingConstraint implements AlphaEquivale
 
         public void setInferredRoleTypes(Set<Label> roleTypes) {
             assert roleType == null;
-            this.inferredRoleTypes = roleTypes;
+            this.inferredRoleTypes = set(roleTypes);
         }
 
         public ThingVariable player() {
@@ -242,7 +244,7 @@ public class RelationConstraint extends ThingConstraint implements AlphaEquivale
             TypeVariable roleTypeClone = roleType == null ? null : cloner.cloneVariable(roleType);
             ThingVariable playerClone = cloner.cloneVariable(player);
             RolePlayer rpClone = new RolePlayer(roleTypeClone, playerClone, repetition);
-            if (roleType().isEmpty()) rpClone.setInferredRoleTypes(set(this.inferredRoleTypes));
+            if (roleType().isEmpty()) rpClone.setInferredRoleTypes(this.inferredRoleTypes);
             return rpClone;
         }
     }
