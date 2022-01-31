@@ -232,10 +232,10 @@ public class EncodingTest {
             assertEquals(4, optimisation.size());
             TypeVertex employerRoleType = graph.schema().getType(Label.of("employer", "employment"));
             TypeVertex employeeRoleType = graph.schema().getType(Label.of("employee", "employment"));
-            assertTrue(optimisation.contains(join(personIID, ROLEPLAYER.backward().bytes(), employeeRoleType.iid().bytes(), employmentIID, employeeRoleIID)));
-            assertTrue(optimisation.contains(join(employmentIID, ROLEPLAYER.forward().bytes(), employeeRoleType.iid().bytes(), personIID, employeeRoleIID)));
-            assertTrue(optimisation.contains(join(companyIID, ROLEPLAYER.backward().bytes(), employerRoleType.iid().bytes(), employmentIID, employerRoleIID)));
-            assertTrue(optimisation.contains(join(employmentIID, ROLEPLAYER.forward().bytes(), employerRoleType.iid().bytes(), companyIID, employerRoleIID)));
+            assertTrue(optimisation.contains(join(personIID, ROLEPLAYER.backward().bytes(), employeeRoleType.iid().bytes(), employmentIID, employeeRoleIID.view(1 + employeeRoleType.iid().bytes().length()))));
+            assertTrue(optimisation.contains(join(employmentIID, ROLEPLAYER.forward().bytes(), employeeRoleType.iid().bytes(), personIID, employeeRoleIID.view(1 + employeeRoleType.iid().bytes().length()))));
+            assertTrue(optimisation.contains(join(companyIID, ROLEPLAYER.backward().bytes(), employerRoleType.iid().bytes(), employmentIID, employerRoleIID.view(1 + employerRoleType.iid().bytes().length()))));
+            assertTrue(optimisation.contains(join(employmentIID, ROLEPLAYER.forward().bytes(), employerRoleType.iid().bytes(), companyIID, employerRoleIID.view(1 + employerRoleType.iid().bytes().length()))));
         }
     }
 
