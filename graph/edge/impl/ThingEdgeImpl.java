@@ -105,7 +105,7 @@ public abstract class ThingEdgeImpl implements ThingEdge {
         public boolean equals(Object object) {
             if (this == object) return true;
             if (object == null || this.getClass() != object.getClass()) return false;
-            return canonicalEdge.equals(object);
+            return canonicalEdge.equals(((ThingEdgeImpl.View)object).canonicalEdge);
         }
 
         @Override
