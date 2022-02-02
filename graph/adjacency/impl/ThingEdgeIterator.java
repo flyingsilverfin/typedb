@@ -38,22 +38,22 @@ public abstract class ThingEdgeIterator {
     static class InEdgeIteratorImpl implements ThingAdjacency.In.InEdgeIterator {
 
         final ThingVertex owner;
-        final Seekable<ThingEdge.View.Backward, SortedIterator.Order.Asc> edges;
+        final Seekable<ThingEdge.View.Backward, Order.Asc> edges;
         final Encoding.Edge.Thing encoding;
 
-        InEdgeIteratorImpl(ThingVertex owner, Seekable<ThingEdge.View.Backward, SortedIterator.Order.Asc> edges, Encoding.Edge.Thing encoding) {
+        InEdgeIteratorImpl(ThingVertex owner, Seekable<ThingEdge.View.Backward, Order.Asc> edges, Encoding.Edge.Thing encoding) {
             this.owner = owner;
             this.edges = edges;
             this.encoding = encoding;
         }
 
         @Override
-        public Seekable<ThingVertex, SortedIterator.Order.Asc> from() {
+        public Seekable<ThingVertex, Order.Asc> from() {
             return edges.mapSorted(ASC, view -> view.edge().from(), this::targetEdge);
         }
 
         @Override
-        public SortedIterator<ThingVertex, SortedIterator.Order.Asc> to() {
+        public SortedIterator<ThingVertex, Order.Asc> to() {
             return iterateSorted(ASC, list(owner));
         }
 
@@ -66,7 +66,7 @@ public abstract class ThingEdgeIterator {
             private final TypeVertex optimisedType;
 
             public Optimised(ThingVertex owner,
-                             Seekable<ThingEdge.View.Backward, SortedIterator.Order.Asc> edges,
+                             Seekable<ThingEdge.View.Backward, Order.Asc> edges,
                              Encoding.Edge.Thing encoding,
                              TypeVertex optimisedType) {
                 super(owner, edges, encoding);
@@ -74,7 +74,7 @@ public abstract class ThingEdgeIterator {
             }
 
             @Override
-            public Seekable<KeyValue<ThingVertex, ThingVertex>, SortedIterator.Order.Asc> fromAndOptimised() {
+            public Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> fromAndOptimised() {
                 return edges.mapSorted(
                         ASC,
                         edgeView -> KeyValue.of(edgeView.edge().from(), edgeView.edge().optimised().get()),

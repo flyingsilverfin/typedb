@@ -18,6 +18,7 @@
 
 package com.vaticle.typedb.core.graph.edge.impl;
 
+import com.vaticle.typedb.core.common.exception.TypeDBException;
 import com.vaticle.typedb.core.graph.TypeGraph;
 import com.vaticle.typedb.core.graph.common.Encoding;
 import com.vaticle.typedb.core.graph.edge.TypeEdge;
@@ -28,6 +29,7 @@ import com.vaticle.typedb.core.graph.vertex.TypeVertex;
 import javax.annotation.Nullable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static com.vaticle.typedb.core.common.exception.ErrorMessage.Transaction.ILLEGAL_OPERATION;
 import static java.util.Objects.hash;
 
 /**
@@ -199,8 +201,8 @@ public abstract class TypeEdgeImpl implements TypeEdge {
                 from.outs().remove(this);
                 to.ins().remove(this);
                 if (from instanceof Persisted && to instanceof Persisted) {
-                    graph.storage().deleteUntracked(getForward().iid());
-                    graph.storage().deleteUntracked(getBackward().iid());
+                    graph.storage().deleteUntracked(forward.iid());
+                    graph.storage().deleteUntracked(backward.iid());
                 }
             }
         }
@@ -262,6 +264,64 @@ public abstract class TypeEdgeImpl implements TypeEdge {
         public final int hashCode() {
             if (hash == 0) hash = hash(encoding, from, to);
             return hash;
+        }
+    }
+
+
+    public static class Target extends TypeEdgeImpl implements TypeEdge {
+
+        private final TypeVertex from;
+        private final TypeVertex to;
+
+        public Target(Encoding.Edge.Type encoding, TypeVertex from, TypeVertex to) {
+            super(from.graph(), encoding);
+            this.from = from;
+            this.to = to;
+        }
+
+        @Override
+        public Encoding.Edge.Type encoding() {
+            return encoding;
+        }
+
+        @Override
+        EdgeViewIID.Type computeForwardIID() {
+            return EdgeViewIID.Type.of(from.iid(), encoding.forward(), to.iid());
+        }
+
+        @Override
+        EdgeViewIID.Type computeBackwardIID() {
+            return EdgeViewIID.Type.of(to.iid(), encoding.forward(), from.iid());
+        }
+
+        @Override
+        public TypeVertex from() {
+            return from;
+        }
+
+        @Override
+        public TypeVertex to() {
+            return to;
+        }
+
+        @Override
+        public TypeVertex overridden() {
+            return null;
+        }
+
+        @Override
+        public void overridden(TypeVertex overridden) {
+            throw TypeDBException.of(ILLEGAL_OPERATION);
+        }
+
+        @Override
+        public void delete() {
+            throw TypeDBException.of(ILLEGAL_OPERATION);
+        }
+
+        @Override
+        public void commit() {
+            throw TypeDBException.of(ILLEGAL_OPERATION);
         }
     }
 
