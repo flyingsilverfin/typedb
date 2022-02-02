@@ -264,8 +264,8 @@ public abstract class ThingEdgeImpl implements ThingEdge {
         public void commit() {
             if (isInferred()) throw TypeDBException.of(ILLEGAL_OPERATION);
             if (committed.compareAndSet(false, true)) {
-                graph.storage().putTracked(forward.iid());
-                graph.storage().putUntracked(backward.iid());
+                graph.storage().putTracked(computeForwardIID()); // re-compute IID because vertices may be committed
+                graph.storage().putUntracked(computeBackwardIID());
             }
         }
 
