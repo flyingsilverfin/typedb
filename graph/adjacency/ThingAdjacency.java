@@ -18,37 +18,69 @@
 
 package com.vaticle.typedb.core.graph.adjacency;
 
+import com.vaticle.typedb.core.common.collection.KeyValue;
 import com.vaticle.typedb.core.common.iterator.FunctionalIterator;
+import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator;
+import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Seekable;
 import com.vaticle.typedb.core.graph.common.Encoding;
 import com.vaticle.typedb.core.graph.edge.Edge;
 import com.vaticle.typedb.core.graph.edge.ThingEdge;
+import com.vaticle.typedb.core.graph.edge.impl.ThingEdgeImpl;
 import com.vaticle.typedb.core.graph.iid.IID;
 import com.vaticle.typedb.core.graph.vertex.ThingVertex;
 import com.vaticle.typedb.core.graph.vertex.TypeVertex;
+
+import static com.vaticle.typedb.common.collection.Collections.list;
+import static com.vaticle.typedb.core.common.iterator.Iterators.Sorted.iterateSorted;
+import static com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.ASC;
 
 public interface ThingAdjacency {
 
     interface In extends ThingAdjacency {
 
-        EdgeIterator.Thing.In edge(Encoding.Edge.Thing.Base encoding, IID... lookAhead);
+        InEdgeIterator edge(Encoding.Edge.Thing.Base encoding, IID... lookAhead);
 
-        EdgeIterator.Thing.In.Optimised edge(Encoding.Edge.Thing.Optimised encoding, TypeVertex roleType, IID... lookAhead);
+        InEdgeIterator.Optimised edge(Encoding.Edge.Thing.Optimised encoding, TypeVertex roleType, IID... lookAhead);
 
         @Override
         default boolean isIn() {
             return true;
         }
+
+        interface InEdgeIterator {
+
+            Seekable<ThingVertex, SortedIterator.Order.Asc> from();
+
+            SortedIterator<ThingVertex, SortedIterator.Order.Asc> to();
+
+            interface Optimised extends InEdgeIterator {
+
+                Seekable<KeyValue<ThingVertex, ThingVertex>, SortedIterator.Order.Asc> fromAndOptimised();
+            }
+        }
     }
 
     interface Out extends ThingAdjacency {
 
-        EdgeIterator.Thing.Out edge(Encoding.Edge.Thing.Base encoding, IID... lookAhead);
+        OutEdgeIterator edge(Encoding.Edge.Thing.Base encoding, IID... lookAhead);
 
-        EdgeIterator.Thing.Out.Optimised edge(Encoding.Edge.Thing.Optimised encoding, TypeVertex roleType, IID... lookAhead);
+        OutEdgeIterator.Optimised edge(Encoding.Edge.Thing.Optimised encoding, TypeVertex roleType, IID... lookAhead);
 
         @Override
         default boolean isOut() {
             return true;
+        }
+
+        interface OutEdgeIterator {
+
+            SortedIterator<ThingVertex, SortedIterator.Order.Asc> from();
+
+            Seekable<ThingVertex, SortedIterator.Order.Asc> to();
+
+            interface Optimised extends OutEdgeIterator {
+
+                Seekable<KeyValue<ThingVertex, ThingVertex>, SortedIterator.Order.Asc> toAndOptimised();
+            }
         }
     }
 
