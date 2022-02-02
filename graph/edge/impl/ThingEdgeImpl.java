@@ -78,12 +78,12 @@ public abstract class ThingEdgeImpl implements ThingEdge {
 
     abstract EdgeViewIID.Thing computeBackwardIID();
 
-    public static abstract class View<T extends ThingEdge.View<T>> implements ThingEdge.View<T> {
+    private static abstract class View<T extends ThingEdge.View<T>> implements ThingEdge.View<T> {
 
         final ThingEdgeImpl edge;
         EdgeViewIID.Thing iidCache = null;
 
-        View(ThingEdgeImpl edge) {
+        private View(ThingEdgeImpl edge) {
             this.edge = edge;
         }
 
@@ -104,9 +104,9 @@ public abstract class ThingEdgeImpl implements ThingEdge {
             return edge.hashCode();
         }
 
-        public static class Forward extends ThingEdgeImpl.View<ThingEdge.View.Forward> implements ThingEdge.View.Forward {
+        private static class Forward extends ThingEdgeImpl.View<ThingEdge.View.Forward> implements ThingEdge.View.Forward {
 
-            Forward(ThingEdgeImpl edge) {
+            private Forward(ThingEdgeImpl edge) {
                 super(edge);
             }
 
@@ -122,9 +122,9 @@ public abstract class ThingEdgeImpl implements ThingEdge {
             }
         }
 
-        public static class Backward extends ThingEdgeImpl.View<ThingEdge.View.Backward> implements ThingEdge.View.Backward {
+        private static class Backward extends ThingEdgeImpl.View<ThingEdge.View.Backward> implements ThingEdge.View.Backward {
 
-            Backward(ThingEdgeImpl edge) {
+            private Backward(ThingEdgeImpl edge) {
                 super(edge);
             }
 
@@ -169,7 +169,8 @@ public abstract class ThingEdgeImpl implements ThingEdge {
          * @param to        the head vertex
          * @param optimised vertex that this optimised edge is compressing
          */
-        public Buffered(Encoding.Edge.Thing encoding, ThingVertex.Write from, ThingVertex.Write to, @Nullable ThingVertex.Write optimised, boolean isInferred) {
+        public Buffered(Encoding.Edge.Thing encoding, ThingVertex.Write from, ThingVertex.Write to,
+                        @Nullable ThingVertex.Write optimised, boolean isInferred) {
             super(from.graph(), encoding, isInferred);
             assert this.graph == to.graph();
             assert encoding.isOptimisation() || optimised == null;
