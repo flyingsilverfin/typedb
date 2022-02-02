@@ -567,9 +567,7 @@ public abstract class ThingEdgeImpl implements ThingEdge {
          *
          * This operation can only be performed once, and thus protected by
          * {@code isDelete} atomic boolean. The delete operation involves
-         * removing this edge from the {@code from.outs()} and {@code to.ins()}
-         * edge collections in case it is cached. Then, delete both directions
-         * of this edge from the graph storage.
+         * removing this edge from the graph storage and notifying the from/to vertices of the modification.
          */
         @Override
         public void delete() {

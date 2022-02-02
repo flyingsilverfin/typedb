@@ -25,14 +25,12 @@ import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Seekable;
 import com.vaticle.typedb.core.graph.common.Encoding;
 import com.vaticle.typedb.core.graph.edge.Edge;
 import com.vaticle.typedb.core.graph.edge.ThingEdge;
-import com.vaticle.typedb.core.graph.edge.impl.ThingEdgeImpl;
 import com.vaticle.typedb.core.graph.iid.IID;
 import com.vaticle.typedb.core.graph.vertex.ThingVertex;
 import com.vaticle.typedb.core.graph.vertex.TypeVertex;
 
 import static com.vaticle.typedb.common.collection.Collections.list;
 import static com.vaticle.typedb.core.common.iterator.Iterators.Sorted.iterateSorted;
-import static com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.ASC;
 
 public interface ThingAdjacency {
 
@@ -84,7 +82,24 @@ public interface ThingAdjacency {
         }
     }
 
-    UnsortedEdgeIterator edge(Encoding.Edge.Thing.Optimised encoding);
+    UnsortedEdeIterator edge(Encoding.Edge.Thing.Optimised encoding);
+
+    class UnsortedEdeIterator {
+
+        private final FunctionalIterator<ThingEdge> edgeIterator;
+
+        public UnsortedEdeIterator(FunctionalIterator<ThingEdge> edgeIterator) {
+            this.edgeIterator = edgeIterator;
+        }
+
+        public FunctionalIterator<ThingVertex> from() {
+            return edgeIterator.map(Edge::from);
+        }
+
+        public FunctionalIterator<ThingVertex> to() {
+            return edgeIterator.map(Edge::to);
+        }
+    }
 
     /**
      * Returns an edge of type {@code encoding} that connects to an {@code adjacent}
@@ -113,23 +128,6 @@ public interface ThingAdjacency {
 
     default boolean isOut() {
         return false;
-    }
-
-    class UnsortedEdgeIterator {
-
-        private final FunctionalIterator<ThingEdge> edgeIterator;
-
-        public UnsortedEdgeIterator(FunctionalIterator<ThingEdge> edgeIterator) {
-            this.edgeIterator = edgeIterator;
-        }
-
-        public FunctionalIterator<ThingVertex> from() {
-            return edgeIterator.map(Edge::from);
-        }
-
-        public FunctionalIterator<ThingVertex> to() {
-            return edgeIterator.map(Edge::to);
-        }
     }
 
     interface Write extends ThingAdjacency {
