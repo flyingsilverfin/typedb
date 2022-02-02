@@ -143,10 +143,10 @@ public abstract class ThingEdgeImpl implements ThingEdge {
 
     public static class Buffered extends ThingEdgeImpl implements ThingEdge {
 
-        final AtomicBoolean committed;
-        final ThingVertex.Write from;
-        final ThingVertex.Write to;
-        final ThingVertex.Write optimised;
+        private final AtomicBoolean committed;
+        private final ThingVertex.Write from;
+        private final ThingVertex.Write to;
+        private final ThingVertex.Write optimised;
         private final int hash;
 
         /**
@@ -440,8 +440,6 @@ public abstract class ThingEdgeImpl implements ThingEdge {
         @Override
         public ThingVertex from() {
             // note: do not cache, since a readable vertex can become a writable vertex at any time
-            // since persisted edges are not cached, there is not much benefit to caching from write vertices
-            // since it's not expected that most vertices are modified
             return graph.convertToReadable(fromIID);
         }
 
