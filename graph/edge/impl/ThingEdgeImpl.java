@@ -80,50 +80,40 @@ public abstract class ThingEdgeImpl implements ThingEdge {
 
     public static abstract class View<T extends ThingEdge.View<T>> implements ThingEdge.View<T> {
 
-        final ThingEdgeImpl canonicalEdge;
+        final ThingEdgeImpl edge;
+        EdgeViewIID.Thing iidCache = null;
 
-        View(ThingEdgeImpl canonicalEdge) {
-            this.canonicalEdge = canonicalEdge;
+        View(ThingEdgeImpl edge) {
+            this.edge = edge;
         }
 
         @Override
         public ThingEdge edge() {
-            return canonicalEdge;
-        }
-
-        @Override
-        public View.Forward getForward() {
-            return canonicalEdge.forward;
-        }
-
-        @Override
-        public View.Backward getBackward() {
-            return canonicalEdge.backward;
+            return edge;
         }
 
         @Override
         public boolean equals(Object object) {
             if (this == object) return true;
             if (object == null || this.getClass() != object.getClass()) return false;
-            return canonicalEdge.equals(((ThingEdgeImpl.View)object).canonicalEdge);
+            return edge.equals(((ThingEdgeImpl.View<?>)object).edge);
         }
 
         @Override
         public int hashCode() {
-            return canonicalEdge.hashCode();
+            return edge.hashCode();
         }
 
         public static class Forward extends ThingEdgeImpl.View<ThingEdge.View.Forward> implements ThingEdge.View.Forward {
 
-            // TODO cache the IID
-
-            Forward(ThingEdgeImpl canonicalEdge) {
-                super(canonicalEdge);
+            Forward(ThingEdgeImpl edge) {
+                super(edge);
             }
 
             @Override
             public EdgeViewIID.Thing iid() {
-                return canonicalEdge.computeForwardIID();
+                if (iidCache == null) iidCache = edge.computeForwardIID();
+                return iidCache;
             }
 
             @Override
@@ -134,77 +124,20 @@ public abstract class ThingEdgeImpl implements ThingEdge {
 
         public static class Backward extends ThingEdgeImpl.View<ThingEdge.View.Backward> implements ThingEdge.View.Backward {
 
-            // TODO cache the IID
-
-            Backward(ThingEdgeImpl canonicalEdge) {
-                super(canonicalEdge);
+            Backward(ThingEdgeImpl edge) {
+                super(edge);
             }
 
             @Override
             public EdgeViewIID.Thing iid() {
-                return canonicalEdge.computeBackwardIID();
+                if (iidCache == null) iidCache = edge.computeBackwardIID();
+                return iidCache;
             }
 
             @Override
-            public int compareTo(View.Backward other) {
+            public int compareTo(ThingEdge.View.Backward other) {
                 return iid().compareTo(other.iid());
             }
-        }
-
-        @Override
-        public Encoding.Edge.Thing encoding() {
-            return canonicalEdge.encoding;
-        }
-
-        /**
-         * Deletes this {@code Edge} from connecting between two {@code Vertex}.
-         *
-         * A {@code ThingEdgeImpl.Buffered} can only exist in the adjacency cache of
-         * each {@code Vertex}, and does not exist in storage.
-         */
-        @Override
-        public void delete() {
-            canonicalEdge.delete();
-        }
-
-        @Override
-        public void commit() {
-            canonicalEdge.commit();
-        }
-
-        @Override
-        public ThingVertex from() {
-            return canonicalEdge.from();
-        }
-
-        @Override
-        public VertexIID.Thing fromIID() {
-            return canonicalEdge.fromIID();
-        }
-
-        @Override
-        public ThingVertex to() {
-            return canonicalEdge.to();
-        }
-
-        @Override
-        public VertexIID.Thing toIID() {
-            return canonicalEdge.toIID();
-        }
-
-        @Override
-        public Optional<? extends ThingVertex> optimised() {
-            return canonicalEdge.optimised();
-        }
-
-        @Override
-        public void isInferred(boolean isInferred) {
-            canonicalEdge.isInferred(isInferred);
-        }
-
-        @Override
-        public boolean isInferred() {
-            return canonicalEdge.isInferred();
         }
     }
 
@@ -246,7 +179,6 @@ public abstract class ThingEdgeImpl implements ThingEdge {
             this.hash = hash(Buffered.class, encoding, from, to);
             committed = new AtomicBoolean(false);
         }
-
 
         @Override
         public Encoding.Edge.Thing encoding() {

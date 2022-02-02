@@ -49,7 +49,7 @@ public abstract class ThingEdgeIterator {
 
         @Override
         public Seekable<ThingVertex, SortedIterator.Order.Asc> from() {
-            return edges.mapSorted(ASC, ThingEdge.View.Backward::from, this::targetEdge);
+            return edges.mapSorted(ASC, view -> view.edge().from(), this::targetEdge);
         }
 
         @Override
@@ -77,7 +77,7 @@ public abstract class ThingEdgeIterator {
             public Seekable<KeyValue<ThingVertex, ThingVertex>, SortedIterator.Order.Asc> fromAndOptimised() {
                 return edges.mapSorted(
                         ASC,
-                        edgeView -> KeyValue.of(edgeView.from(), edgeView.optimised().get()),
+                        edgeView -> KeyValue.of(edgeView.edge().from(), edgeView.edge().optimised().get()),
                         fromAndOptimised -> targetEdge(fromAndOptimised.key())
                 );
             }
@@ -87,7 +87,6 @@ public abstract class ThingEdgeIterator {
                 return new ThingEdgeImpl.Target(encoding, targetFrom, owner, optimisedType).getBackward();
             }
         }
-
     }
 
     static class OutEdgeIteratorImpl implements ThingAdjacency.Out.OutEdgeIterator {
@@ -113,7 +112,7 @@ public abstract class ThingEdgeIterator {
 
         @Override
         public Seekable<ThingVertex, Order.Asc> to() {
-            return edges.mapSorted(ASC, ThingEdge.View.Forward::to, this::targetEdge);
+            return edges.mapSorted(ASC, view -> view.edge().to(), this::targetEdge);
         }
 
         static class Optimised extends OutEdgeIteratorImpl implements ThingAdjacency.Out.OutEdgeIterator.Optimised {
@@ -132,7 +131,7 @@ public abstract class ThingEdgeIterator {
             public Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> toAndOptimised() {
                 return edges.mapSorted(
                         ASC,
-                        edgeView -> KeyValue.of(edgeView.to(), edgeView.optimised().get()),
+                        edgeView -> KeyValue.of(edgeView.edge().to(), edgeView.edge().optimised().get()),
                         toAndOptimised -> targetEdge(toAndOptimised.key())
                 );
             }

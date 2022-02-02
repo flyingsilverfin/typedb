@@ -26,7 +26,7 @@ import com.vaticle.typedb.core.graph.vertex.ThingVertex;
 import java.util.Optional;
 
 /**
- * An edge between two {@code ThingVertex}.
+ * An directed edge between two {@code ThingVertex}.
  */
 public interface ThingEdge extends Edge<Encoding.Edge.Thing, ThingVertex> {
 
@@ -48,7 +48,7 @@ public interface ThingEdge extends Edge<Encoding.Edge.Thing, ThingVertex> {
 
     View.Backward getBackward();
 
-    interface View<T extends View<T>> extends ThingEdge, Comparable<T> {
+    interface View<T extends View<T>> extends Comparable<T> {
 
         EdgeViewIID.Thing iid();
 
