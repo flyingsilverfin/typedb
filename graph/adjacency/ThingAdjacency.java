@@ -195,8 +195,6 @@ public interface ThingAdjacency {
 
         void deleteAll();
 
-        ThingEdge cache(ThingEdge edge);
-
         void remove(ThingEdge edge);
 
         void commit();

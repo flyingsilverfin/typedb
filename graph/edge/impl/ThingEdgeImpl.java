@@ -463,9 +463,6 @@ public abstract class ThingEdgeImpl implements ThingEdge {
         private final VertexIID.Thing toIID;
         private final VertexIID.Thing optimisedIID;
         private final int hash;
-        private ThingVertex.Write fromCache;
-        private ThingVertex.Write toCache;
-        private ThingVertex optimisedCache;
 
         /**
          * Default constructor for {@code Edge.Persisted}.
@@ -510,22 +507,10 @@ public abstract class ThingEdgeImpl implements ThingEdge {
 
         @Override
         public ThingVertex from() {
-            if (fromCache != null) return fromCache;
-            ThingVertex from = graph.convertToReadable(fromIID);
-            if (from.isWrite()) {
-                fromCache = from.asWrite();
-                fromCache.outs().cache(this);
-                return fromCache;
-            } else {
-                return from;
-            }
-        }
-
-        private ThingVertex.Write fromWritable() {
-            if (fromCache != null) return fromCache;
-            fromCache = graph.convertToWritable(fromIID);
-            fromCache.outs().cache(this);
-            return fromCache;
+            // note: do not cache, since a readable vertex can become a writable vertex at any time
+            // since persisted edges are not cached, there is not much benefit to caching from write vertices
+            // since it's not expected that most vertices are modified
+            return graph.convertToReadable(fromIID);
         }
 
         @Override
@@ -535,22 +520,7 @@ public abstract class ThingEdgeImpl implements ThingEdge {
 
         @Override
         public ThingVertex to() {
-            if (toCache != null) return toCache;
-            ThingVertex to = graph.convertToReadable(toIID);
-            if (to.isWrite()) {
-                toCache = to.asWrite();
-                toCache.ins().cache(this);
-                return toCache;
-            } else {
-                return to;
-            }
-        }
-
-        private ThingVertex.Write toWritable() {
-            if (toCache != null) return toCache;
-            toCache = graph.convertToWritable(toIID);
-            toCache.outs().cache(this);
-            return toCache;
+            return graph.convertToReadable(toIID);
         }
 
         @Override
@@ -560,9 +530,7 @@ public abstract class ThingEdgeImpl implements ThingEdge {
 
         @Override
         public Optional<ThingVertex> optimised() {
-            if (optimisedCache != null) return Optional.of(optimisedCache);
-            if (optimisedIID != null) optimisedCache = graph.convertToReadable(optimisedIID);
-            return Optional.ofNullable(optimisedCache);
+            return Optional.ofNullable(graph.convertToReadable(optimisedIID));
         }
 
         @Override
@@ -606,8 +574,6 @@ public abstract class ThingEdgeImpl implements ThingEdge {
         @Override
         public void delete() {
             if (deleted.compareAndSet(false, true)) {
-                fromWritable().outs().remove(this);
-                toWritable().ins().remove(this);
                 graph.storage().deleteTracked(forward.iid());
                 graph.storage().deleteUntracked(backward.iid());
                 if (encoding == Encoding.Edge.Thing.Base.HAS && !isInferred) {
