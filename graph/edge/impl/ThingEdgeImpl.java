@@ -574,6 +574,8 @@ public abstract class ThingEdgeImpl implements ThingEdge {
         @Override
         public void delete() {
             if (deleted.compareAndSet(false, true)) {
+                graph.convertToWritable(fromIID).setModified();
+                graph.convertToWritable(toIID).setModified();
                 graph.storage().deleteTracked(forward.iid());
                 graph.storage().deleteUntracked(backward.iid());
                 if (encoding == Encoding.Edge.Thing.Base.HAS && !isInferred) {
