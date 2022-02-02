@@ -133,9 +133,9 @@ public abstract class ThingAdjacencyImpl<EDGE_VIEW extends ThingEdge.View<EDGE_V
         }
 
         @Override
-        public UnsortedEdeIterator edge(Encoding.Edge.Thing.Optimised encoding) {
+        public UnsortedEdgeIterator edge(Encoding.Edge.Thing.Optimised encoding) {
             Key.Prefix<EdgeViewIID.Thing> prefix = EdgeViewIID.Thing.prefix(owner().iid(), infixIID(encoding));
-            return new UnsortedEdeIterator(owner.graph().storage().iterate(prefix, ASC)
+            return new UnsortedEdgeIterator(owner.graph().storage().iterate(prefix, ASC)
                     .map(kv -> newPersistedEdge(EdgeViewIID.Thing.of(kv.key().bytes()))));
         }
 
@@ -380,8 +380,8 @@ public abstract class ThingAdjacencyImpl<EDGE_VIEW extends ThingEdge.View<EDGE_V
             }
 
             @Override
-            public UnsortedEdeIterator edge(Encoding.Edge.Thing.Optimised encoding) {
-                return new UnsortedEdeIterator(bufferedEdgeIterator(encoding, new IID[]{}).map(ThingEdge.View::edge));
+            public UnsortedEdgeIterator edge(Encoding.Edge.Thing.Optimised encoding) {
+                return new UnsortedEdgeIterator(bufferedEdgeIterator(encoding, new IID[]{}).map(ThingEdge.View::edge));
             }
 
             @Override
@@ -462,8 +462,8 @@ public abstract class ThingAdjacencyImpl<EDGE_VIEW extends ThingEdge.View<EDGE_V
             }
 
             @Override
-            public UnsortedEdeIterator edge(Encoding.Edge.Thing.Optimised encoding) {
-                return new UnsortedEdeIterator(edgeIteratorUnsorted(encoding));
+            public UnsortedEdgeIterator edge(Encoding.Edge.Thing.Optimised encoding) {
+                return new UnsortedEdgeIterator(edgeIteratorUnsorted(encoding));
             }
 
             private FunctionalIterator<ThingEdge> edgeIteratorUnsorted(Encoding.Edge.Thing encoding, IID... lookahead) {

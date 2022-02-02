@@ -101,10 +101,6 @@ public abstract class ThingEdgeIterator {
             this.encoding = encoding;
         }
 
-        ThingEdge.View.Forward targetEdge(ThingVertex targetTo) {
-            return new ThingEdgeImpl.Target(encoding, owner, targetTo, null).getForward();
-        }
-
         @Override
         public SortedIterator<ThingVertex, Order.Asc> from() {
             return iterateSorted(ASC, list(owner));
@@ -113,6 +109,10 @@ public abstract class ThingEdgeIterator {
         @Override
         public Seekable<ThingVertex, Order.Asc> to() {
             return edges.mapSorted(ASC, view -> view.edge().to(), this::targetEdge);
+        }
+
+        ThingEdge.View.Forward targetEdge(ThingVertex targetTo) {
+            return new ThingEdgeImpl.Target(encoding, owner, targetTo, null).getForward();
         }
 
         static class Optimised extends OutEdgeIteratorImpl implements ThingAdjacency.Out.OutEdgeIterator.Optimised {

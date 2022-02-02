@@ -82,13 +82,13 @@ public interface ThingAdjacency {
         }
     }
 
-    UnsortedEdeIterator edge(Encoding.Edge.Thing.Optimised encoding);
+    UnsortedEdgeIterator edge(Encoding.Edge.Thing.Optimised encoding);
 
-    class UnsortedEdeIterator {
+    class UnsortedEdgeIterator {
 
         private final FunctionalIterator<ThingEdge> edgeIterator;
 
-        public UnsortedEdeIterator(FunctionalIterator<ThingEdge> edgeIterator) {
+        public UnsortedEdgeIterator(FunctionalIterator<ThingEdge> edgeIterator) {
             this.edgeIterator = edgeIterator;
         }
 
