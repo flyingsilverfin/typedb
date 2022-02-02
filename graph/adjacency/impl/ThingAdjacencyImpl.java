@@ -260,8 +260,8 @@ public abstract class ThingAdjacencyImpl<EDGE_VIEW extends ThingEdge.View<EDGE_V
                     encoding, new IID[]{optimised.iid().type(), adjacent.iid().prefix(), adjacent.iid().type()}
             );
             iterator.seek(isOut() ?
-                            getView(new ThingEdgeImpl.Target(encoding, owner, adjacent, optimised.type())) :
-                            getView(new ThingEdgeImpl.Target(encoding, adjacent, owner, optimised.type()))
+                    getView(new ThingEdgeImpl.Target(encoding, owner, adjacent, optimised.type())) :
+                    getView(new ThingEdgeImpl.Target(encoding, adjacent, owner, optimised.type()))
             );
             ThingEdge edge = null;
             while (iterator.hasNext()) {
@@ -279,8 +279,8 @@ public abstract class ThingAdjacencyImpl<EDGE_VIEW extends ThingEdge.View<EDGE_V
             Seekable<EDGE_VIEW, Order.Asc> iterator = bufferedEdgeIterator(
                     encoding, new IID[]{adjacent.iid().prefix(), adjacent.iid().type()}
             );
-            iterator.seek(isOut()?
-                    getView(new ThingEdgeImpl.Target(encoding, owner, adjacent, null)):
+            iterator.seek(isOut() ?
+                    getView(new ThingEdgeImpl.Target(encoding, owner, adjacent, null)) :
                     getView(new ThingEdgeImpl.Target(encoding, adjacent, owner, null))
             );
             ThingEdge edge = null;
@@ -342,7 +342,8 @@ public abstract class ThingAdjacencyImpl<EDGE_VIEW extends ThingEdge.View<EDGE_V
         }
 
         @Override
-        public ThingEdge put(Encoding.Edge.Thing encoding, ThingVertex.Write adjacent, ThingVertex.Write optimised, boolean isInferred) {
+        public ThingEdge put(Encoding.Edge.Thing encoding, ThingVertex.Write adjacent, ThingVertex.Write optimised,
+                             boolean isInferred) {
             assert encoding.isOptimisation();
             ThingEdgeImpl edge = isOut()
                     ? new ThingEdgeImpl.Buffered(encoding, owner, adjacent, optimised, isInferred)
@@ -394,8 +395,7 @@ public abstract class ThingAdjacencyImpl<EDGE_VIEW extends ThingEdge.View<EDGE_V
                 bufferedEdgeIterator(encoding, lookAhead).forEachRemaining(comparableEdge -> comparableEdge.edge().delete());
             }
 
-            public static class In extends Buffered<ThingEdge.View.Backward>
-                    implements com.vaticle.typedb.core.graph.adjacency.ThingAdjacency.Write.In {
+            public static class In extends Buffered<ThingEdge.View.Backward> implements ThingAdjacency.Write.In {
 
                 public In(ThingVertex.Write owner) {
                     super(owner);
@@ -423,8 +423,7 @@ public abstract class ThingAdjacencyImpl<EDGE_VIEW extends ThingEdge.View<EDGE_V
                 }
             }
 
-            public static class Out extends Buffered<ThingEdge.View.Forward>
-                    implements com.vaticle.typedb.core.graph.adjacency.ThingAdjacency.Write.Out {
+            public static class Out extends Buffered<ThingEdge.View.Forward> implements ThingAdjacency.Write.Out {
 
                 public Out(ThingVertex.Write owner) {
                     super(owner);
@@ -514,8 +513,7 @@ public abstract class ThingAdjacencyImpl<EDGE_VIEW extends ThingEdge.View<EDGE_V
                 edgeIteratorUnsorted(encoding, lookAhead).forEachRemaining(Edge::delete);
             }
 
-            public static class In extends Persisted<ThingEdge.View.Backward>
-                    implements com.vaticle.typedb.core.graph.adjacency.ThingAdjacency.Write.In {
+            public static class In extends Persisted<ThingEdge.View.Backward> implements ThingAdjacency.Write.In {
 
                 public In(ThingVertex.Write owner) {
                     super(owner);
@@ -532,7 +530,8 @@ public abstract class ThingAdjacencyImpl<EDGE_VIEW extends ThingEdge.View<EDGE_V
                 }
 
                 @Override
-                public InEdgeIterator.Optimised edge(Encoding.Edge.Thing.Optimised encoding, TypeVertex roleType, IID... lookahead) {
+                public InEdgeIterator.Optimised edge(Encoding.Edge.Thing.Optimised encoding, TypeVertex roleType,
+                                                     IID... lookahead) {
                     IID[] mergedLookahead = new IID[1 + lookahead.length];
                     mergedLookahead[0] = roleType.iid();
                     System.arraycopy(lookahead, 0, mergedLookahead, 1, lookahead.length);
@@ -541,8 +540,7 @@ public abstract class ThingAdjacencyImpl<EDGE_VIEW extends ThingEdge.View<EDGE_V
                 }
             }
 
-            public static class Out extends Persisted<ThingEdge.View.Forward>
-                    implements com.vaticle.typedb.core.graph.adjacency.ThingAdjacency.Write.Out {
+            public static class Out extends Persisted<ThingEdge.View.Forward> implements ThingAdjacency.Write.Out {
 
                 public Out(ThingVertex.Write owner) {
                     super(owner);
@@ -559,7 +557,8 @@ public abstract class ThingAdjacencyImpl<EDGE_VIEW extends ThingEdge.View<EDGE_V
                 }
 
                 @Override
-                public OutEdgeIterator.Optimised edge(Encoding.Edge.Thing.Optimised encoding, TypeVertex roleType, IID... lookahead) {
+                public OutEdgeIterator.Optimised edge(Encoding.Edge.Thing.Optimised encoding, TypeVertex roleType,
+                                                      IID... lookahead) {
                     IID[] mergedLookahead = new IID[1 + lookahead.length];
                     mergedLookahead[0] = roleType.iid();
                     System.arraycopy(lookahead, 0, mergedLookahead, 1, lookahead.length);
