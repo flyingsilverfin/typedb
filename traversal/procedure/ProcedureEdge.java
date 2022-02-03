@@ -1235,8 +1235,7 @@ public abstract class ProcedureEdge<
                                 iter = resolveRoleTypesIter.mergeMap(ASC, rt -> rel.outs().edge(ROLEPLAYER, rt).toAndOptimised());
                             }
                         } else {
-                            throw TypeDBException.of(ILLEGAL_STATE); // TODO disallow
-//                            iter = rel.outs().edge(ROLEPLAYER).get();
+                            throw TypeDBException.of(ILLEGAL_STATE);
                         }
 
                         if (!filteredIID && to.props().hasIID()) iter = to.filterIIDOnPlayerAndRole(iter, params);
@@ -1260,9 +1259,6 @@ public abstract class ProcedureEdge<
                             ).first();
                         } else {
                             throw TypeDBException.of(ILLEGAL_STATE);
-//                            valid = rel.outs().edge(ROLEPLAYER).get().filter(
-//                                    e -> e.to().equals(player) && !scoped.contains(e.optimised().get())
-//                            ).first();
                         }
                         valid.ifPresent(kv -> scoped.push(kv.value(), order()));
                         return valid.isPresent();

@@ -221,8 +221,8 @@ public abstract class TypeAdjacencyImpl<EDGE_VIEW extends TypeEdge.View<EDGE_VIE
             return EdgeViewIID.Type.of(owner.iid(), isOut() ? encoding.forward() : encoding.backward(), adjacent.iid());
         }
 
-        private TypeEdge newPersistedEdge(EdgeViewIID.Type edge, ByteArray value) {
-            VertexIID.Type overridden = ((value.isEmpty()) ? null : VertexIID.Type.of(value));
+        private TypeEdge newPersistedEdge(EdgeViewIID.Type edge, ByteArray overriddenBytes) {
+            VertexIID.Type overridden = ((overriddenBytes.isEmpty()) ? null : VertexIID.Type.of(overriddenBytes));
             return new TypeEdgeImpl.Persisted(owner.graph(), edge, overridden);
         }
 
@@ -269,11 +269,6 @@ public abstract class TypeAdjacencyImpl<EDGE_VIEW extends TypeEdge.View<EDGE_VIE
         @Override
         public void delete(Encoding.Edge.Type encoding) {
             edgeIterator(encoding).forEachRemaining(view -> view.edge().delete());
-        }
-
-        @Override
-        public void deleteAll() {
-            for (Encoding.Edge.Type type : Encoding.Edge.Type.values()) delete(type);
         }
     }
 }

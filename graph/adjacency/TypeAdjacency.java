@@ -104,7 +104,6 @@ public interface TypeAdjacency {
 
     void deleteAll();
 
-    // TODO delete
     TypeEdge cache(TypeEdge edge);
 
     void remove(TypeEdge edge);
