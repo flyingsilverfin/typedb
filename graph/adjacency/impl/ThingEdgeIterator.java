@@ -41,7 +41,7 @@ public abstract class ThingEdgeIterator {
         final Seekable<ThingEdge.View.Backward, Order.Asc> edges;
         final Encoding.Edge.Thing encoding;
 
-        InEdgeIteratorImpl(ThingVertex owner, Seekable<ThingEdge.View.Backward, Order.Asc> edges, Encoding.Edge.Thing encoding) {
+        InEdgeIteratorImpl(ThingVertex owner, Encoding.Edge.Thing encoding, Seekable<ThingEdge.View.Backward, Order.Asc> edges) {
             this.owner = owner;
             this.edges = edges;
             this.encoding = encoding;
@@ -65,11 +65,9 @@ public abstract class ThingEdgeIterator {
 
             private final TypeVertex optimisedType;
 
-            public Optimised(ThingVertex owner,
-                             Seekable<ThingEdge.View.Backward, Order.Asc> edges,
-                             Encoding.Edge.Thing encoding,
-                             TypeVertex optimisedType) {
-                super(owner, edges, encoding);
+            public Optimised(ThingVertex owner, Encoding.Edge.Thing encoding,
+                             Seekable<ThingEdge.View.Backward, Order.Asc> edges, TypeVertex optimisedType) {
+                super(owner, encoding, edges);
                 this.optimisedType = optimisedType;
             }
 
@@ -95,7 +93,7 @@ public abstract class ThingEdgeIterator {
         final Seekable<ThingEdge.View.Forward, Order.Asc> edges;
         final Encoding.Edge.Thing encoding;
 
-        OutEdgeIteratorImpl(ThingVertex owner, Seekable<ThingEdge.View.Forward, Order.Asc> edges, Encoding.Edge.Thing encoding) {
+        OutEdgeIteratorImpl(ThingVertex owner, Encoding.Edge.Thing encoding, Seekable<ThingEdge.View.Forward, Order.Asc> edges) {
             this.owner = owner;
             this.edges = edges;
             this.encoding = encoding;
@@ -120,10 +118,9 @@ public abstract class ThingEdgeIterator {
             private final TypeVertex optimisedType;
 
             Optimised(ThingVertex owner,
-                      Seekable<ThingEdge.View.Forward, Order.Asc> edges,
-                      Encoding.Edge.Thing encoding,
+                      Encoding.Edge.Thing encoding, Seekable<ThingEdge.View.Forward, Order.Asc> edges,
                       TypeVertex optimisedType) {
-                super(owner, edges, encoding);
+                super(owner, encoding, edges);
                 this.optimisedType = optimisedType;
             }
 

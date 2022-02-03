@@ -41,7 +41,7 @@ public abstract class TypeEdgeIterator {
         final Seekable<TypeEdge.View.Backward, Order.Asc> edges;
         final Encoding.Edge.Type encoding;
 
-        InEdgeIteratorImpl(TypeVertex owner, Seekable<TypeEdge.View.Backward, Order.Asc> edges, Encoding.Edge.Type encoding) {
+        InEdgeIteratorImpl(TypeVertex owner, Encoding.Edge.Type encoding, Seekable<TypeEdge.View.Backward, Order.Asc> edges) {
             this.owner = owner;
             this.edges = edges;
             this.encoding = encoding;
@@ -82,7 +82,7 @@ public abstract class TypeEdgeIterator {
         final Seekable<TypeEdge.View.Forward, Order.Asc> edges;
         final Encoding.Edge.Type encoding;
 
-        OutEdgeIteratorImpl(TypeVertex owner, Seekable<TypeEdge.View.Forward, Order.Asc> edges, Encoding.Edge.Type encoding) {
+        OutEdgeIteratorImpl(TypeVertex owner, Encoding.Edge.Type encoding, Seekable<TypeEdge.View.Forward, Order.Asc> edges) {
             this.owner = owner;
             this.edges = edges;
             this.encoding = encoding;

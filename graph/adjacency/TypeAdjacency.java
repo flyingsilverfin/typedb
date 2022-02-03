@@ -33,6 +33,11 @@ public interface TypeAdjacency {
 
         InEdgeIterator edge(Encoding.Edge.Type encoding);
 
+        @Override
+        default boolean isIn() {
+            return true;
+        }
+
         interface InEdgeIterator {
 
             Seekable<TypeVertex, Order.Asc> from();
@@ -49,6 +54,11 @@ public interface TypeAdjacency {
 
         OutEdgeIterator edge(Encoding.Edge.Type encoding);
 
+        @Override
+        default boolean isOut() {
+            return true;
+        }
+
         interface OutEdgeIterator {
 
             SortedIterator<TypeVertex, Order.Asc> from();
@@ -59,6 +69,14 @@ public interface TypeAdjacency {
 
             Seekable<KeyValue<TypeVertex, TypeVertex>, Order.Asc> toAndOverridden();
         }
+    }
+
+    default boolean isIn() {
+        return false;
+    }
+
+    default boolean isOut() {
+        return false;
     }
 
     /**

@@ -313,13 +313,15 @@ public abstract class ThingEdgeImpl implements ThingEdge {
         private final ThingVertex from;
         private final ThingVertex to;
         private final TypeVertex optimisedType;
+        private final int hash;
 
         public Target(Encoding.Edge.Thing encoding, ThingVertex from, ThingVertex to, @Nullable TypeVertex optimisedType) {
             super(from.graph(), encoding, false);
             assert !encoding.isOptimisation() || optimisedType != null;
-            this.optimisedType = optimisedType;
             this.from = from;
             this.to = to;
+            this.optimisedType = optimisedType;
+            this.hash = hash(Target.class, encoding, from, to, optimisedType);
         }
 
         @Override
@@ -387,6 +389,22 @@ public abstract class ThingEdgeImpl implements ThingEdge {
         @Override
         public void isInferred(boolean isInferred) {
             throw TypeDBException.of(ILLEGAL_OPERATION);
+        }
+
+        @Override
+        public final boolean equals(Object object) {
+            if (this == object) return true;
+            if (object == null || getClass() != object.getClass()) return false;
+            ThingEdgeImpl.Target that = (ThingEdgeImpl.Target) object;
+            return this.encoding.equals(that.encoding) &&
+                    this.from.equals(that.from) &&
+                    this.to.equals(that.to) &&
+                    Objects.equals(this.optimisedType, that.optimisedType);
+        }
+
+        @Override
+        public final int hashCode() {
+            return hash;
         }
     }
 

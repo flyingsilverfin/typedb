@@ -272,11 +272,13 @@ public abstract class TypeEdgeImpl implements TypeEdge {
 
         private final TypeVertex from;
         private final TypeVertex to;
+        private final int hash;
 
         public Target(Encoding.Edge.Type encoding, TypeVertex from, TypeVertex to) {
             super(from.graph(), encoding);
             this.from = from;
             this.to = to;
+            this.hash = hash(Target.class, from, to);
         }
 
         @Override
@@ -322,6 +324,21 @@ public abstract class TypeEdgeImpl implements TypeEdge {
         @Override
         public void commit() {
             throw TypeDBException.of(ILLEGAL_OPERATION);
+        }
+
+        @Override
+        public final boolean equals(Object object) {
+            if (this == object) return true;
+            if (object == null || getClass() != object.getClass()) return false;
+            TypeEdgeImpl.Target that = (TypeEdgeImpl.Target) object;
+            return this.encoding.equals(that.encoding) &&
+                    this.from.equals(that.from) &&
+                    this.to.equals(that.to);
+        }
+
+        @Override
+        public final int hashCode() {
+            return hash;
         }
     }
 
@@ -434,7 +451,7 @@ public abstract class TypeEdgeImpl implements TypeEdge {
         @Override
         public void delete() {
             if (deleted.compareAndSet(false, true)) {
-                from().outs().remove(this); // TODO
+                from().outs().remove(this);
                 to().ins().remove(this);
                 graph.storage().deleteUntracked(getForward().iid());
                 graph.storage().deleteUntracked(getBackward().iid());
