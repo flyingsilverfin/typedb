@@ -45,7 +45,7 @@ public class MergeMappedIterator<T, U extends Comparable<? super U>, ORDER exten
 
     enum State {INIT, NOT_READY, FETCHED, COMPLETED}
 
-    MergeMappedIterator(ORDER order, FunctionalIterator<T> iterator, Function<T, ITER> mappingFn) {
+    public MergeMappedIterator(ORDER order, FunctionalIterator<T> iterator, Function<T, ITER> mappingFn) {
         super(order);
         this.iterator = iterator;
         this.mappingFn = mappingFn;

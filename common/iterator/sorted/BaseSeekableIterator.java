@@ -80,33 +80,33 @@ public class BaseSeekableIterator<T extends Comparable<? super T>, ORDER extends
     }
 
     @Override
-    public final Seekable merge(Seekable iterator) {
+    public final Seekable<T, ORDER> merge(Seekable<T, ORDER> iterator) {
         return Iterators.Sorted.Seekable.merge( this, iterator);
     }
 
     @Override
-    public <U extends Comparable<? super U>, ORD extends Order> Seekable mapSorted(
+    public <U extends Comparable<? super U>, ORD extends Order> Seekable<U, ORD> mapSorted(
             ORD order, Function<T, U> mappingFn, Function<U, T> reverseMappingFn) {
         return Iterators.Sorted.Seekable.mapSorted(order, this, mappingFn, reverseMappingFn);
     }
 
     @Override
-    public Seekable distinct() {
+    public Seekable<T, ORDER> distinct() {
         return Iterators.Sorted.Seekable.distinct(this);
     }
 
     @Override
-    public Seekable filter(Predicate<T> predicate) {
+    public Seekable<T, ORDER> filter(Predicate<T> predicate) {
         return Iterators.Sorted.Seekable.filter(this, predicate);
     }
 
     @Override
-    public Seekable onConsumed(Runnable function) {
+    public Seekable<T, ORDER> onConsumed(Runnable function) {
         return Iterators.Sorted.Seekable.onConsume(this, function);
     }
 
     @Override
-    public Seekable onFinalised(Runnable function) {
+    public Seekable<T, ORDER> onFinalised(Runnable function) {
         return Iterators.Sorted.Seekable.onFinalise(this, function);
     }
 

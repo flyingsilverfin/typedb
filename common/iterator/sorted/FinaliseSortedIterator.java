@@ -34,7 +34,7 @@ public class FinaliseSortedIterator<T extends Comparable<? super T>, ORDER exten
     final ITER iterator;
     T last;
 
-    FinaliseSortedIterator(ITER iterator, Runnable function) {
+    public FinaliseSortedIterator(ITER iterator, Runnable function) {
         super(iterator.order());
         this.iterator = iterator;
         this.function = function;

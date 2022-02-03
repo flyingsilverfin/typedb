@@ -118,8 +118,8 @@ public abstract class TypeAdjacencyImpl<EDGE_VIEW extends TypeEdge.View<EDGE_VIE
             @Override
             public InEdgeIterator edge(Encoding.Edge.Type encoding) {
                 ConcurrentSkipListSet<TypeEdge.View.Backward> t = edges.get(encoding);
-                if (t != null) return new InEdgeIteratorImpl(owner, encoding, iterateSorted(ASC, t));
-                return new InEdgeIteratorImpl(owner, encoding, emptySorted());
+                if (t != null) return new InEdgeIteratorImpl(iterateSorted(ASC, t), owner, encoding);
+                return new InEdgeIteratorImpl(emptySorted(), owner, encoding);
             }
 
             @Override
@@ -146,8 +146,8 @@ public abstract class TypeAdjacencyImpl<EDGE_VIEW extends TypeEdge.View<EDGE_VIE
             @Override
             public OutEdgeIterator edge(Encoding.Edge.Type encoding) {
                 ConcurrentSkipListSet<TypeEdge.View.Forward> t = edges.get(encoding);
-                if (t != null) return new OutEdgeIteratorImpl(owner, encoding, iterateSorted(ASC, t));
-                return new OutEdgeIteratorImpl(owner, encoding, emptySorted());
+                if (t != null) return new OutEdgeIteratorImpl(iterateSorted(ASC, t), owner, encoding);
+                return new OutEdgeIteratorImpl(emptySorted(), owner, encoding);
             }
 
             @Override
@@ -196,7 +196,7 @@ public abstract class TypeAdjacencyImpl<EDGE_VIEW extends TypeEdge.View<EDGE_VIE
 
             @Override
             public InEdgeIterator edge(Encoding.Edge.Type encoding) {
-                return new InEdgeIteratorImpl(owner, encoding, edgeIterator(encoding));
+                return new InEdgeIteratorImpl(iterateViews(encoding), owner, encoding);
             }
         }
 
@@ -213,7 +213,7 @@ public abstract class TypeAdjacencyImpl<EDGE_VIEW extends TypeEdge.View<EDGE_VIE
 
             @Override
             public OutEdgeIterator edge(Encoding.Edge.Type encoding) {
-                return new OutEdgeIteratorImpl(owner, encoding, edgeIterator(encoding));
+                return new OutEdgeIteratorImpl(iterateViews(encoding), owner, encoding);
             }
         }
 
@@ -226,7 +226,7 @@ public abstract class TypeAdjacencyImpl<EDGE_VIEW extends TypeEdge.View<EDGE_VIE
             return new TypeEdgeImpl.Persisted(owner.graph(), edge, overridden);
         }
 
-        Seekable<EDGE_VIEW, Order.Asc> edgeIterator(Encoding.Edge.Type encoding) {
+        Seekable<EDGE_VIEW, Order.Asc> iterateViews(Encoding.Edge.Type encoding) {
             ConcurrentSkipListSet<EDGE_VIEW> bufferedEdges;
             if (isReadOnly && fetched.contains(encoding)) {
                 return (bufferedEdges = edges.get(encoding)) != null ? iterateSorted(ASC, bufferedEdges) : emptySorted();
@@ -268,7 +268,7 @@ public abstract class TypeAdjacencyImpl<EDGE_VIEW extends TypeEdge.View<EDGE_VIE
 
         @Override
         public void delete(Encoding.Edge.Type encoding) {
-            edgeIterator(encoding).forEachRemaining(view -> view.edge().delete());
+            iterateViews(encoding).forEachRemaining(view -> view.edge().delete());
         }
     }
 }
