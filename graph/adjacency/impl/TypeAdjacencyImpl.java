@@ -196,7 +196,7 @@ public abstract class TypeAdjacencyImpl<EDGE_VIEW extends TypeEdge.View<EDGE_VIE
 
             @Override
             public InEdgeIterator edge(Encoding.Edge.Type encoding) {
-                return null;
+                return new InEdgeIteratorImpl(owner, encoding, edgeIterator(encoding));
             }
         }
 
@@ -213,7 +213,7 @@ public abstract class TypeAdjacencyImpl<EDGE_VIEW extends TypeEdge.View<EDGE_VIE
 
             @Override
             public OutEdgeIterator edge(Encoding.Edge.Type encoding) {
-                return null;
+                return new OutEdgeIteratorImpl(owner, encoding, edgeIterator(encoding));
             }
         }
 
@@ -226,7 +226,7 @@ public abstract class TypeAdjacencyImpl<EDGE_VIEW extends TypeEdge.View<EDGE_VIE
             return new TypeEdgeImpl.Persisted(owner.graph(), edge, overridden);
         }
 
-        private Seekable<EDGE_VIEW, Order.Asc> edgeIterator(Encoding.Edge.Type encoding) {
+        Seekable<EDGE_VIEW, Order.Asc> edgeIterator(Encoding.Edge.Type encoding) {
             ConcurrentSkipListSet<EDGE_VIEW> bufferedEdges;
             if (isReadOnly && fetched.contains(encoding)) {
                 return (bufferedEdges = edges.get(encoding)) != null ? iterateSorted(ASC, bufferedEdges) : emptySorted();
@@ -246,16 +246,15 @@ public abstract class TypeAdjacencyImpl<EDGE_VIEW extends TypeEdge.View<EDGE_VIE
             else return iterateSorted(ASC, bufferedEdges).merge(storageIterator).distinct();
         }
 
-
         @Override
         public TypeEdge edge(Encoding.Edge.Type encoding, TypeVertex adjacent) {
             Predicate<TypeEdge> predicate = isOut()
                     ? e -> e.to().equals(adjacent)
                     : e -> e.from().equals(adjacent);
 
-            Optional<TypeEdge> container = edges.get(encoding).stream().filter(view -> predicate.test(view.edge()))
-                    .findAny().map(TypeEdge.View::edge);
-            if (edges.containsKey(encoding) && container.isPresent()) {
+            Optional<TypeEdge> container;
+            if (edges.containsKey(encoding) && (container = edges.get(encoding).stream().filter(view -> predicate.test(view.edge()))
+                    .findAny().map(TypeEdge.View::edge)).isPresent()) {
                 return container.get();
             } else {
                 EdgeViewIID.Type edgeIID = edgeIID(encoding, adjacent);
