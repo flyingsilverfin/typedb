@@ -102,16 +102,16 @@ public abstract class TypeAdjacencyImpl<EDGE_VIEW extends TypeEdge.View<EDGE_VIE
         edges.values().forEach(set -> set.forEach(view -> view.edge().commit()));
     }
 
-    static abstract class Buffered<EDGE_VIEW extends TypeEdge.View<EDGE_VIEW>>
+    public static abstract class Buffered<EDGE_VIEW extends TypeEdge.View<EDGE_VIEW>>
             extends TypeAdjacencyImpl<EDGE_VIEW> implements TypeAdjacency {
 
         Buffered(TypeVertex owner) {
             super(owner);
         }
 
-        static class In extends Buffered<TypeEdge.View.Backward> implements TypeAdjacency.In {
+        public static class In extends Buffered<TypeEdge.View.Backward> implements TypeAdjacency.In {
 
-            In(TypeVertex owner) {
+            public In(TypeVertex owner) {
                 super(owner);
             }
 
@@ -137,9 +137,9 @@ public abstract class TypeAdjacencyImpl<EDGE_VIEW extends TypeEdge.View<EDGE_VIE
             }
         }
 
-        static class Out extends Buffered<TypeEdge.View.Forward> implements TypeAdjacency.Out {
+        public static class Out extends Buffered<TypeEdge.View.Forward> implements TypeAdjacency.Out {
 
-            Out(TypeVertex owner) {
+            public Out(TypeVertex owner) {
                 super(owner);
             }
 
@@ -171,7 +171,7 @@ public abstract class TypeAdjacencyImpl<EDGE_VIEW extends TypeEdge.View<EDGE_VIE
         }
     }
 
-    static abstract class Persisted<EDGE_VIEW extends TypeEdge.View<EDGE_VIEW>>
+    public static abstract class Persisted<EDGE_VIEW extends TypeEdge.View<EDGE_VIEW>>
             extends TypeAdjacencyImpl<EDGE_VIEW> implements TypeAdjacency {
 
         private final ConcurrentSet<Encoding.Edge.Type> fetched;
@@ -183,9 +183,9 @@ public abstract class TypeAdjacencyImpl<EDGE_VIEW extends TypeEdge.View<EDGE_VIE
             isReadOnly = owner.graph().isReadOnly();
         }
 
-        static class In extends Persisted<TypeEdge.View.Backward> implements TypeAdjacency.In {
+        public static class In extends Persisted<TypeEdge.View.Backward> implements TypeAdjacency.In {
 
-            In(TypeVertex owner) {
+            public In(TypeVertex owner) {
                 super(owner);
             }
 
@@ -200,9 +200,9 @@ public abstract class TypeAdjacencyImpl<EDGE_VIEW extends TypeEdge.View<EDGE_VIE
             }
         }
 
-        static class Out extends Persisted<TypeEdge.View.Forward> implements TypeAdjacency.Out {
+        public static class Out extends Persisted<TypeEdge.View.Forward> implements TypeAdjacency.Out {
 
-            Out(TypeVertex owner) {
+            public Out(TypeVertex owner) {
                 super(owner);
             }
 

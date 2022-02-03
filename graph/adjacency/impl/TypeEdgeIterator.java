@@ -29,9 +29,9 @@ import com.vaticle.typedb.core.graph.edge.TypeEdge;
 import com.vaticle.typedb.core.graph.edge.impl.TypeEdgeImpl;
 import com.vaticle.typedb.core.graph.vertex.TypeVertex;
 
+import static com.vaticle.typedb.common.collection.Collections.list;
 import static com.vaticle.typedb.core.common.iterator.Iterators.Sorted.iterateSorted;
 import static com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.ASC;
-import static java.util.Collections.list;
 
 public abstract class TypeEdgeIterator {
 
