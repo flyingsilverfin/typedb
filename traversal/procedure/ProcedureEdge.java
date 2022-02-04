@@ -34,6 +34,7 @@ import com.vaticle.typedb.core.graph.vertex.ThingVertex;
 import com.vaticle.typedb.core.graph.vertex.TypeVertex;
 import com.vaticle.typedb.core.graph.vertex.Vertex;
 import com.vaticle.typedb.core.traversal.GraphTraversal;
+import com.vaticle.typedb.core.traversal.GraphTraversal.Thing;
 import com.vaticle.typedb.core.traversal.common.Identifier;
 import com.vaticle.typedb.core.traversal.graph.TraversalEdge;
 import com.vaticle.typedb.core.traversal.planner.PlannerEdge;
@@ -52,8 +53,8 @@ import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.ILL
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.ILLEGAL_STATE;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.UNRECOGNISED_VALUE;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.UNSUPPORTED_OPERATION;
+import static com.vaticle.typedb.core.common.iterator.Iterators.Sorted.Seekable.emptySorted;
 import static com.vaticle.typedb.core.common.iterator.Iterators.empty;
-import static com.vaticle.typedb.core.common.iterator.Iterators.iterate;
 import static com.vaticle.typedb.core.common.iterator.Iterators.iterate;
 import static com.vaticle.typedb.core.common.iterator.Iterators.link;
 import static com.vaticle.typedb.core.common.iterator.Iterators.loop;
@@ -120,11 +121,11 @@ public abstract class ProcedureEdge<
         }
     }
 
-    public abstract FunctionalIterator<? extends Vertex<?, ?>> branch(GraphManager graphMgr, Vertex<?, ?> fromVertex,
-                                                                      GraphTraversal.Thing.Parameters params);
+    public abstract Seekable<? extends Vertex<?, ?>, Order.Asc> branch(GraphManager graphMgr, Vertex<?, ?> fromVertex,
+                                                                       Thing.Parameters params);
 
     public abstract boolean isClosure(GraphManager graphMgr, Vertex<?, ?> fromVertex, Vertex<?, ?> toVertex,
-                                      GraphTraversal.Thing.Parameters params);
+                                      Thing.Parameters params);
 
     public int order() {
         return order;
@@ -193,13 +194,13 @@ public abstract class ProcedureEdge<
         }
 
         @Override
-        public FunctionalIterator<? extends Vertex<?, ?>> branch(GraphManager graphMgr, Vertex<?, ?> fromVertex,
-                                                                 GraphTraversal.Thing.Parameters params) {
+        public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(GraphManager graphMgr, Vertex<?, ?> fromVertex,
+                                                                  Thing.Parameters params) {
             if (fromVertex.isThing()) {
-                if (to.isType()) return empty();
+                if (to.isType()) return emptySorted();
                 else return to.asThing().filter(single(fromVertex.asThing()), params);
             } else if (fromVertex.isType()) {
-                if (to.isThing()) return empty();
+                if (to.isThing()) return emptySorted();
                 else return to.asType().filter(single(fromVertex.asType()));
             } else {
                 throw TypeDBException.of(ILLEGAL_STATE);
@@ -208,7 +209,7 @@ public abstract class ProcedureEdge<
 
         @Override
         public boolean isClosure(GraphManager graphMgr, Vertex<?, ?> fromVertex,
-                                 Vertex<?, ?> toVertex, GraphTraversal.Thing.Parameters params) {
+                                 Vertex<?, ?> toVertex, Thing.Parameters params) {
             assert fromVertex != null && toVertex != null;
             return fromVertex.equals(toVertex);
         }
@@ -236,22 +237,25 @@ public abstract class ProcedureEdge<
         }
 
         @Override
-        public FunctionalIterator<? extends Vertex<?, ?>> branch(
-                GraphManager graphMgr, Vertex<?, ?> fromVertex, GraphTraversal.Thing.Parameters params) {
+        public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
+                GraphManager graphMgr, Vertex<?, ?> fromVertex, Thing.Parameters params) {
             assert fromVertex.isThing() && fromVertex.asThing().isAttribute();
-            FunctionalIterator<? extends AttributeVertex<?>> toIter;
+
+            // TODO: can we get rid of the ? extends and then make use of mapSorted to bring back AttributeVertex<?>
+
+            Seekable<? extends ThingVertex, Order.Asc> toIter;
 
             if (to.props().hasIID()) {
                 toIter = to.iterateAndFilterFromIID(graphMgr, params)
-                        .filter(ThingVertex::isAttribute).map(ThingVertex::asAttribute);
+                        .filter(ThingVertex::isAttribute);
             } else if (!to.props().types().isEmpty()) {
                 toIter = to.iterateAndFilterFromTypes(graphMgr, params)
-                        .filter(ThingVertex::isAttribute).map(ThingVertex::asAttribute);
+                        .filter(ThingVertex::isAttribute);
             } else {
                 assert !to.isStartingVertex();
                 toIter = iterate(fromVertex.asThing().asAttribute().valueType().comparables())
                         .flatMap(vt -> graphMgr.schema().attributeTypes(vt))
-                        .flatMap(at -> graphMgr.data().getReadable(at)).map(ThingVertex::asAttribute);
+                        .mergeMap(ASC, at -> graphMgr.data().getReadable(at));
                 if (!to.props().predicates().isEmpty()) {
                     toIter = to.filterPredicates(toIter, params);
                 }
@@ -262,7 +266,7 @@ public abstract class ProcedureEdge<
 
         @Override
         public boolean isClosure(GraphManager graphMgr, Vertex<?, ?> fromVertex, Vertex<?, ?> toVertex,
-                                 GraphTraversal.Thing.Parameters params) {
+                                 Thing.Parameters params) {
             assert fromVertex.isThing() && fromVertex.asThing().isAttribute() &&
                     toVertex.isThing() && toVertex.asThing().isAttribute();
             return predicate.apply(fromVertex.asThing().asAttribute(), toVertex.asThing().asAttribute());
@@ -349,8 +353,8 @@ public abstract class ProcedureEdge<
                 }
 
                 @Override
-                public FunctionalIterator<? extends Vertex<?, ?>> branch(
-                        GraphManager graphMgr, Vertex<?, ?> fromVertex, GraphTraversal.Thing.Parameters params) {
+                public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
+                        GraphManager graphMgr, Vertex<?, ?> fromVertex, Thing.Parameters params) {
                     assert fromVertex.isThing();
                     FunctionalIterator<TypeVertex> iter = isaTypes(fromVertex.asThing());
                     return to.filter(iter);
@@ -371,7 +375,7 @@ public abstract class ProcedureEdge<
                 }
 
                 @Override
-                public FunctionalIterator<? extends Vertex<?, ?>> branch(
+                public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
                         GraphManager graphMgr, Vertex<?, ?> fromVertex, GraphTraversal.Thing.Parameters params) {
                     assert fromVertex.isType();
                     TypeVertex type = fromVertex.asType();
@@ -479,8 +483,8 @@ public abstract class ProcedureEdge<
                     }
 
                     @Override
-                    public FunctionalIterator<TypeVertex> branch(
-                            GraphManager graphMgr, Vertex<?, ?> fromVertex, GraphTraversal.Thing.Parameters params) {
+                    public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
+                            GraphManager graphMgr, Vertex<?, ?> fromVertex, Thing.Parameters params) {
                         FunctionalIterator<TypeVertex> iterator = superTypes(fromVertex.asType());
                         return to.filter(iterator);
                     }
@@ -504,8 +508,8 @@ public abstract class ProcedureEdge<
                     }
 
                     @Override
-                    public FunctionalIterator<TypeVertex> branch(
-                            GraphManager graphMgr, Vertex<?, ?> fromVertex, GraphTraversal.Thing.Parameters params) {
+                    public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
+                            GraphManager graphMgr, Vertex<?, ?> fromVertex, Thing.Parameters params) {
                         assert fromVertex.isType();
                         FunctionalIterator<TypeVertex> iter;
                         TypeVertex type = fromVertex.asType();
@@ -572,8 +576,8 @@ public abstract class ProcedureEdge<
                     }
 
                     @Override
-                    public FunctionalIterator<TypeVertex> branch(
-                            GraphManager graphMgr, Vertex<?, ?> fromVertex, GraphTraversal.Thing.Parameters params) {
+                    public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
+                            GraphManager graphMgr, Vertex<?, ?> fromVertex, Thing.Parameters params) {
                         assert fromVertex.isType();
                         return to.filter(ownedAttributeTypes(fromVertex.asType()));
                     }
@@ -619,8 +623,8 @@ public abstract class ProcedureEdge<
                     }
 
                     @Override
-                    public FunctionalIterator<TypeVertex> branch(
-                            GraphManager graphMgr, Vertex<?, ?> fromVertex, GraphTraversal.Thing.Parameters params) {
+                    public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
+                            GraphManager graphMgr, Vertex<?, ?> fromVertex, Thing.Parameters params) {
                         assert fromVertex.isType();
                         return to.filter(ownersOfAttType(fromVertex.asType()));
                     }
@@ -670,8 +674,8 @@ public abstract class ProcedureEdge<
                     }
 
                     @Override
-                    public FunctionalIterator<TypeVertex> branch(
-                            GraphManager graphMgr, Vertex<?, ?> fromVertex, GraphTraversal.Thing.Parameters params) {
+                    public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
+                            GraphManager graphMgr, Vertex<?, ?> fromVertex, Thing.Parameters params) {
                         assert fromVertex.isType();
                         return to.filter(playedRoleTypes(fromVertex.asType()));
                     }
@@ -706,8 +710,8 @@ public abstract class ProcedureEdge<
                     }
 
                     @Override
-                    public FunctionalIterator<TypeVertex> branch(
-                            GraphManager graphMgr, Vertex<?, ?> fromVertex, GraphTraversal.Thing.Parameters params) {
+                    public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
+                            GraphManager graphMgr, Vertex<?, ?> fromVertex, Thing.Parameters params) {
                         assert fromVertex.isType();
                         return to.filter(playersOfRoleType(fromVertex.asType()));
                     }
@@ -757,8 +761,8 @@ public abstract class ProcedureEdge<
                     }
 
                     @Override
-                    public FunctionalIterator<TypeVertex> branch(
-                            GraphManager graphMgr, Vertex<?, ?> fromVertex, GraphTraversal.Thing.Parameters params) {
+                    public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
+                            GraphManager graphMgr, Vertex<?, ?> fromVertex, Thing.Parameters params) {
                         assert fromVertex.isType();
                         return to.filter(relatedRoleTypes(fromVertex.asType()));
                     }
@@ -793,8 +797,8 @@ public abstract class ProcedureEdge<
                     }
 
                     @Override
-                    public FunctionalIterator<TypeVertex> branch(
-                            GraphManager graphMgr, Vertex<?, ?> fromVertex, GraphTraversal.Thing.Parameters params) {
+                    public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
+                            GraphManager graphMgr, Vertex<?, ?> fromVertex, Thing.Parameters params) {
                         assert fromVertex.isType();
                         return to.filter(relationsOfRoleType(fromVertex.asType()));
                     }
@@ -906,8 +910,8 @@ public abstract class ProcedureEdge<
                     }
 
                     @Override
-                    public FunctionalIterator<? extends Vertex<?, ?>> branch(
-                            GraphManager graphMgr, Vertex<?, ?> fromVertex, GraphTraversal.Thing.Parameters params) {
+                    public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
+                            GraphManager graphMgr, Vertex<?, ?> fromVertex, Thing.Parameters params) {
                         assert fromVertex.isThing();
                         FunctionalIterator<? extends AttributeVertex<?>> iter;
                         com.vaticle.typedb.core.traversal.predicate.Predicate.Value<?> eq = null;
@@ -961,8 +965,8 @@ public abstract class ProcedureEdge<
                     }
 
                     @Override
-                    public FunctionalIterator<? extends Vertex<?, ?>> branch(
-                            GraphManager graphMgr, Vertex<?, ?> fromVertex, GraphTraversal.Thing.Parameters params) {
+                    public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
+                            GraphManager graphMgr, Vertex<?, ?> fromVertex, Thing.Parameters params) {
                         assert fromVertex.isThing() && fromVertex.asThing().isAttribute();
                         FunctionalIterator<? extends ThingVertex> iter;
                         AttributeVertex<?> att = fromVertex.asThing().asAttribute();
@@ -977,7 +981,7 @@ public abstract class ProcedureEdge<
                         }
 
                         if (to.props().predicates().isEmpty()) return iter;
-                        else return to.filterPredicates(filterAttributes(iter), params);
+                        else return to.filterPredicates(iter, params);
                     }
 
                     @Override
@@ -1002,8 +1006,8 @@ public abstract class ProcedureEdge<
                     }
 
                     @Override
-                    public FunctionalIterator<? extends Vertex<?, ?>> branch(
-                            GraphManager graphMgr, Vertex<?, ?> fromVertex, GraphTraversal.Thing.Parameters params) {
+                    public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
+                            GraphManager graphMgr, Vertex<?, ?> fromVertex, Thing.Parameters params) {
                         assert fromVertex.isThing();
                         return forwardBranchToRole(graphMgr, fromVertex, PLAYING);
                     }
@@ -1022,8 +1026,8 @@ public abstract class ProcedureEdge<
                     }
 
                     @Override
-                    public FunctionalIterator<? extends Vertex<?, ?>> branch(
-                            GraphManager graphMgr, Vertex<?, ?> fromVertex, GraphTraversal.Thing.Parameters params) {
+                    public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
+                            GraphManager graphMgr, Vertex<?, ?> fromVertex, Thing.Parameters params) {
                         assert fromVertex.isThing();
                         ThingVertex role = fromVertex.asThing();
                         Set<Label> toTypes = to.props().types();
@@ -1040,7 +1044,7 @@ public abstract class ProcedureEdge<
                         }
 
                         if (to.props().predicates().isEmpty()) return iter;
-                        else return to.filterPredicates(filterAttributes(iter), params);
+                        else return to.filterPredicates(iter, params);
                     }
 
                     @Override
@@ -1070,8 +1074,8 @@ public abstract class ProcedureEdge<
                     }
 
                     @Override
-                    public FunctionalIterator<? extends Vertex<?, ?>> branch(
-                            GraphManager graphMgr, Vertex<?, ?> fromVertex, GraphTraversal.Thing.Parameters params) {
+                    public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
+                            GraphManager graphMgr, Vertex<?, ?> fromVertex, Thing.Parameters params) {
                         assert fromVertex.isThing();
                         return forwardBranchToRole(graphMgr, fromVertex, RELATING);
                     }
@@ -1090,8 +1094,8 @@ public abstract class ProcedureEdge<
                     }
 
                     @Override
-                    public FunctionalIterator<? extends Vertex<?, ?>> branch(
-                            GraphManager graphMgr, Vertex<?, ?> fromVertex, GraphTraversal.Thing.Parameters params) {
+                    public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
+                            GraphManager graphMgr, Vertex<?, ?> fromVertex, Thing.Parameters params) {
                         assert fromVertex.isThing() && to.props().predicates().isEmpty();
                         ThingVertex role = fromVertex.asThing();
                         Set<Label> toTypes = to.props().types();
@@ -1154,8 +1158,10 @@ public abstract class ProcedureEdge<
                                                   GraphIterator.Scopes.Scoped withinScope);
 
                 @Override
-                public FunctionalIterator<? extends Vertex<?, ?>> branch(
-                        GraphManager graphMgr, Vertex<?, ?> fromVertex, GraphTraversal.Thing.Parameters params) {
+                public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(GraphManager graphMgr,
+                                                                          Vertex<?, ?> fromVertex,
+                                                                          GraphTraversal.Thing.Parameters params
+                ) {
                     throw TypeDBException.of(ILLEGAL_OPERATION);
                 }
 

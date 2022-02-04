@@ -36,6 +36,7 @@ import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
 import java.util.NavigableSet;
+import java.util.TreeSet;
 import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -170,8 +171,13 @@ public class Iterators {
 
         public static class Seekable {
 
-            public static <T extends Comparable<T>> SortedIterator.Seekable<T, Order.Asc> emptySorted() {
+            public static <T extends Comparable<? super T>> SortedIterator.Seekable<T, Order.Asc> emptySorted() {
                 return iterateSorted(SortedIterator.ASC, new ConcurrentSkipListSet<T>());
+            }
+
+            @SafeVarargs
+            public static <T extends Comparable<? super T>, ORDER extends Order> SortedIterator.Seekable<T, ORDER> iterateSorted(ORDER order, T... elements) {
+                return new BaseSeekableIterator<>(order, new TreeSet<>(list(elements)));
             }
 
             public static <T extends Comparable<? super T>, ORDER extends Order> SortedIterator.Seekable<T, ORDER> iterateSorted(ORDER order, NavigableSet<T> set) {

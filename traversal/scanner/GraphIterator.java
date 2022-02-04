@@ -21,7 +21,8 @@ package com.vaticle.typedb.core.traversal.scanner;
 import com.vaticle.typedb.core.common.collection.KeyValue;
 import com.vaticle.typedb.core.common.exception.TypeDBException;
 import com.vaticle.typedb.core.common.iterator.AbstractFunctionalIterator;
-import com.vaticle.typedb.core.common.iterator.FunctionalIterator;
+import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Order;
+import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Seekable;
 import com.vaticle.typedb.core.graph.GraphManager;
 import com.vaticle.typedb.core.graph.vertex.ThingVertex;
 import com.vaticle.typedb.core.graph.vertex.Vertex;
@@ -54,7 +55,7 @@ public class GraphIterator extends AbstractFunctionalIterator<VertexMap> {
     private final GraphProcedure procedure;
     private final GraphTraversal.Thing.Parameters params;
     private final Set<Retrievable> filter;
-    private final Map<Identifier, FunctionalIterator<? extends Vertex<?, ?>>> iterators;
+    private final Map<Identifier, Seekable<? extends Vertex<?, ?>, Order.Asc>> iterators;
     private final Map<Identifier, Vertex<?, ?>> answer;
     private final Scopes scopes;
     private final BranchSeekStack branchSeekStack;
@@ -125,7 +126,7 @@ public class GraphIterator extends AbstractFunctionalIterator<VertexMap> {
         ProcedureEdge<?, ?> edge = procedure.edge(pos);
         Identifier toID = edge.to().id();
         Identifier fromId = edge.from().id();
-        FunctionalIterator<? extends Vertex<?, ?>> toIter = branch(answer.get(fromId), edge);
+        Seekable<? extends Vertex<?, ?>, Order.Asc> toIter = branch(answer.get(fromId), edge);
 
         if (toIter.hasNext()) {
             iterators.put(toID, toIter);
@@ -212,7 +213,7 @@ public class GraphIterator extends AbstractFunctionalIterator<VertexMap> {
                 if (isClosure(edge, fromVertex, toVertex)) return true;
                 else return computeNextClosure(pos);
             } else {
-                FunctionalIterator<? extends Vertex<?, ?>> toIter = branch(answer.get(edge.from().id()), edge);
+                Seekable<? extends Vertex<?, ?>, Order.Asc> toIter = branch(answer.get(edge.from().id()), edge);
                 iterators.put(toID, toIter);
             }
         }
@@ -243,7 +244,7 @@ public class GraphIterator extends AbstractFunctionalIterator<VertexMap> {
 
     private boolean computeNextBranch(int pos) {
         ProcedureEdge<?, ?> edge = procedure.edge(pos);
-        FunctionalIterator<? extends Vertex<?, ?>> newIter;
+        Seekable<? extends Vertex<?, ?>, Order.Asc> newIter;
 
         do {
             if (backTrack(pos)) {
@@ -277,8 +278,8 @@ public class GraphIterator extends AbstractFunctionalIterator<VertexMap> {
         }
     }
 
-    private FunctionalIterator<? extends Vertex<?, ?>> branch(Vertex<?, ?> fromVertex, ProcedureEdge<?, ?> edge) {
-        FunctionalIterator<? extends Vertex<?, ?>> toIter;
+    private Seekable<? extends Vertex<?, ?>, Order.Asc> branch(Vertex<?, ?> fromVertex, ProcedureEdge<?, ?> edge) {
+        Seekable<? extends Vertex<?, ?>, Order.Asc> toIter;
         if (edge.to().id().isScoped()) {
             Identifier.Variable scope = edge.to().id().asScoped().scope();
             Scopes.Scoped scoped = scopes.getOrInitialise(scope);
