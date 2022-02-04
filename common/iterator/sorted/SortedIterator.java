@@ -95,9 +95,14 @@ public interface SortedIterator<T extends Comparable<? super T>, ORDER extends S
 
     SortedIterator<T, ORDER> merge(SortedIterator<T, ORDER> iterator);
 
+    @Override
     SortedIterator<T, ORDER> distinct();
 
+    @Override
     SortedIterator<T, ORDER> filter(Predicate<T> predicate);
+
+    @Override
+    SortedIterator<T, ORDER> limit(long limit);
 
     <U extends Comparable<? super U>, ORD extends Order> SortedIterator<U, ORD> mapSorted(ORD order, Function<T, U> mappingFn);
 
@@ -118,6 +123,8 @@ public interface SortedIterator<T extends Comparable<? super T>, ORDER extends S
 
         @Override
         Seekable<T, ORDER> filter(Predicate<T> predicate);
+
+        Seekable<T, ORDER> limit(long limit);
 
         <U extends Comparable<? super U>, ORD extends Order> Seekable<U, ORD> mapSorted(ORD order,
                                                                                         Function<T, U> mappingFn,

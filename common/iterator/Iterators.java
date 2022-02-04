@@ -25,6 +25,7 @@ import com.vaticle.typedb.core.common.iterator.sorted.ConsumeHandledSortedIterat
 import com.vaticle.typedb.core.common.iterator.sorted.DistinctSortedIterator;
 import com.vaticle.typedb.core.common.iterator.sorted.FilteredSortedIterator;
 import com.vaticle.typedb.core.common.iterator.sorted.FinaliseSortedIterator;
+import com.vaticle.typedb.core.common.iterator.sorted.LimitedSortedIterator;
 import com.vaticle.typedb.core.common.iterator.sorted.MappedSortedIterator;
 import com.vaticle.typedb.core.common.iterator.sorted.MergeMappedIterator;
 import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator;
@@ -139,6 +140,11 @@ public class Iterators {
             return new FilteredSortedIterator<>(iterator, predicate);
         }
 
+        public static <T extends Comparable<? super T>, ORDER extends Order> SortedIterator<T, ORDER> limit(SortedIterator<T, ORDER> iterator,
+                                                                                                            long limit) {
+            return new LimitedSortedIterator<>(iterator, limit);
+        }
+
         public static <T extends Comparable<? super T>, U extends Comparable<? super U>, ORDER extends Order>
         SortedIterator<U, ORDER> mapSorted(ORDER order, SortedIterator<T, ?> iterator, Function<T, U> mappingFn) {
             return new MappedSortedIterator<>(order, iterator, mappingFn);
@@ -179,6 +185,11 @@ public class Iterators {
             public static <T extends Comparable<? super T>, ORDER extends Order> SortedIterator.Seekable<T, ORDER> filter(SortedIterator.Seekable<T, ORDER> iterator,
                                                                                                                           Predicate<T> predicate) {
                 return new FilteredSortedIterator.Seekable<>(iterator, predicate);
+            }
+
+            public static <T extends Comparable<? super T>, ORDER extends Order> SortedIterator.Seekable<T, ORDER> limit(SortedIterator.Seekable<T, ORDER> iterator,
+                                                                                                                         long limit) {
+                return new LimitedSortedIterator.Seekable<>(iterator, limit);
             }
 
             @SafeVarargs

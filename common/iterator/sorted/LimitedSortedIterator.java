@@ -19,6 +19,8 @@
 package com.vaticle.typedb.core.common.iterator.sorted;
 
 import com.vaticle.typedb.core.common.exception.TypeDBException;
+import com.vaticle.typedb.core.common.iterator.AbstractFunctionalIterator;
+import com.vaticle.typedb.core.common.iterator.FunctionalIterator;
 import com.vaticle.typedb.core.common.iterator.Iterators;
 
 import java.util.NoSuchElementException;
@@ -27,42 +29,37 @@ import java.util.function.Predicate;
 
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.ILLEGAL_ARGUMENT;
 
-public class ConsumeHandledSortedIterator<T extends Comparable<? super T>, ORDER extends SortedIterator.Order, ITER extends SortedIterator<T, ORDER>>
+public class LimitedSortedIterator<T extends Comparable<? super T>, ORDER extends SortedIterator.Order, ITER extends SortedIterator<T, ORDER>>
         extends AbstractSortedIterator<T, ORDER> {
 
-    private final Runnable function;
-    private boolean isConsumed;
+    private final long limit;
+    private long counter;
     final ITER iterator;
     T last;
 
-    public ConsumeHandledSortedIterator(ITER iterator, Runnable function) {
+
+    public LimitedSortedIterator(ITER iterator, long limit) {
         super(iterator.order());
         this.iterator = iterator;
-        this.function = function;
-        this.isConsumed = false;
-        this.last = null;
-    }
-
-    private void mayHandleConsume(boolean hasNext) {
-        if (!hasNext && !isConsumed) {
-            isConsumed = true;
-            function.run();
-        }
+        this.limit = limit;
+        this.counter = 0L;
     }
 
     @Override
     public boolean hasNext() {
-        boolean hasNext;
-        hasNext = iterator.hasNext();
-        mayHandleConsume(hasNext);
-        return hasNext;
+        if (counter < limit && iterator.hasNext()) {
+            return true;
+        } else {
+            recycle();
+            return false;
+        }
     }
 
     @Override
     public T next() {
         if (!hasNext()) throw new NoSuchElementException();
+        counter++;
         last = iterator.next();
-        mayHandleConsume(iterator.hasNext());
         return last;
     }
 
@@ -77,12 +74,13 @@ public class ConsumeHandledSortedIterator<T extends Comparable<? super T>, ORDER
         iterator.recycle();
     }
 
+
     public static class Seekable<T extends Comparable<? super T>, ORDER extends Order>
-            extends ConsumeHandledSortedIterator<T, ORDER, SortedIterator.Seekable<T, ORDER>>
+            extends LimitedSortedIterator<T, ORDER, SortedIterator.Seekable<T, ORDER>>
             implements SortedIterator.Seekable<T, ORDER> {
 
-        public Seekable(SortedIterator.Seekable<T, ORDER> iterator, Runnable function) {
-            super(iterator, function);
+        public Seekable(SortedIterator.Seekable<T, ORDER> source, long limit) {
+            super(source, limit);
         }
 
         @Override
@@ -93,7 +91,7 @@ public class ConsumeHandledSortedIterator<T extends Comparable<? super T>, ORDER
 
         @Override
         public final SortedIterator.Seekable<T, ORDER> merge(SortedIterator.Seekable<T, ORDER> iterator) {
-            return Iterators.Sorted.Seekable.merge(this, iterator);
+            return Iterators.Sorted.Seekable.merge( this, iterator);
         }
 
         @Override

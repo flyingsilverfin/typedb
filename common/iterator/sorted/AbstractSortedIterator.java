@@ -20,7 +20,6 @@ package com.vaticle.typedb.core.common.iterator.sorted;
 
 import com.vaticle.typedb.core.common.exception.TypeDBException;
 import com.vaticle.typedb.core.common.iterator.AbstractFunctionalIterator;
-import com.vaticle.typedb.core.common.iterator.ConsumeHandledIterator;
 import com.vaticle.typedb.core.common.iterator.DistinctIterator;
 import com.vaticle.typedb.core.common.iterator.ErrorHandledIterator;
 import com.vaticle.typedb.core.common.iterator.FlatMappedIterator;
@@ -112,8 +111,8 @@ public abstract class AbstractSortedIterator<T extends Comparable<? super T>, OR
     }
 
     @Override
-    public FunctionalIterator<T> limit(long limit) {
-        return new LimitedIterator<>(this, limit);
+    public SortedIterator<T, ORDER> limit(long limit) {
+        return new LimitedSortedIterator<>(this, limit);
     }
 
     @Override
