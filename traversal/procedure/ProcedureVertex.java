@@ -58,6 +58,7 @@ import static com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.ASC;
 import static com.vaticle.typedb.core.graph.common.Encoding.Edge.Type.SUB;
 import static com.vaticle.typedb.core.graph.common.Encoding.ValueType.STRING;
 import static com.vaticle.typedb.core.graph.common.Encoding.Vertex.Thing.ROLE;
+import static com.vaticle.typedb.core.graph.common.Encoding.Vertex.Type.ROLE_TYPE;
 import static com.vaticle.typedb.core.traversal.predicate.PredicateOperator.Equality.EQ;
 
 public abstract class ProcedureVertex<
@@ -230,18 +231,15 @@ public abstract class ProcedureVertex<
             Seekable<? extends ThingVertex, Order.Asc> iter;
             Optional<Predicate.Value<?>> eq = iterate(props().predicates()).filter(p -> p.operator().equals(EQ)).first();
             if (eq.isPresent()) iter = iteratorOfAttributesWithTypes(graphMgr, parameters, eq.get());
-            else iter = iterate(props().types().iterator())
-                    .map(l -> assertTypeNotNull(graphMgr.schema().getType(l), l))
-                    .mergeMap(ASC, t -> graphMgr.data().getReadable(t));
+            else {
+                FunctionalIterator<TypeVertex> typeIter = iterate(props().types().iterator())
+                        .map(l -> assertTypeNotNull(graphMgr.schema().getType(l), l));
+                if (id().isVariable()) typeIter = typeIter.filter(t -> !t.encoding().equals(ROLE_TYPE));
+                iter = typeIter.mergeMap(ASC, t -> graphMgr.data().getReadable(t));
+            }
 
-            if (id().isVariable()) iter = filterReferableThings(iter);
             if (props().predicates().isEmpty()) return iter;
             else return filterPredicates(iter, parameters, eq.orElse(null));
-        }
-
-        Seekable<? extends ThingVertex, Order.Asc> filterReferableThings(Seekable<? extends ThingVertex, Order.Asc> iterator) {
-            assert id().isVariable();
-            return iterator.filter(v -> !v.encoding().equals(ROLE));
         }
 
         Seekable<? extends ThingVertex, Order.Asc> filterIID(Seekable<? extends ThingVertex, Order.Asc> iterator,
