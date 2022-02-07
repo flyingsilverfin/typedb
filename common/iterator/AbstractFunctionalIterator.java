@@ -28,9 +28,11 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.NavigableSet;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
@@ -65,7 +67,7 @@ public abstract class AbstractFunctionalIterator<T> implements FunctionalIterato
     }
 
     @Override
-    public <U extends Comparable<U>, ORDER extends Order> Seekable<U, ORDER> mergeMap(
+    public <U extends Comparable<? super U>, ORDER extends Order> Seekable<U, ORDER> mergeMap(
             ORDER order, Function<T, Seekable<U, ORDER>> mappingFn
     ) {
         return new MergeMappedIterator.Seekable<>(order, this, mappingFn);
@@ -210,6 +212,13 @@ public abstract class AbstractFunctionalIterator<T> implements FunctionalIterato
         forEachRemaining(linkedSet::add);
         recycle();
         return linkedSet;
+    }
+
+    @Override
+    public NavigableSet<T> toNavigableSet() {
+        NavigableSet<T> set = new TreeSet<>();
+        this.forEachRemaining(set::add);
+        return set;
     }
 
     @Override

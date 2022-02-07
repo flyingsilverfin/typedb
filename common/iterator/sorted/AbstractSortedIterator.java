@@ -35,9 +35,11 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.NavigableSet;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
@@ -69,7 +71,7 @@ public abstract class AbstractSortedIterator<T extends Comparable<? super T>, OR
     }
 
     @Override
-    public <U extends Comparable<U>, ORD extends Order> Seekable<U, ORD> mergeMap(ORD order, Function<T, Seekable<U, ORD>> mappingFn) {
+    public <U extends Comparable<? super U>, ORD extends Order> Seekable<U, ORD> mergeMap(ORD order, Function<T, Seekable<U, ORD>> mappingFn) {
         return new MergeMappedIterator.Seekable<>(order, this, mappingFn);
     }
 
@@ -238,6 +240,13 @@ public abstract class AbstractSortedIterator<T extends Comparable<? super T>, OR
         forEachRemaining(linkedSet::add);
         recycle();
         return linkedSet;
+    }
+
+    @Override
+    public NavigableSet<T> toNavigableSet() {
+        NavigableSet<T> set = new TreeSet<>();
+        this.forEachRemaining(set::add);
+        return set;
     }
 
     @Override

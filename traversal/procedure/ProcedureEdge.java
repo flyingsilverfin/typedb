@@ -261,7 +261,7 @@ public abstract class ProcedureEdge<
                 }
             }
 
-            return toIter.filter(toVertex -> predicate.apply(fromVertex.asThing().asAttribute(), toVertex));
+            return toIter.filter(toVertex -> predicate.apply(fromVertex.asThing().asAttribute(), toVertex.asAttribute()));
         }
 
         @Override
@@ -354,7 +354,8 @@ public abstract class ProcedureEdge<
 
                 @Override
                 public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
-                        GraphManager graphMgr, Vertex<?, ?> fromVertex, Thing.Parameters params) {
+                        GraphManager graphMgr, Vertex<?, ?> fromVertex, GraphTraversal.Thing.Parameters params
+                ) {
                     assert fromVertex.isThing();
                     FunctionalIterator<TypeVertex> iter = isaTypes(fromVertex.asThing());
                     return to.filter(iter);
