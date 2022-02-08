@@ -122,7 +122,7 @@ public class TypeGraph {
 
         private final ConcurrentMap<TypeVertex, NavigableSet<TypeVertex>> ownedAttributeTypes;
         private final ConcurrentMap<TypeVertex, NavigableSet<TypeVertex>> ownersOfAttributeTypes;
-        private final ConcurrentMap<Label, NavigableSet<Label>> resolvedRoleTypeLabels;
+        private final ConcurrentMap<Label, Set<Label>> resolvedRoleTypeLabels;
         private final ConcurrentMap<Encoding.ValueType, NavigableSet<TypeVertex>> valueAttributeTypes;
         private NavigableSet<TypeVertex> entityTypes;
         private NavigableSet<TypeVertex> relationTypes;
@@ -303,7 +303,7 @@ public class TypeGraph {
 
     public Set<Label> resolveRoleTypeLabels(Label scopedLabel) {
         assert scopedLabel.scope().isPresent();
-        Supplier<NavigableSet<Label>> fn = () -> {
+        Supplier<Set<Label>> fn = () -> {
             TypeVertex relationType = getType(scopedLabel.scope().get());
             if (relationType == null) throw TypeDBException.of(TYPE_NOT_FOUND, scopedLabel.scope().get());
             else return link(
@@ -314,7 +314,7 @@ public class TypeGraph {
                             .flatMap(rel -> rel.outs().edge(RELATES).to())
                             .flatMap(rol -> loop(rol, Objects::nonNull, r -> r.outs().edge(SUB).to().firstOrNull()))
                             .filter(rol -> rol.properLabel().name().equals(scopedLabel.name()))
-            ).map(TypeVertex::properLabel).toNavigableSet();
+            ).map(TypeVertex::properLabel).toSet();
         };
         if (isReadOnly) return cache.resolvedRoleTypeLabels.computeIfAbsent(scopedLabel, l -> fn.get());
         else return fn.get();

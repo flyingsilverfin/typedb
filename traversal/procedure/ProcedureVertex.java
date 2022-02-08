@@ -299,7 +299,7 @@ public abstract class ProcedureVertex<
             return iterator;
         }
 
-        Seekable<AttributeVertex<?>, Order.Asc> iteratorOfAttributesWithTypes(GraphManager graphMgr,
+        Seekable<? extends AttributeVertex<?>, Order.Asc> iteratorOfAttributesWithTypes(GraphManager graphMgr,
                                                                               Traversal.Parameters params,
                                                                               Predicate.Value<?> eq) {
             FunctionalIterator<TypeVertex> attributeTypes = iterate(props().types().iterator())
@@ -311,19 +311,18 @@ public abstract class ProcedureVertex<
             return iteratorOfAttributes(graphMgr, attributeTypes, params, eq);
         }
 
-        Seekable<AttributeVertex<?>, Order.Asc> iteratorOfAttributes(
+        Seekable<? extends AttributeVertex<?>, Order.Asc> iteratorOfAttributes(
                 GraphManager graphMgr, FunctionalIterator<TypeVertex> attributeTypes,
                 Traversal.Parameters parameters, Predicate.Value<?> eqPredicate
         ) {
             assert id().isVariable();
             Set<Traversal.Parameters.Value> values = parameters.getValues(id().asVariable(), eqPredicate);
             if (values.size() > 1) return emptySorted();
-            return attributeTypes
-                    .mergeMap(ASC, t ->
-                            Iterators.Sorted.Seekable.<AttributeVertex<?>, Order.Asc>iterateSorted(
-                                    ASC,
-                                    attributeVertex(graphMgr, t, values.iterator().next()))
-                    ).filter(Objects::nonNull);
+            return iterateSorted(ASC,
+                    attributeTypes
+                            .map(t -> attributeVertex(graphMgr, t, values.iterator().next()))
+                            .filter(Objects::nonNull).toNavigableSet()
+            );
         }
 
         private AttributeVertex<?> attributeVertex(GraphManager graphMgr, TypeVertex type,
