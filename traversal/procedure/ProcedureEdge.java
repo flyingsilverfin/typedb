@@ -45,6 +45,7 @@ import java.util.HashSet;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 
 import static com.vaticle.typedb.common.util.Objects.className;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.ILLEGAL_CAST;
@@ -330,9 +331,9 @@ public abstract class ProcedureEdge<
             Seekable<TypeVertex, Order.Asc> isaTypes(ThingVertex thing) {
                 if (!isTransitive) return iterateSorted(ASC, thing.type());
                 else {
-                    return iterateSorted(
-                            ASC, loop(thing.type(), Objects::nonNull, v -> v.outs().edge(SUB).to().firstOrNull()).toNavigableSet()
-                    );
+                    TreeSet<TypeVertex> superTypes = new TreeSet<>();
+                    loop(thing.type(), Objects::nonNull, v -> v.outs().edge(SUB).to().firstOrNull()).forEachRemaining(superTypes::add);
+                    return iterateSorted(ASC, superTypes);
                 }
             }
 
@@ -472,9 +473,9 @@ public abstract class ProcedureEdge<
                 Seekable<TypeVertex, Order.Asc> superTypes(TypeVertex type) {
                     if (!isTransitive) return type.outs().edge(SUB).to();
                     else {
-                        return iterateSorted(
-                                ASC, loop(type, Objects::nonNull, v -> v.outs().edge(SUB).to().firstOrNull()).toNavigableSet()
-                        );
+                        TreeSet<TypeVertex> superTypes = new TreeSet<>();
+                        loop(type, Objects::nonNull, v -> v.outs().edge(SUB).to().firstOrNull()).forEachRemaining(superTypes::add);
+                        return iterateSorted(ASC, superTypes);
                     }
                 }
 
@@ -521,7 +522,11 @@ public abstract class ProcedureEdge<
                         Seekable<TypeVertex, Order.Asc> iter;
                         TypeVertex type = fromVertex.asType();
                         if (!isTransitive) iter = type.ins().edge(SUB).from();
-                        else iter = iterateSorted(ASC, tree(type, t -> t.ins().edge(SUB).from()).toNavigableSet());
+                        else {
+                            TreeSet<TypeVertex> subtypes = new TreeSet<>();
+                            tree(type, t -> t.ins().edge(SUB).from()).forEachRemaining(subtypes::add);
+                            iter = iterateSorted(ASC, subtypes);
+                        }
                         return to.filter(iter);
                     }
 
@@ -641,7 +646,9 @@ public abstract class ProcedureEdge<
                             GraphManager graphMgr, Vertex<?, ?> fromVertex, Traversal.Parameters params) {
                         assert fromVertex.isType();
                         // TODO: this should read from type graph cache
-                        return to.filter(iterateSorted(ASC, ownersOfAttType(fromVertex.asType()).toNavigableSet()));
+                        TreeSet<TypeVertex> ownerTypes = new TreeSet<>();
+                        ownersOfAttType(fromVertex.asType()).forEachRemaining(ownerTypes::add);
+                        return to.filter(iterateSorted(ASC, ownerTypes));
                     }
 
                     @Override
@@ -693,7 +700,9 @@ public abstract class ProcedureEdge<
                             GraphManager graphMgr, Vertex<?, ?> fromVertex, Traversal.Parameters params) {
                         assert fromVertex.isType();
                         // TODO: this should read from type graph cache
-                        return to.filter(iterateSorted(ASC, playedRoleTypes(fromVertex.asType()).toNavigableSet()));
+                        TreeSet<TypeVertex> roleTypes = new TreeSet<>();
+                        playedRoleTypes(fromVertex.asType()).forEachRemaining(roleTypes::add);
+                        return to.filter(iterateSorted(ASC, roleTypes));
                     }
 
                     @Override
@@ -730,7 +739,9 @@ public abstract class ProcedureEdge<
                             GraphManager graphMgr, Vertex<?, ?> fromVertex, Traversal.Parameters params) {
                         assert fromVertex.isType();
                         // TODO: this should read from type graph cache
-                        return to.filter(iterateSorted(ASC, playersOfRoleType(fromVertex.asType()).toNavigableSet()));
+                        TreeSet<TypeVertex> playerTypes = new TreeSet<>();
+                        playersOfRoleType(fromVertex.asType()).forEachRemaining(playerTypes::add);
+                        return to.filter(iterateSorted(ASC, playerTypes));
                     }
 
                     @Override
@@ -782,7 +793,9 @@ public abstract class ProcedureEdge<
                             GraphManager graphMgr, Vertex<?, ?> fromVertex, Traversal.Parameters params) {
                         assert fromVertex.isType();
                         // TODO: this should read from type graph cache
-                        return to.filter(iterateSorted(ASC, relatedRoleTypes(fromVertex.asType()).toNavigableSet()));
+                        TreeSet<TypeVertex> roleTypes = new TreeSet<>();
+                        relatedRoleTypes(fromVertex.asType()).forEachRemaining(roleTypes::add);
+                        return to.filter(iterateSorted(ASC, roleTypes));
                     }
 
                     @Override
@@ -819,7 +832,9 @@ public abstract class ProcedureEdge<
                             GraphManager graphMgr, Vertex<?, ?> fromVertex, Traversal.Parameters params) {
                         assert fromVertex.isType();
                         // TODO: this should read from type graph cache
-                        return to.filter(iterateSorted(ASC, relationsOfRoleType(fromVertex.asType()).toNavigableSet()));
+                        TreeSet<TypeVertex> relations = new TreeSet<>();
+                        relationsOfRoleType(fromVertex.asType()).forEachRemaining(relations::add);
+                        return to.filter(iterateSorted(ASC, relations));
                     }
 
                     @Override

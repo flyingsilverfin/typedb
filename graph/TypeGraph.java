@@ -215,12 +215,18 @@ public class TypeGraph {
 
     public Seekable<TypeVertex, Order.Asc> thingTypes() {
         // TODO: we can't make a seekable tree iterator without consuming the entire iterator?
-        return iterateSorted(ASC, tree(rootThingType(), v -> v.ins().edge(SUB).from()).toNavigableSet());
+        // TODO: this should cache
+        TreeSet<TypeVertex> thingTypes = new TreeSet<>();
+        tree(rootThingType(), v -> v.ins().edge(SUB).from()).forEachRemaining(thingTypes::add);
+        return iterateSorted(ASC, thingTypes);
     }
 
     public Seekable<TypeVertex, Order.Asc> getSubtypes(TypeVertex type) {
         // TODO: we can't make a seekable tree iterator without consuming the entire iterator?
-        return iterateSorted(ASC, tree(type, v -> v.ins().edge(SUB).from()).toNavigableSet());
+        // TODO: this should cache
+        TreeSet<TypeVertex> subtypes = new TreeSet<>();
+        tree(type, v -> v.ins().edge(SUB).from()).forEachRemaining(subtypes::add);
+        return iterateSorted(ASC, subtypes);
     }
 
     public Seekable<TypeVertex, Order.Asc> entityTypes() {
@@ -250,9 +256,11 @@ public class TypeGraph {
 
     public Seekable<TypeVertex, Order.Asc> playerTypes() {
         if (cache.playerTypes == null) {
-            cache.playerTypes = getSubtypes(rootThingType())
+            TreeSet<TypeVertex> playerTypes = new TreeSet<>();
+            getSubtypes(rootThingType())
                     .filter(type -> type.outs().edge(Encoding.Edge.Type.PLAYS).to().first().isPresent())
-                    .flatMap(this::getSubtypes).toNavigableSet();
+                    .flatMap(this::getSubtypes).forEachRemaining(playerTypes::add);
+            cache.playerTypes = playerTypes;
         }
         return iterateSorted(ASC, cache.playerTypes);
     }
@@ -268,10 +276,12 @@ public class TypeGraph {
 
     public Seekable<TypeVertex, Order.Asc> attributeOwnerTypes() {
         if (cache.attributeOwnerTypes == null) {
-            cache.attributeOwnerTypes = getSubtypes(rootThingType())
+            TreeSet<TypeVertex> ownerTypes = new TreeSet<>();
+            getSubtypes(rootThingType())
                     .filter(type -> type.outs().edge(OWNS).to().first().isPresent() ||
                             type.outs().edge(OWNS_KEY).to().first().isPresent())
-                    .flatMap(this::getSubtypes).toNavigableSet();
+                    .flatMap(this::getSubtypes).forEachRemaining(ownerTypes::add);
+            cache.attributeOwnerTypes = ownerTypes;
         }
         return iterateSorted(ASC, cache.attributeOwnerTypes);
     }
@@ -286,17 +296,15 @@ public class TypeGraph {
     }
 
     public NavigableSet<TypeVertex> ownedAttributeTypes(TypeVertex owner) {
-        Supplier<NavigableSet<TypeVertex>> fn = () -> link(
-                list(owner.outs().edge(OWNS).to(), owner.outs().edge(OWNS_KEY).to())
-        ).toNavigableSet();
+        Supplier<NavigableSet<TypeVertex>> fn = () -> owner.outs().edge(OWNS).to()
+                .merge(owner.outs().edge(OWNS_KEY).to()).toNavigableSet();
         if (isReadOnly) return cache.ownedAttributeTypes.computeIfAbsent(owner, o -> fn.get());
         else return fn.get();
     }
 
     public NavigableSet<TypeVertex> ownersOfAttributeType(TypeVertex attType) {
-        Supplier<NavigableSet<TypeVertex>> fn = () -> link(
-                attType.ins().edge(OWNS).from(), attType.ins().edge(OWNS_KEY).from()
-        ).toNavigableSet();
+        Supplier<NavigableSet<TypeVertex>> fn = () -> attType.ins().edge(OWNS).from()
+                .merge(attType.ins().edge(OWNS_KEY).from()).toNavigableSet();
         if (isReadOnly) return cache.ownersOfAttributeTypes.computeIfAbsent(attType, a -> fn.get());
         else return fn.get();
     }

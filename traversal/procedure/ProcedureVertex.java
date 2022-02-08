@@ -42,6 +42,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static com.vaticle.typedb.common.collection.Collections.set;
@@ -187,21 +188,22 @@ public abstract class ProcedureVertex<
         private Seekable<? extends ThingVertex, Order.Asc> iterateAndFilterFromAttributes(
                 GraphManager graph, Traversal.Parameters parameters) {
             Seekable<? extends AttributeVertex<?>, Order.Asc> iter;
-            Seekable<TypeVertex, Order.Asc> attTypes;
+            FunctionalIterator<TypeVertex> attTypes;
 
             Optional<Predicate.Value<?>> eq = iterate(props().predicates()).filter(p -> p.operator().equals(EQ)).first();
 
             if (eq.isPresent()) {
                 attTypes = iterate(eq.get().valueType().assignables())
-                        .mergeMap(ASC, vt -> graph.schema().attributeTypes(vt));
+                        .flatMap(vt -> graph.schema().attributeTypes(vt));
                 iter = iteratorOfAttributes(graph, attTypes, parameters, eq.get());
             } else {
                 if (!props().predicates().isEmpty()) {
                     attTypes = iterate(props().predicates())
                             .flatMap(p -> iterate(p.valueType().comparables()))
-                            .mergeMap(ASC, vt -> graph.schema().attributeTypes(vt));
+                            .flatMap(vt -> graph.schema().attributeTypes(vt));
                 } else {
-                    attTypes = iterateSorted(ASC, tree(graph.schema().rootAttributeType(), a -> a.ins().edge(SUB).from()).toNavigableSet());
+                    // TODO should read from cache
+                    attTypes = tree(graph.schema().rootAttributeType(), a -> a.ins().edge(SUB).from());
                 }
                 iter = attTypes.mergeMap(ASC, t -> graph.data().getReadable(t))
                         .mapSorted(ASC, ThingVertex::asAttribute, v -> v);
@@ -212,8 +214,8 @@ public abstract class ProcedureVertex<
         }
 
         private Seekable<ThingVertex, Order.Asc> iterateFromAll(GraphManager graphMgr, TypeVertex rootType) {
-            return iterateSorted(ASC, tree(rootType, t -> t.ins().edge(SUB).from()).toNavigableSet())
-                    .mergeMap(ASC, t -> graphMgr.data().getReadable(t));
+            // TODO should read from cache
+            return iterate(tree(rootType, t -> t.ins().edge(SUB).from())).mergeMap(ASC, t -> graphMgr.data().getReadable(t));
         }
 
         Seekable<? extends ThingVertex, Order.Asc> iterateAndFilterFromIID(GraphManager graphMgr, Traversal.Parameters parameters) {
@@ -315,11 +317,11 @@ public abstract class ProcedureVertex<
             assert id().isVariable();
             Set<Traversal.Parameters.Value> values = parameters.getValues(id().asVariable(), eqPredicate);
             if (values.size() > 1) return emptySorted();
-            return iterateSorted(ASC,
-                    attributeTypes
-                            .map(t -> attributeVertex(graphMgr, t, values.iterator().next()))
-                            .filter(Objects::nonNull).toNavigableSet()
-            );
+            Traversal.Parameters.Value value = values.iterator().next();
+            TreeSet<AttributeVertex<?>> attributes = new TreeSet<>();
+            attributeTypes.map(t -> attributeVertex(graphMgr, t, value))
+                    .filter(Objects::nonNull).forEachRemaining(attributes::add);
+            return iterateSorted(ASC, attributes);
         }
 
         private AttributeVertex<?> attributeVertex(GraphManager graphMgr, TypeVertex type,

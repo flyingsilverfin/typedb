@@ -61,6 +61,7 @@ public interface FunctionalIterator<T> extends Iterator<T> {
 
     boolean allMatch(Predicate<T> predicate);
 
+    // TODO: any seekable iterators using this with `equals` inside to match a  particular element should use seek()
     boolean anyMatch(Predicate<T> predicate);
 
     boolean noneMatch(Predicate<T> predicate);

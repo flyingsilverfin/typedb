@@ -172,7 +172,7 @@ public class Iterators {
         public static class Seekable {
 
             public static <T extends Comparable<? super T>> SortedIterator.Seekable<T, Order.Asc> emptySorted() {
-                return iterateSorted(SortedIterator.ASC, new ConcurrentSkipListSet<T>());
+                return iterateSorted(SortedIterator.ASC, new TreeSet<T>());
             }
 
             public static <T extends Comparable<? super T>, ORDER extends Order> SortedIterator.Seekable<T, ORDER> iterateSorted(ORDER order, Collection<T> elements) {
