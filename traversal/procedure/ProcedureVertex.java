@@ -163,9 +163,7 @@ public abstract class ProcedureVertex<
                                                           Traversal.Parameters params) {
             if (props().hasIID()) iterator = filterIID(iterator, params);
             if (!props().types().isEmpty()) iterator = filterTypes(iterator);
-            if (!props().predicates().isEmpty()) {
-                iterator = filterPredicates(filterAttributes(iterator), params);
-            }
+            if (!props().predicates().isEmpty()) iterator = filterPredicates(filterAttributes(iterator), params);
             return iterator;
         }
 
