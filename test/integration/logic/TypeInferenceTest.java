@@ -491,7 +491,7 @@ public class TypeInferenceTest {
             put("$role", set("hetero-marriage:husband", "marriage:spouse", "partnership:partner", "relation:role"));
             put("$r", set("hetero-marriage", "marriage"));
             put("$m", set("hetero-marriage", "marriage", "partnership", "relation", "thing"));
-            put("$_relation:spouse", set("marriage:spouse"));
+            put("$_relation:spouse", set("marriage:spouse", "hetero-marriage:wife", "hetero-marriage:husband"));
             put("$_man", set("man"));
         }};
 
@@ -899,7 +899,7 @@ public class TypeInferenceTest {
             put("$x", set("person"));
             put("$y", set("person"));
             put("$m", set("marriage", "hetero-marriage"));
-            put("$_marriage:spouse", set("marriage:spouse"));
+            put("$_marriage:spouse", set("marriage:spouse", "hetero-marriage:husband", "hetero-marriage:wife"));
             put("$_marriage", set("marriage"));
         }};
         assertEquals(expected, resolvedTypeMap(disjunction.conjunctions().get(0)));
