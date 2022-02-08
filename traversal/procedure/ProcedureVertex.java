@@ -163,7 +163,9 @@ public abstract class ProcedureVertex<
                                                           GraphTraversal.Thing.Parameters params) {
             if (props().hasIID()) iterator = filterIID(iterator, params);
             if (!props().types().isEmpty()) iterator = filterTypes(iterator);
-            if (!props().predicates().isEmpty()) iterator = filterPredicates(iterator, params);
+            if (!props().predicates().isEmpty()) {
+                iterator = filterPredicates(filterAttributes(iterator), params);
+            }
             return iterator;
         }
 
@@ -185,7 +187,7 @@ public abstract class ProcedureVertex<
 
         private Seekable<? extends ThingVertex, Order.Asc> iterateAndFilterFromAttributes(
                 GraphManager graph, GraphTraversal.Thing.Parameters parameters) {
-            Seekable<? extends ThingVertex, Order.Asc> iter;
+            Seekable<? extends AttributeVertex<?>, Order.Asc> iter;
             Seekable<TypeVertex, Order.Asc> attTypes;
 
             Optional<Predicate.Value<?>> eq = iterate(props().predicates()).filter(p -> p.operator().equals(EQ)).first();
@@ -202,7 +204,8 @@ public abstract class ProcedureVertex<
                 } else {
                     attTypes = iterateSorted(ASC, tree(graph.schema().rootAttributeType(), a -> a.ins().edge(SUB).from()).toNavigableSet());
                 }
-                iter = attTypes.mergeMap(ASC, t -> graph.data().getReadable(t));
+                iter = attTypes.mergeMap(ASC, t -> graph.data().getReadable(t))
+                        .mapSorted(ASC, ThingVertex::asAttribute, v -> v);
             }
 
             if (props().predicates().isEmpty()) return iter;
@@ -221,7 +224,8 @@ public abstract class ProcedureVertex<
             if (vertex == null) return emptySorted();
             Seekable<? extends ThingVertex, Order.Asc> iter = iterateSorted(ASC, vertex);
             if (!props().types().isEmpty()) iter = filterTypes(iter);
-            if (!props().predicates().isEmpty()) iter = filterPredicates(iter, parameters);
+            if (!props().predicates().isEmpty())
+                iter = filterPredicates(filterAttributes(iter), parameters);
             return iter;
         }
 
@@ -239,7 +243,8 @@ public abstract class ProcedureVertex<
             }
 
             if (props().predicates().isEmpty()) return iter;
-            else return filterPredicates(iter, parameters, eq.orElse(null));
+            else
+                return filterPredicates(filterAttributes(iter), parameters, eq.orElse(null));
         }
 
         Seekable<? extends ThingVertex, Order.Asc> filterIID(Seekable<? extends ThingVertex, Order.Asc> iterator,
@@ -262,15 +267,14 @@ public abstract class ProcedureVertex<
             return iterator.filter(v -> props().types().contains(v.type().properLabel()));
         }
 
-        Seekable<? extends ThingVertex, Order.Asc> filterPredicates(Seekable<? extends ThingVertex, Order.Asc> iterator,
-                                                                    GraphTraversal.Thing.Parameters parameters) {
+        Seekable<? extends AttributeVertex<?>, Order.Asc> filterPredicates(Seekable<? extends AttributeVertex<?>, Order.Asc> iterator,
+                                                                           GraphTraversal.Thing.Parameters parameters) {
             return filterPredicates(iterator, parameters, null);
         }
 
-        Seekable<? extends ThingVertex, Order.Asc> filterPredicates(Seekable<? extends ThingVertex, Order.Asc> iterator,
-                                                                    GraphTraversal.Thing.Parameters parameters,
-                                                                    @Nullable Predicate.Value<?> exclude) {
-            iterator = iterator.filter(ThingVertex::isAttribute);
+        Seekable<? extends AttributeVertex<?>, Order.Asc> filterPredicates(Seekable<? extends AttributeVertex<?>, Order.Asc> iterator,
+                                                                           GraphTraversal.Thing.Parameters parameters,
+                                                                           @Nullable Predicate.Value<?> exclude) {
             // TODO: should we throw an exception if the user asserts a value predicate on a non-attribute?
             // TODO: should we throw an exception if the user assert a value non-comparable value types?
             assert id().isVariable();
@@ -295,9 +299,9 @@ public abstract class ProcedureVertex<
             return iterator;
         }
 
-        Seekable<? extends AttributeVertex<?>, Order.Asc> iteratorOfAttributesWithTypes(GraphManager graphMgr,
-                                                                                        GraphTraversal.Thing.Parameters params,
-                                                                                        Predicate.Value<?> eq) {
+        Seekable<AttributeVertex<?>, Order.Asc> iteratorOfAttributesWithTypes(GraphManager graphMgr,
+                                                                              GraphTraversal.Thing.Parameters params,
+                                                                              Predicate.Value<?> eq) {
             FunctionalIterator<TypeVertex> attributeTypes = iterate(props().types().iterator())
                     .map(l -> graphMgr.schema().getType(l)).noNulls()
                     .map(t -> {
@@ -307,7 +311,7 @@ public abstract class ProcedureVertex<
             return iteratorOfAttributes(graphMgr, attributeTypes, params, eq);
         }
 
-        Seekable<? extends AttributeVertex<?>, Order.Asc> iteratorOfAttributes(
+        Seekable<AttributeVertex<?>, Order.Asc> iteratorOfAttributes(
                 GraphManager graphMgr, FunctionalIterator<TypeVertex> attributeTypes,
                 GraphTraversal.Thing.Parameters parameters, Predicate.Value<?> eqPredicate
         ) {
@@ -315,8 +319,11 @@ public abstract class ProcedureVertex<
             Set<GraphTraversal.Thing.Parameters.Value> values = parameters.getValues(id().asVariable(), eqPredicate);
             if (values.size() > 1) return emptySorted();
             return attributeTypes
-                    .mergeMap(ASC, t -> iterateSorted(ASC, attributeVertex(graphMgr, t, values.iterator().next())))
-                    .filter(Objects::nonNull);
+                    .mergeMap(ASC, t ->
+                            Iterators.Sorted.Seekable.<AttributeVertex<?>, Order.Asc>iterateSorted(
+                                    ASC,
+                                    attributeVertex(graphMgr, t, values.iterator().next()))
+                    ).filter(Objects::nonNull);
         }
 
         private AttributeVertex<?> attributeVertex(GraphManager graphMgr, TypeVertex type,
@@ -336,6 +343,12 @@ public abstract class ProcedureVertex<
                 default:
                     throw TypeDBException.of(ILLEGAL_STATE);
             }
+        }
+
+        static Seekable<AttributeVertex<?>, Order.Asc> filterAttributes(Seekable<? extends ThingVertex, Order.Asc> iterator) {
+            // TODO: trying to achieve this without casting seems impossible due to the reverse mapping required by mapSorted?
+            return ((Seekable<ThingVertex, Order.Asc>) iterator).filter(ThingVertex::isAttribute)
+                    .mapSorted(ASC, ThingVertex::asAttribute, v -> v);
         }
     }
 
@@ -364,7 +377,7 @@ public abstract class ProcedureVertex<
                 else if (mustBeRelationType()) return graphMgr.schema().relationTypes();
                 else if (mustBeRoleType()) return graphMgr.schema().roleTypes();
                 else if (mustBeThingType()) return graphMgr.schema().thingTypes();
-                else iterator = graphMgr.schema().thingTypes().merge(graphMgr.schema().roleTypes();
+                else iterator = graphMgr.schema().thingTypes().merge(graphMgr.schema().roleTypes());
             }
             return iterator;
         }

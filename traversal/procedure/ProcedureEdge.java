@@ -33,6 +33,7 @@ import com.vaticle.typedb.core.graph.vertex.AttributeVertex;
 import com.vaticle.typedb.core.graph.vertex.ThingVertex;
 import com.vaticle.typedb.core.graph.vertex.TypeVertex;
 import com.vaticle.typedb.core.graph.vertex.Vertex;
+import com.vaticle.typedb.core.graph.vertex.impl.TypeVertexImpl;
 import com.vaticle.typedb.core.traversal.GraphTraversal;
 import com.vaticle.typedb.core.traversal.GraphTraversal.Thing;
 import com.vaticle.typedb.core.traversal.common.Identifier;
@@ -80,6 +81,7 @@ import static com.vaticle.typedb.core.graph.common.Encoding.Prefix.VERTEX_ROLE;
 import static com.vaticle.typedb.core.graph.common.Encoding.Vertex.Thing.RELATION;
 import static com.vaticle.typedb.core.graph.common.Encoding.Vertex.Type.ROLE_TYPE;
 import static com.vaticle.typedb.core.traversal.predicate.PredicateOperator.Equality.EQ;
+import static com.vaticle.typedb.core.traversal.procedure.ProcedureVertex.Thing.filterAttributes;
 
 public abstract class ProcedureEdge<
         VERTEX_FROM extends ProcedureVertex<?, ?>, VERTEX_TO extends ProcedureVertex<?, ?>
@@ -259,7 +261,7 @@ public abstract class ProcedureEdge<
                         .flatMap(vt -> graphMgr.schema().attributeTypes(vt))
                         .mergeMap(ASC, at -> graphMgr.data().getReadable(at));
                 if (!to.props().predicates().isEmpty()) {
-                    toIter = to.filterPredicates(toIter, params);
+                    toIter = to.filterPredicates(filterAttributes(toIter), params);
                 }
             }
 
@@ -397,7 +399,9 @@ public abstract class ProcedureEdge<
 
                     Seekable<? extends ThingVertex, Order.Asc> iter = typeIter.mergeMap(ASC, t -> graphMgr.data().getReadable(t));
                     if (to.props().hasIID()) iter = to.filterIID(iter, params);
-                    if (!to.props().predicates().isEmpty()) iter = to.filterPredicates(iter, params);
+                    if (!to.props().predicates().isEmpty()) {
+                        iter = to.filterPredicates(filterAttributes(iter), params);
+                    }
                     return iter;
                 }
 
@@ -584,8 +588,7 @@ public abstract class ProcedureEdge<
                                     else return null;
                                 },
                                 vertex -> KeyValue.of(vertex, null)
-                                ).noNulls()
-                        );
+                        ).filter(Objects::nonNull));
                         return iterator;
                     }
 
@@ -896,25 +899,25 @@ public abstract class ProcedureEdge<
                 throw TypeDBException.of(UNSUPPORTED_OPERATION);
             }
 
-            FunctionalIterator<? extends ThingVertex> backwardBranchToIIDFiltered(
+            Seekable<ThingVertex, Order.Asc> backwardBranchToIIDFiltered(
                     GraphManager graphMgr, ThingVertex fromVertex,
                     Encoding.Edge.Thing encoding, VertexIID.Thing toIID, Set<Label> allowedToTypes) {
                 ThingVertex toVertex = graphMgr.data().getReadable(toIID);
                 if (toVertex != null && fromVertex.ins().edge(encoding, toVertex) != null &&
                         (allowedToTypes.isEmpty() || allowedToTypes.contains(toVertex.type().properLabel()))) {
-                    return single(toVertex);
+                    return iterateSorted(ASC, toVertex);
                 } else {
-                    return empty();
+                    return emptySorted();
                 }
             }
 
-            FunctionalIterator<? extends Vertex<?, ?>> forwardBranchToRole(GraphManager graphMgr, Vertex<?, ?> fromVertex,
-                                                                           Encoding.Edge.Thing.Base encoding) {
+            Seekable<? extends Vertex<?, ?>, Order.Asc> forwardBranchToRole(GraphManager graphMgr, Vertex<?, ?> fromVertex,
+                                                                            Encoding.Edge.Thing.Base encoding) {
                 assert !to.props().hasIID() && to.props().predicates().isEmpty();
                 ThingVertex relation = fromVertex.asThing();
                 if (!to.props().types().isEmpty()) {
                     return iterate(to.props().types()).map(l -> graphMgr.schema().getType(l)).noNulls()
-                            .flatMap(t -> relation.outs().edge(encoding, PrefixIID.of(VERTEX_ROLE), t.iid()).to());
+                            .mergeMap(ASC, t -> relation.outs().edge(encoding, PrefixIID.of(VERTEX_ROLE), t.iid()).to());
                 } else {
                     return relation.outs().edge(encoding).to();
                 }
@@ -937,7 +940,7 @@ public abstract class ProcedureEdge<
                     public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
                             GraphManager graphMgr, Vertex<?, ?> fromVertex, GraphTraversal.Thing.Parameters params) {
                         assert fromVertex.isThing();
-                        FunctionalIterator<? extends AttributeVertex<?>> iter;
+                        Seekable<? extends AttributeVertex<?>, Order.Asc> iter;
                         com.vaticle.typedb.core.traversal.predicate.Predicate.Value<?> eq = null;
                         ThingVertex owner = fromVertex.asThing();
                         if (to.props().hasIID()) {
@@ -947,23 +950,24 @@ public abstract class ProcedureEdge<
                             if (!iid.isAttribute()) att = null;
                             else att = graphMgr.data().getReadable(iid.asAttribute());
                             if (att != null && owner.outs().edge(HAS, att) != null &&
-                                    (to.props().types().isEmpty() || to.props().types().contains(att.type().properLabel()))) {
-                                iter = single(att);
+                                    (to.props().types().contains(att.type().properLabel()))) {
+                                iter = iterateSorted(ASC, att);
                             } else {
-                                return empty();
+                                return emptySorted();
                             }
                         } else if (!to.props().types().isEmpty()) {
                             eq = iterate(to.props().predicates()).filter(p -> p.operator().equals(EQ)).firstOrNull();
                             if (eq != null) {
                                 iter = to.iteratorOfAttributesWithTypes(graphMgr, params, eq)
-                                        .filter(a -> owner.outs().edge(HAS, a) != null);
+                                        .filter(a -> owner.outs().edge(HAS, a.asAttribute()) != null);
                             } else {
                                 iter = iterate(to.props().types()).map(l -> graphMgr.schema().getType(l)).noNulls()
-                                        .flatMap(t -> owner.outs().edge(HAS, PrefixIID.of(VERTEX_ATTRIBUTE), t.iid()).to())
-                                        .map(ThingVertex::asAttribute);
+                                        .mergeMap(
+                                                ASC, t -> owner.outs().edge(HAS, PrefixIID.of(VERTEX_ATTRIBUTE), t.iid()).to()
+                                        ).mapSorted(ASC, ThingVertex::asAttribute, v -> v);
                             }
                         } else {
-                            iter = owner.outs().edge(HAS).to().map(ThingVertex::asAttribute);
+                            iter = owner.outs().edge(HAS).to().mapSorted(ASC, ThingVertex::asAttribute, v -> v);
                         }
 
                         if (to.props().predicates().isEmpty()) return iter;
@@ -992,20 +996,20 @@ public abstract class ProcedureEdge<
                     public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
                             GraphManager graphMgr, Vertex<?, ?> fromVertex, GraphTraversal.Thing.Parameters params) {
                         assert fromVertex.isThing() && fromVertex.asThing().isAttribute();
-                        FunctionalIterator<? extends ThingVertex> iter;
+                        Seekable<ThingVertex, Order.Asc> iter;
                         AttributeVertex<?> att = fromVertex.asThing().asAttribute();
 
                         if (to.props().hasIID()) {
                             iter = backwardBranchToIIDFiltered(graphMgr, att, HAS, params.getIID(to.id().asVariable()), to.props().types());
                         } else if (!to.props().types().isEmpty()) {
                             iter = iterate(to.props().types()).map(l -> graphMgr.schema().getType(l)).noNulls()
-                                    .flatMap(t -> att.ins().edge(HAS, PrefixIID.of(t.encoding().instance()), t.iid()).from());
+                                    .mergeMap(ASC, t -> att.ins().edge(HAS, PrefixIID.of(t.encoding().instance()), t.iid()).from());
                         } else {
                             iter = att.ins().edge(HAS).from();
                         }
 
                         if (to.props().predicates().isEmpty()) return iter;
-                        else return to.filterPredicates(iter, params);
+                        else return to.filterPredicates(iter.mapSorted(ASC, ThingVertex::asAttribute, v -> v), params);
                     }
 
                     @Override
@@ -1055,20 +1059,20 @@ public abstract class ProcedureEdge<
                         assert fromVertex.isThing();
                         ThingVertex role = fromVertex.asThing();
                         Set<Label> toTypes = to.props().types();
-                        FunctionalIterator<? extends ThingVertex> iter;
+                        Seekable<ThingVertex, Order.Asc> iter;
 
                         if (to.props().hasIID()) {
                             assert to.id().isVariable();
                             iter = backwardBranchToIIDFiltered(graphMgr, role, PLAYING, params.getIID(to.id().asVariable()), toTypes);
                         } else if (!toTypes.isEmpty()) {
                             iter = iterate(toTypes).map(l -> graphMgr.schema().getType(l)).noNulls()
-                                    .flatMap(t -> role.ins().edge(PLAYING, PrefixIID.of(t.encoding().instance()), t.iid()).from());
+                                    .mergeMap(ASC, t -> role.ins().edge(PLAYING, PrefixIID.of(t.encoding().instance()), t.iid()).from());
                         } else {
                             iter = role.ins().edge(PLAYING).from();
                         }
 
                         if (to.props().predicates().isEmpty()) return iter;
-                        else return to.filterPredicates(iter, params);
+                        else return to.filterPredicates(iter.mapSorted(ASC, ThingVertex::asAttribute, v -> v), params);
                     }
 
                     @Override
@@ -1123,14 +1127,14 @@ public abstract class ProcedureEdge<
                         assert fromVertex.isThing() && to.props().predicates().isEmpty();
                         ThingVertex role = fromVertex.asThing();
                         Set<Label> toTypes = to.props().types();
-                        FunctionalIterator<? extends ThingVertex> iter;
+                        Seekable<? extends ThingVertex, Order.Asc> iter;
 
                         if (to.props().hasIID()) {
                             assert to.id().isVariable();
                             iter = backwardBranchToIIDFiltered(graphMgr, role, RELATING, params.getIID(to.id().asVariable()), toTypes);
                         } else if (!toTypes.isEmpty()) {
                             iter = iterate(toTypes).map(l -> graphMgr.schema().getType(l)).noNulls()
-                                    .flatMap(t -> role.ins().edge(RELATING, PrefixIID.of(RELATION), t.iid()).from());
+                                    .mergeMap(ASC, t -> role.ins().edge(RELATING, PrefixIID.of(RELATION), t.iid()).from());
                         } else {
                             iter = role.ins().edge(RELATING).from();
                         }
