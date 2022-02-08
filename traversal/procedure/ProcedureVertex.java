@@ -32,6 +32,7 @@ import com.vaticle.typedb.core.graph.vertex.ThingVertex;
 import com.vaticle.typedb.core.graph.vertex.TypeVertex;
 import com.vaticle.typedb.core.graph.vertex.Vertex;
 import com.vaticle.typedb.core.traversal.GraphTraversal;
+import com.vaticle.typedb.core.traversal.Traversal;
 import com.vaticle.typedb.core.traversal.common.Identifier;
 import com.vaticle.typedb.core.traversal.graph.TraversalVertex;
 import com.vaticle.typedb.core.traversal.predicate.Predicate;
@@ -57,7 +58,6 @@ import static com.vaticle.typedb.core.common.iterator.Iterators.tree;
 import static com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.ASC;
 import static com.vaticle.typedb.core.graph.common.Encoding.Edge.Type.SUB;
 import static com.vaticle.typedb.core.graph.common.Encoding.ValueType.STRING;
-import static com.vaticle.typedb.core.graph.common.Encoding.Vertex.Thing.ROLE;
 import static com.vaticle.typedb.core.graph.common.Encoding.Vertex.Type.ROLE_TYPE;
 import static com.vaticle.typedb.core.traversal.predicate.PredicateOperator.Equality.EQ;
 
@@ -76,7 +76,7 @@ public abstract class ProcedureVertex<
         this.dependedEdgeOrders = new AtomicReference<>(null);
     }
 
-    public abstract Seekable<? extends VERTEX, Order.Asc> iterator(GraphManager graphMgr, GraphTraversal.Thing.Parameters parameters);
+    public abstract Seekable<? extends VERTEX, Order.Asc> iterator(GraphManager graphMgr, Traversal.Parameters parameters);
 
     @Override
     public void in(ProcedureEdge<?, ?> edge) {
@@ -148,7 +148,7 @@ public abstract class ProcedureVertex<
         }
 
         @Override
-        public Seekable<? extends ThingVertex, Order.Asc> iterator(GraphManager graphMgr, GraphTraversal.Thing.Parameters parameters) {
+        public Seekable<? extends ThingVertex, Order.Asc> iterator(GraphManager graphMgr, Traversal.Parameters parameters) {
             assert isStartingVertex();
             if (props().hasIID()) return iterateAndFilterFromIID(graphMgr, parameters);
             else if (!props().types().isEmpty()) return iterateAndFilterFromTypes(graphMgr, parameters);
@@ -160,7 +160,7 @@ public abstract class ProcedureVertex<
         }
 
         Seekable<? extends ThingVertex, Order.Asc> filter(Seekable<? extends ThingVertex, Order.Asc> iterator,
-                                                          GraphTraversal.Thing.Parameters params) {
+                                                          Traversal.Parameters params) {
             if (props().hasIID()) iterator = filterIID(iterator, params);
             if (!props().types().isEmpty()) iterator = filterTypes(iterator);
             if (!props().predicates().isEmpty()) {
@@ -186,7 +186,7 @@ public abstract class ProcedureVertex<
         }
 
         private Seekable<? extends ThingVertex, Order.Asc> iterateAndFilterFromAttributes(
-                GraphManager graph, GraphTraversal.Thing.Parameters parameters) {
+                GraphManager graph, Traversal.Parameters parameters) {
             Seekable<? extends AttributeVertex<?>, Order.Asc> iter;
             Seekable<TypeVertex, Order.Asc> attTypes;
 
@@ -217,7 +217,7 @@ public abstract class ProcedureVertex<
                     .mergeMap(ASC, t -> graphMgr.data().getReadable(t));
         }
 
-        Seekable<? extends ThingVertex, Order.Asc> iterateAndFilterFromIID(GraphManager graphMgr, GraphTraversal.Thing.Parameters parameters) {
+        Seekable<? extends ThingVertex, Order.Asc> iterateAndFilterFromIID(GraphManager graphMgr, Traversal.Parameters parameters) {
             assert props().hasIID() && id().isVariable();
             Identifier.Variable id = id().asVariable();
             ThingVertex vertex = graphMgr.data().getReadable(parameters.getIID(id));
@@ -230,7 +230,7 @@ public abstract class ProcedureVertex<
         }
 
         Seekable<? extends ThingVertex, Order.Asc> iterateAndFilterFromTypes(GraphManager graphMgr,
-                                                                             GraphTraversal.Thing.Parameters parameters) {
+                                                                             Traversal.Parameters parameters) {
             assert !props().types().isEmpty();
             Seekable<? extends ThingVertex, Order.Asc> iter;
             Optional<Predicate.Value<?>> eq = iterate(props().predicates()).filter(p -> p.operator().equals(EQ)).first();
@@ -248,13 +248,13 @@ public abstract class ProcedureVertex<
         }
 
         Seekable<? extends ThingVertex, Order.Asc> filterIID(Seekable<? extends ThingVertex, Order.Asc> iterator,
-                                                             GraphTraversal.Thing.Parameters parameters) {
+                                                             Traversal.Parameters parameters) {
             // TODO optimise with seek
             return iterator.filter(v -> v.iid().equals(parameters.getIID(id().asVariable())));
         }
 
         Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> filterIIDOnPlayerAndRole(Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> iterator,
-                                                                                         GraphTraversal.Thing.Parameters parameters) {
+                                                                                         Traversal.Parameters parameters) {
             // TODO optimise with seek if we can
             return iterator.filter(kv -> kv.key().iid().equals(parameters.getIID(id().asVariable())));
         }
@@ -268,19 +268,19 @@ public abstract class ProcedureVertex<
         }
 
         Seekable<? extends AttributeVertex<?>, Order.Asc> filterPredicates(Seekable<? extends AttributeVertex<?>, Order.Asc> iterator,
-                                                                           GraphTraversal.Thing.Parameters parameters) {
+                                                                           Traversal.Parameters parameters) {
             return filterPredicates(iterator, parameters, null);
         }
 
         Seekable<? extends AttributeVertex<?>, Order.Asc> filterPredicates(Seekable<? extends AttributeVertex<?>, Order.Asc> iterator,
-                                                                           GraphTraversal.Thing.Parameters parameters,
+                                                                           Traversal.Parameters parameters,
                                                                            @Nullable Predicate.Value<?> exclude) {
             // TODO: should we throw an exception if the user asserts a value predicate on a non-attribute?
             // TODO: should we throw an exception if the user assert a value non-comparable value types?
             assert id().isVariable();
             for (Predicate.Value<?> predicate : props().predicates()) {
                 if (Objects.equals(predicate, exclude)) continue;
-                for (GraphTraversal.Thing.Parameters.Value value : parameters.getValues(id().asVariable(), predicate)) {
+                for (Traversal.Parameters.Value value : parameters.getValues(id().asVariable(), predicate)) {
                     iterator = iterator.filter(a -> predicate.apply(a.asAttribute(), value));
                 }
             }
@@ -288,11 +288,11 @@ public abstract class ProcedureVertex<
         }
 
         Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> filterPredicatesOnEdge(Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> iterator,
-                                                                                       GraphTraversal.Thing.Parameters parameters) {
+                                                                                       Traversal.Parameters parameters) {
             assert id().isVariable();
             iterator = iterator.filter(kv -> kv.key().isAttribute());
             for (Predicate.Value<?> predicate : props().predicates()) {
-                for (GraphTraversal.Thing.Parameters.Value value : parameters.getValues(id().asVariable(), predicate)) {
+                for (Traversal.Parameters.Value value : parameters.getValues(id().asVariable(), predicate)) {
                     iterator = iterator.filter(kv -> predicate.apply(kv.key().asAttribute(), value));
                 }
             }
@@ -300,7 +300,7 @@ public abstract class ProcedureVertex<
         }
 
         Seekable<AttributeVertex<?>, Order.Asc> iteratorOfAttributesWithTypes(GraphManager graphMgr,
-                                                                              GraphTraversal.Thing.Parameters params,
+                                                                              Traversal.Parameters params,
                                                                               Predicate.Value<?> eq) {
             FunctionalIterator<TypeVertex> attributeTypes = iterate(props().types().iterator())
                     .map(l -> graphMgr.schema().getType(l)).noNulls()
@@ -313,10 +313,10 @@ public abstract class ProcedureVertex<
 
         Seekable<AttributeVertex<?>, Order.Asc> iteratorOfAttributes(
                 GraphManager graphMgr, FunctionalIterator<TypeVertex> attributeTypes,
-                GraphTraversal.Thing.Parameters parameters, Predicate.Value<?> eqPredicate
+                Traversal.Parameters parameters, Predicate.Value<?> eqPredicate
         ) {
             assert id().isVariable();
-            Set<GraphTraversal.Thing.Parameters.Value> values = parameters.getValues(id().asVariable(), eqPredicate);
+            Set<Traversal.Parameters.Value> values = parameters.getValues(id().asVariable(), eqPredicate);
             if (values.size() > 1) return emptySorted();
             return attributeTypes
                     .mergeMap(ASC, t ->
@@ -327,7 +327,7 @@ public abstract class ProcedureVertex<
         }
 
         private AttributeVertex<?> attributeVertex(GraphManager graphMgr, TypeVertex type,
-                                                   GraphTraversal.Thing.Parameters.Value value) {
+                                                   Traversal.Parameters.Value value) {
             assert type.isAttributeType();
             switch (type.valueType()) {
                 case BOOLEAN:
@@ -364,7 +364,7 @@ public abstract class ProcedureVertex<
         }
 
         @Override
-        public Seekable<? extends TypeVertex, Order.Asc> iterator(GraphManager graphMgr, GraphTraversal.Thing.Parameters parameters) {
+        public Seekable<? extends TypeVertex, Order.Asc> iterator(GraphManager graphMgr, Traversal.Parameters parameters) {
             assert isStartingVertex() && id().isVariable();
             Seekable<TypeVertex, Order.Asc> iterator = null;
 
