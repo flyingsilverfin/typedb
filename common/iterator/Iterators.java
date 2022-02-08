@@ -176,7 +176,7 @@ public class Iterators {
             }
 
             public static <T extends Comparable<? super T>, ORDER extends Order> SortedIterator.Seekable<T, ORDER> iterateSorted(ORDER order, Collection<T> elements) {
-                return new BaseSeekableIterator<>(order, new TreeSet<>(list(elements)));
+                return new BaseSeekableIterator<>(order, new TreeSet<>(elements));
             }
 
             @SafeVarargs

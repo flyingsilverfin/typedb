@@ -25,7 +25,6 @@ import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Order;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.NavigableSet;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -85,8 +84,6 @@ public interface FunctionalIterator<T> extends Iterator<T> {
     void toSet(Set<T> set);
 
     LinkedHashSet<T> toLinkedSet();
-
-    NavigableSet<T> toNavigableSet();
 
     long count();
 

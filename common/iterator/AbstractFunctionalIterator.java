@@ -20,19 +20,17 @@ package com.vaticle.typedb.core.common.iterator;
 
 import com.vaticle.typedb.core.common.exception.TypeDBException;
 import com.vaticle.typedb.core.common.iterator.sorted.MergeMappedIterator;
-import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Seekable;
 import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Order;
+import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Seekable;
 
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.NavigableSet;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.TreeSet;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
@@ -212,13 +210,6 @@ public abstract class AbstractFunctionalIterator<T> implements FunctionalIterato
         forEachRemaining(linkedSet::add);
         recycle();
         return linkedSet;
-    }
-
-    @Override
-    public NavigableSet<T> toNavigableSet() {
-        NavigableSet<T> set = new TreeSet<>();
-        this.forEachRemaining(set::add);
-        return set;
     }
 
     @Override

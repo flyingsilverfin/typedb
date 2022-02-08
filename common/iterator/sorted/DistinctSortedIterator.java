@@ -83,7 +83,7 @@ public class DistinctSortedIterator<T extends Comparable<? super T>, ORDER exten
 
         @Override
         public final SortedIterator.Seekable<T, ORDER> merge(SortedIterator.Seekable<T, ORDER> iterator) {
-            return Iterators.Sorted.Seekable.merge( this, iterator);
+            return Iterators.Sorted.Seekable.merge(this, iterator);
         }
 
         @Override

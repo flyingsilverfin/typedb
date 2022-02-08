@@ -19,8 +19,6 @@
 package com.vaticle.typedb.core.common.iterator.sorted;
 
 import com.vaticle.typedb.core.common.exception.TypeDBException;
-import com.vaticle.typedb.core.common.iterator.AbstractFunctionalIterator;
-import com.vaticle.typedb.core.common.iterator.FunctionalIterator;
 import com.vaticle.typedb.core.common.iterator.Iterators;
 
 import java.util.NoSuchElementException;
@@ -91,7 +89,7 @@ public class LimitedSortedIterator<T extends Comparable<? super T>, ORDER extend
 
         @Override
         public final SortedIterator.Seekable<T, ORDER> merge(SortedIterator.Seekable<T, ORDER> iterator) {
-            return Iterators.Sorted.Seekable.merge( this, iterator);
+            return Iterators.Sorted.Seekable.merge(this, iterator);
         }
 
         @Override

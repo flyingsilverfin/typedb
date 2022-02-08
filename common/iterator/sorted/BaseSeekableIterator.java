@@ -81,7 +81,7 @@ public class BaseSeekableIterator<T extends Comparable<? super T>, ORDER extends
 
     @Override
     public final Seekable<T, ORDER> merge(Seekable<T, ORDER> iterator) {
-        return Iterators.Sorted.Seekable.merge( this, iterator);
+        return Iterators.Sorted.Seekable.merge(this, iterator);
     }
 
     @Override
