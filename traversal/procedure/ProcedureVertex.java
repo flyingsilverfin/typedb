@@ -224,8 +224,7 @@ public abstract class ProcedureVertex<
             if (vertex == null) return emptySorted();
             Seekable<? extends ThingVertex, Order.Asc> iter = iterateSorted(ASC, vertex);
             if (!props().types().isEmpty()) iter = filterTypes(iter);
-            if (!props().predicates().isEmpty())
-                iter = filterPredicates(filterAttributes(iter), parameters);
+            if (!props().predicates().isEmpty()) iter = filterPredicates(filterAttributes(iter), parameters);
             return iter;
         }
 
@@ -243,8 +242,7 @@ public abstract class ProcedureVertex<
             }
 
             if (props().predicates().isEmpty()) return iter;
-            else
-                return filterPredicates(filterAttributes(iter), parameters, eq.orElse(null));
+            else return filterPredicates(filterAttributes(iter), parameters, eq.orElse(null));
         }
 
         Seekable<? extends ThingVertex, Order.Asc> filterIID(Seekable<? extends ThingVertex, Order.Asc> iterator,
@@ -300,8 +298,8 @@ public abstract class ProcedureVertex<
         }
 
         Seekable<? extends AttributeVertex<?>, Order.Asc> iteratorOfAttributesWithTypes(GraphManager graphMgr,
-                                                                              Traversal.Parameters params,
-                                                                              Predicate.Value<?> eq) {
+                                                                                        Traversal.Parameters params,
+                                                                                        Predicate.Value<?> eq) {
             FunctionalIterator<TypeVertex> attributeTypes = iterate(props().types().iterator())
                     .map(l -> graphMgr.schema().getType(l)).noNulls()
                     .map(t -> {

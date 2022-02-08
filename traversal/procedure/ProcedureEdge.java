@@ -244,17 +244,13 @@ public abstract class ProcedureEdge<
                 GraphManager graphMgr, Vertex<?, ?> fromVertex, Traversal.Parameters params) {
             assert fromVertex.isThing() && fromVertex.asThing().isAttribute();
 
-            // TODO: can we get rid of the ? extends and then make use of mapSorted to bring back AttributeVertex<?>
-
             Seekable<? extends ThingVertex, Order.Asc> toIter;
-
             if (to.props().hasIID()) {
-                toIter = to.iterateAndFilterFromIID(graphMgr, params)
-                        .filter(ThingVertex::isAttribute);
+                toIter = to.iterateAndFilterFromIID(graphMgr, params);
             } else if (!to.props().types().isEmpty()) {
-                toIter = to.iterateAndFilterFromTypes(graphMgr, params)
-                        .filter(ThingVertex::isAttribute);
+                toIter = to.iterateAndFilterFromTypes(graphMgr, params);
             } else {
+                // TODO this branch shouldn't exist anymore
                 assert !to.isStartingVertex();
                 toIter = iterate(fromVertex.asThing().asAttribute().valueType().comparables())
                         .flatMap(vt -> graphMgr.schema().attributeTypes(vt))
