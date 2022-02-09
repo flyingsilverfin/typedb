@@ -1199,41 +1199,38 @@ public abstract class ProcedureEdge<
                     @Override
                     public Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> branchEdge(GraphManager graphMgr, Vertex<?, ?> fromVertex,
                                                                                               Traversal.Parameters params) {
-                        assert fromVertex.isThing();
+                        assert fromVertex.isThing() && !roleTypes.isEmpty();
                         ThingVertex rel = fromVertex.asThing();
                         Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> iter;
                         boolean filteredIID = false, filteredTypes = false;
 
-                        if (!roleTypes.isEmpty()) {
-                            FunctionalIterator<TypeVertex> roleTypeVertices = iterate(roleTypes).map(graphMgr.schema()::getType);
-                            if (to.props().hasIID()) {
-                                assert to.id().isVariable();
-                                filteredIID = true;
-                                ThingVertex player = graphMgr.data().getReadable(params.getIID(to.id().asVariable()));
-                                if (player == null) return emptySorted();
-                                // TODO we should use the exact type of the current vertex to restrict the set of role types possible
-                                iter = roleTypeVertices.mergeMap(
-                                        ASC,
-                                        rt -> rel.outs()
-                                                .edge(ROLEPLAYER, rt, player.iid().prefix(), player.iid().type())
-                                                .toAndOptimised()
-                                ).filter(e -> e.key().equals(player));
-                            } else {
-                                filteredTypes = true;
-                                iter = roleTypeVertices.mergeMap(
-                                        ASC,
-                                        rt -> iterate(to.props().types())
-                                                .map(l -> graphMgr.schema().getType(l)).noNulls()
-                                                .mergeMap(
-                                                        ASC,
-                                                        t -> rel.outs()
-                                                                .edge(ROLEPLAYER, rt, PrefixIID.of(t.encoding().instance()), t.iid())
-                                                                .toAndOptimised()
-                                                )
-                                );
-                            }
+                        FunctionalIterator<TypeVertex> roleTypeVertices = iterate(roleTypes).map(graphMgr.schema()::getType);
+                        // TODO we should use the exact type of the current vertex to restrict the set of role types possible
+                        if (to.props().hasIID()) {
+                            assert to.id().isVariable();
+                            filteredIID = true;
+                            ThingVertex player = graphMgr.data().getReadable(params.getIID(to.id().asVariable()));
+                            if (player == null) return emptySorted();
+                            // TODO this should use an edge lookup instead of an iterator lookup
+                            iter = roleTypeVertices.mergeMap(
+                                    ASC,
+                                    rt -> rel.outs()
+                                            .edge(ROLEPLAYER, rt, player.iid().prefix(), player.iid().type())
+                                            .toAndOptimised()
+                            ).filter(e -> e.key().equals(player));
                         } else {
-                            throw TypeDBException.of(ILLEGAL_STATE);
+                            filteredTypes = true;
+                            iter = roleTypeVertices.mergeMap(
+                                    ASC,
+                                    rt -> iterate(to.props().types())
+                                            .map(l -> graphMgr.schema().getType(l)).noNulls()
+                                            .mergeMap(
+                                                    ASC,
+                                                    t -> rel.outs()
+                                                            .edge(ROLEPLAYER, rt, PrefixIID.of(t.encoding().instance()), t.iid())
+                                                            .toAndOptimised()
+                                            )
+                            );
                         }
 
                         if (!filteredIID && to.props().hasIID()) iter = to.filterIIDOnPlayerAndRole(iter, params);
@@ -1268,17 +1265,19 @@ public abstract class ProcedureEdge<
                     @Override
                     public Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> branchEdge(GraphManager graphMgr, Vertex<?, ?> fromVertex,
                                                                                               Traversal.Parameters params) {
-                        assert fromVertex.isThing() && to.props().predicates().isEmpty();
+                        assert fromVertex.isThing() && to.props().predicates().isEmpty() && !roleTypes.isEmpty();
                         ThingVertex player = fromVertex.asThing();
                         Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> iter;
                         boolean filteredIID = false, filteredTypes = false;
 
                         FunctionalIterator<TypeVertex> roleTypeVertices = iterate(roleTypes).map(graphMgr.schema()::getType);
+                        // TODO should filter based on actual fromVertex
                         if (to.props().hasIID()) {
                             assert to.id().isVariable();
                             filteredIID = true;
                             ThingVertex relation = graphMgr.data().getReadable(params.getIID(to.id().asVariable()));
                             if (relation == null) return emptySorted();
+                            // TODO this should use an edge lookup rather than an iterator
                             iter = roleTypeVertices.mergeMap(
                                     ASC,
                                     rt -> player.ins()
