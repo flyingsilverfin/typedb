@@ -54,9 +54,7 @@ import static com.vaticle.typedb.core.common.exception.ErrorMessage.TypeRead.TYP
 import static com.vaticle.typedb.core.common.iterator.Iterators.Sorted.Seekable.emptySorted;
 import static com.vaticle.typedb.core.common.iterator.Iterators.Sorted.Seekable.iterateSorted;
 import static com.vaticle.typedb.core.common.iterator.Iterators.iterate;
-import static com.vaticle.typedb.core.common.iterator.Iterators.tree;
 import static com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.ASC;
-import static com.vaticle.typedb.core.graph.common.Encoding.Edge.Type.SUB;
 import static com.vaticle.typedb.core.graph.common.Encoding.ValueType.STRING;
 import static com.vaticle.typedb.core.graph.common.Encoding.Vertex.Type.ROLE_TYPE;
 import static com.vaticle.typedb.core.traversal.predicate.PredicateOperator.Equality.EQ;
@@ -292,7 +290,7 @@ public abstract class ProcedureVertex<
         static Seekable<AttributeVertex<?>, Order.Asc> filterAttributes(Seekable<? extends ThingVertex, Order.Asc> iterator) {
             // TODO: trying to achieve this without casting seems impossible due to the reverse mapping required by mapSorted?
             return ((Seekable<ThingVertex, Order.Asc>) iterator).filter(ThingVertex::isAttribute)
-                    .mapSorted(ASC, ThingVertex::asAttribute, v -> v);
+                    .mapSorted(ThingVertex::asAttribute, v -> v, ASC);
         }
     }
 

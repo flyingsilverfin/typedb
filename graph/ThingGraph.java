@@ -221,11 +221,11 @@ public class ThingGraph {
         Seekable<ThingVertex, Order.Asc> vertices = storage.iterate(
                 VertexIID.Thing.prefix(typeVertex.iid()),
                 ASC
-        ).mapSorted(ASC, kv -> convertToReadable(kv.key()), vertex -> KeyValue.of(vertex.iid(), empty()));
+        ).mapSorted(kv -> convertToReadable(kv.key()), vertex -> KeyValue.of(vertex.iid(), empty()), ASC);
         if (!thingsByTypeIID.containsKey(typeVertex.iid())) return vertices;
         else {
             Seekable<ThingVertex, Order.Asc> buffered = iterateSorted(ASC, thingsByTypeIID.get(typeVertex.iid()))
-                    .mapSorted(ASC, e -> e, ThingVertex::toWrite);
+                    .mapSorted(e -> e, ThingVertex::toWrite, ASC);
             return vertices.merge(buffered).distinct();
         }
     }

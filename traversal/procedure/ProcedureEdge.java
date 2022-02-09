@@ -25,7 +25,6 @@ import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Order;
 import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Seekable;
 import com.vaticle.typedb.core.common.parameters.Label;
 import com.vaticle.typedb.core.graph.GraphManager;
-import com.vaticle.typedb.core.graph.TypeGraph;
 import com.vaticle.typedb.core.graph.common.Encoding;
 import com.vaticle.typedb.core.graph.iid.PrefixIID;
 import com.vaticle.typedb.core.graph.iid.VertexIID;
@@ -566,13 +565,11 @@ public abstract class ProcedureEdge<
 
                         supertypes = loop(owner, Objects::nonNull, o -> o.outs().edge(SUB).to().firstOrNull());
                         iterator = supertypes.mergeMap(ASC, o -> ownsAndOverridden(o).mapSorted(
-                                ASC,
                                 e -> {
                                     if (e.value() != null) overriddens.add(e.value());
                                     if (!overriddens.contains(e.key())) return e.key();
                                     else return null;
-                                },
-                                vertex -> KeyValue.of(vertex, null)
+                                }, vertex -> KeyValue.of(vertex, null), ASC
                         ).filter(Objects::nonNull));
                         return iterator;
                     }
@@ -955,7 +952,7 @@ public abstract class ProcedureEdge<
                                 iter = iterate(to.props().types()).map(l -> graphMgr.schema().getType(l)).noNulls()
                                         .mergeMap(
                                                 ASC, t -> owner.outs().edge(HAS, PrefixIID.of(VERTEX_ATTRIBUTE), t.iid()).to()
-                                        ).mapSorted(ASC, ThingVertex::asAttribute, v -> v);
+                                        ).mapSorted(ThingVertex::asAttribute, v -> v, ASC);
                             }
                         }
 
@@ -996,7 +993,7 @@ public abstract class ProcedureEdge<
                         }
 
                         if (to.props().predicates().isEmpty()) return iter;
-                        else return to.filterPredicates(iter.mapSorted(ASC, ThingVertex::asAttribute, v -> v), params);
+                        else return to.filterPredicates(iter.mapSorted(ThingVertex::asAttribute, v -> v, ASC), params);
                     }
 
                     @Override
@@ -1057,7 +1054,7 @@ public abstract class ProcedureEdge<
                         }
 
                         if (to.props().predicates().isEmpty()) return iter;
-                        else return to.filterPredicates(iter.mapSorted(ASC, ThingVertex::asAttribute, v -> v), params);
+                        else return to.filterPredicates(iter.mapSorted(ThingVertex::asAttribute, v -> v, ASC), params);
                     }
 
                     @Override
