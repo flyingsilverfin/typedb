@@ -78,7 +78,7 @@ public class RelationConstraint extends ThingConstraint implements AlphaEquivale
     }
 
     @Override
-    public RelationConstraint clone(Conjunction.Cloner cloner) {
+    public RelationConstraint clone(Conjunction.ConstraintCloner cloner) {
         return cloner.cloneVariable(owner()).relation(Iterators.iterate(rolePlayers).map(
                 rolePlayer -> rolePlayer.clone(cloner)).toLinkedSet());
     }
@@ -239,7 +239,7 @@ public class RelationConstraint extends ThingConstraint implements AlphaEquivale
                     .validIfAlphaEqual(player, that.player);
         }
 
-        public RolePlayer clone(Conjunction.Cloner cloner) {
+        public RolePlayer clone(Conjunction.ConstraintCloner cloner) {
             assert !inferredRoleTypes.isEmpty();
             TypeVariable roleTypeClone = roleType == null ? null : cloner.cloneVariable(roleType);
             ThingVariable playerClone = cloner.cloneVariable(player);
