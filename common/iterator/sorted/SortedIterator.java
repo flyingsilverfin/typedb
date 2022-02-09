@@ -130,10 +130,6 @@ public interface SortedIterator<T extends Comparable<? super T>, ORDER extends S
 
         Seekable<T, ORDER> limit(long limit);
 
-        default Seekable<T, ORDER> noNulls() {
-            return filter(Objects::nonNull);
-        }
-
         default Optional<T> matchFirst(T value) {
             seek(value);
             if (peek().equals(value)) return Optional.of(next());
