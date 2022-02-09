@@ -132,8 +132,11 @@ public interface SortedIterator<T extends Comparable<? super T>, ORDER extends S
 
         default Optional<T> matchFirst(T value) {
             seek(value);
-            if (peek().equals(value)) return Optional.of(next());
-            else return Optional.empty();
+            Optional<T> found;
+            if (hasNext() && peek().equals(value)) found = Optional.of(next());
+            else found = Optional.empty();
+            recycle();
+            return found;
         }
 
         <U extends Comparable<? super U>, ORD extends Order> Seekable<U, ORD> mapSorted(Function<T, U> mappingFn, Function<U, T> reverseMappingFn, ORD order);
