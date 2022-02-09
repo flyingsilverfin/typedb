@@ -219,7 +219,6 @@ public class RelationConstraint extends ThingConstraint implements AlphaEquivale
             RolePlayer that = (RolePlayer) o;
             return (Objects.equals(this.roleType, that.roleType) &&
                     this.player.equals(that.player) &&
-                    Objects.equals(this.inferredRoleTypes, that.inferredRoleTypes) &&
                     this.repetition == that.repetition);
         }
 

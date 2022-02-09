@@ -18,6 +18,7 @@
 
 package com.vaticle.typedb.core.logic.tool;
 
+import com.vaticle.typedb.common.collection.Pair;
 import com.vaticle.typedb.core.common.exception.TypeDBException;
 import com.vaticle.typedb.core.common.iterator.FunctionalIterator;
 import com.vaticle.typedb.core.common.parameters.Label;
@@ -160,7 +161,7 @@ public class TypeInference {
         private final GraphTraversal.Type traversal;
         private final Map<Identifier.Variable, TypeVariable> originalToInference;
         private final Map<Retrievable, Variable> inferenceToOriginal;
-        private final Map<RelationConstraint.RolePlayer, TypeVariable> rolePlayerToInference;
+        private final Map<Pair<Identifier.Variable, RelationConstraint.RolePlayer>, TypeVariable> rolePlayerToInference;
         private int nextGeneratedID;
 
         private InferenceTraversal(Conjunction conjunction, boolean insertable, GraphManager graphMgr,
@@ -217,10 +218,10 @@ public class TypeInference {
                     conjunctionVar.setInferredTypes(types.get(inferenceID))
             );
             iterate(conjunction.variables()).filter(var -> var.isThing() && var.asThing().relation().isPresent())
-                    .flatMap(var -> iterate(var.asThing().relation().get().players()))
-                    .forEachRemaining(rp -> {
-                        assert rolePlayerToInference.containsKey(rp);
-                        rp.setInferredRoleTypes(types.get(rolePlayerToInference.get(rp).id().asRetrievable()));
+                    .flatMap(var -> iterate(var.asThing().relation().get().players()).map(rp -> new Pair<>(var.id(), rp)))
+                    .forEachRemaining(ownerAndRP -> {
+                        assert rolePlayerToInference.containsKey(ownerAndRP);
+                        ownerAndRP.second().setInferredRoleTypes(types.get(rolePlayerToInference.get(ownerAndRP).id().asRetrievable()));
                     });
         }
 
@@ -372,7 +373,7 @@ public class TypeInference {
         private void registerRelation(TypeVariable inferenceVar, RelationConstraint constraint) {
             for (RelationConstraint.RolePlayer rolePlayer : constraint.players()) {
                 TypeVariable playerVar = register(rolePlayer.player());
-                TypeVariable roleVar = registerRolePlayer(rolePlayer);
+                TypeVariable roleVar = registerRolePlayer(constraint.owner().id(), rolePlayer);
                 if (rolePlayer.roleType().isPresent()) {
                     TypeVariable roleTypeVar;
                     roleTypeVar = register(rolePlayer.roleType().get());
@@ -383,10 +384,11 @@ public class TypeInference {
             }
         }
 
-        private TypeVariable registerRolePlayer(RelationConstraint.RolePlayer rolePlayer) {
-            if (rolePlayerToInference.containsKey(rolePlayer)) return rolePlayerToInference.get(rolePlayer);
+        private TypeVariable registerRolePlayer(Retrievable ownerID, RelationConstraint.RolePlayer rolePlayer) {
+            Pair<Identifier.Variable, RelationConstraint.RolePlayer> ownerAndPlayer = new Pair<>(ownerID, rolePlayer);
+            if (rolePlayerToInference.containsKey(ownerAndPlayer)) return rolePlayerToInference.get(ownerAndPlayer);
             TypeVariable inferenceVar = new TypeVariable(newID());
-            rolePlayerToInference.put(rolePlayer, inferenceVar);
+            rolePlayerToInference.put(ownerAndPlayer, inferenceVar);
             return inferenceVar;
         }
 
@@ -394,7 +396,7 @@ public class TypeInference {
             for (RelationConstraint.RolePlayer rolePlayer : constraint.players()) {
                 TypeVariable playerVar = register(rolePlayer.player());
                 TypeVariable roleTypeVar;
-                TypeVariable roleVar = registerRolePlayer(rolePlayer);
+                TypeVariable roleVar = registerRolePlayer(constraint.owner().id(), rolePlayer);
                 if (rolePlayer.roleType().isPresent()) {
                     roleTypeVar = register(rolePlayer.roleType().get());
                 } else {
@@ -421,7 +423,7 @@ public class TypeInference {
             }
             if (props.labels().isEmpty()) {
                 conjunction.setCoherent(false);
-                throw TypeDBException.of(UNSATISFIABLE_PATTERN_VARIABLE, conjunction, inferenceToOriginal.get(id));
+                throw TypeDBException.of(UNSATISFIABLE_PATTERN_VARIABLE, conjunction, inferenceToOriginal.get(id.asRetrievable()));
             }
         }
 
@@ -435,7 +437,7 @@ public class TypeInference {
             }
             if (props.valueTypes().isEmpty()) {
                 conjunction.setCoherent(false);
-                throw TypeDBException.of(UNSATISFIABLE_PATTERN_VARIABLE_VALUE, conjunction, inferenceToOriginal.get(id));
+                throw TypeDBException.of(UNSATISFIABLE_PATTERN_VARIABLE_VALUE, conjunction, inferenceToOriginal.get(id.asRetrievable()));
             }
         }
 
