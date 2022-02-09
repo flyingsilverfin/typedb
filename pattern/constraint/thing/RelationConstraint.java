@@ -241,7 +241,7 @@ public class RelationConstraint extends ThingConstraint implements AlphaEquivale
         }
 
         public RolePlayer clone(Conjunction.Cloner cloner) {
-            assert inferredRoleTypes.isEmpty();
+            assert !inferredRoleTypes.isEmpty();
             TypeVariable roleTypeClone = roleType == null ? null : cloner.cloneVariable(roleType);
             ThingVariable playerClone = cloner.cloneVariable(player);
             RolePlayer rpClone = new RolePlayer(roleTypeClone, playerClone, repetition);
