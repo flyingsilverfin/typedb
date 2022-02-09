@@ -217,7 +217,7 @@ public class TypeInference {
                     conjunctionVar.setInferredTypes(types.get(inferenceID))
             );
             iterate(conjunction.variables()).filter(var -> var.isThing() && var.asThing().relation().isPresent())
-                    .flatMap(var -> iterate(var.asThing().relation().get().players()).filter(rp -> rp.roleType().isEmpty()))
+                    .flatMap(var -> iterate(var.asThing().relation().get().players()))
                     .forEachRemaining(rp -> {
                         assert rolePlayerToInference.containsKey(rp);
                         rp.setInferredRoleTypes(types.get(rolePlayerToInference.get(rp).id().asRetrievable()));
@@ -317,14 +317,6 @@ public class TypeInference {
             return inferenceVar;
         }
 
-        private TypeVariable registerRolePlayer(RelationConstraint.RolePlayer rolePlayer) {
-            if (rolePlayerToInference.containsKey(rolePlayer)) return rolePlayerToInference.get(rolePlayer);
-
-            TypeVariable inferenceVar = new TypeVariable(newID());
-            rolePlayerToInference.put(rolePlayer, inferenceVar);
-            return inferenceVar;
-        }
-
         private void registerValue(TypeVariable inferenceVar, ValueConstraint<?> constraint) {
             Set<Encoding.ValueType> predicateValueTypes;
             if (constraint.isVariable()) {
@@ -380,29 +372,35 @@ public class TypeInference {
         private void registerRelation(TypeVariable inferenceVar, RelationConstraint constraint) {
             for (RelationConstraint.RolePlayer rolePlayer : constraint.players()) {
                 TypeVariable playerVar = register(rolePlayer.player());
-                TypeVariable roleInstanceVar;
+                TypeVariable roleVar = registerRolePlayer(rolePlayer);
                 if (rolePlayer.roleType().isPresent()) {
                     TypeVariable roleTypeVar;
-                    roleInstanceVar = new TypeVariable(newID());
                     roleTypeVar = register(rolePlayer.roleType().get());
-                    traversal.sub(roleInstanceVar.id(), roleTypeVar.id(), true);
-                } else {
-                    roleInstanceVar = registerRolePlayer(rolePlayer);
+                    traversal.sub(roleVar.id(), roleTypeVar.id(), true);
                 }
-                traversal.relates(inferenceVar.id(), roleInstanceVar.id());
-                traversal.plays(playerVar.id(), roleInstanceVar.id());
+                traversal.relates(inferenceVar.id(), roleVar.id());
+                traversal.plays(playerVar.id(), roleVar.id());
             }
+        }
+
+        private TypeVariable registerRolePlayer(RelationConstraint.RolePlayer rolePlayer) {
+            if (rolePlayerToInference.containsKey(rolePlayer)) return rolePlayerToInference.get(rolePlayer);
+            TypeVariable inferenceVar = new TypeVariable(newID());
+            rolePlayerToInference.put(rolePlayer, inferenceVar);
+            return inferenceVar;
         }
 
         private void registerInsertableRelation(TypeVariable inferenceVar, RelationConstraint constraint) {
             for (RelationConstraint.RolePlayer rolePlayer : constraint.players()) {
                 TypeVariable playerVar = register(rolePlayer.player());
                 TypeVariable roleTypeVar;
+                TypeVariable roleVar = registerRolePlayer(rolePlayer);
                 if (rolePlayer.roleType().isPresent()) {
                     roleTypeVar = register(rolePlayer.roleType().get());
                 } else {
                     roleTypeVar = new TypeVariable(newID());
                 }
+                traversal.equalTypes(roleVar.id(), roleTypeVar.id());
                 traversal.relates(inferenceVar.id(), roleTypeVar.id());
                 traversal.plays(playerVar.id(), roleTypeVar.id());
             }

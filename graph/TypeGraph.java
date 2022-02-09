@@ -315,7 +315,7 @@ public class TypeGraph {
             TypeVertex relationType = getType(scopedLabel.scope().get());
             if (relationType == null) throw TypeDBException.of(TYPE_NOT_FOUND, scopedLabel.scope().get());
             else {
-                FunctionalIterator<TypeVertex> roleTypes = link(
+                return link(
                         loop(relationType, Objects::nonNull, r -> r.outs().edge(SUB).to().firstOrNull())
                                 .flatMap(rel -> rel.outs().edge(RELATES).to())
                                 .filter(rol -> rol.properLabel().name().equals(scopedLabel.name())),
@@ -323,9 +323,7 @@ public class TypeGraph {
                                 .flatMap(rel -> rel.outs().edge(RELATES).to())
                                 .flatMap(rol -> loop(rol, Objects::nonNull, r -> r.outs().edge(SUB).to().firstOrNull()))
                                 .filter(rol -> rol.properLabel().name().equals(scopedLabel.name()))
-                );
-                return roleTypes.flatMap(rt -> tree(rt, r -> r.ins().edge(SUB).from()))
-                        .map(TypeVertex::properLabel).toSet();
+                ).map(TypeVertex::properLabel).toSet();
             }
         };
         if (isReadOnly) return cache.resolvedRoleTypeLabels.computeIfAbsent(scopedLabel, l -> fn.get());

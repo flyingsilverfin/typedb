@@ -158,7 +158,7 @@ public class RelationConstraint extends ThingConstraint implements AlphaEquivale
         private final ThingVariable player;
         private final int repetition;
         private final int hash;
-        private Set<Label> inferredRoleTypes;
+        private final Set<Label> inferredRoleTypes;
 
         public RolePlayer(@Nullable TypeVariable roleType, ThingVariable player, int repetition) {
             assert roleType == null || roleType.id().isName() ||
@@ -166,7 +166,7 @@ public class RelationConstraint extends ThingConstraint implements AlphaEquivale
             if (player == null) throw new NullPointerException("Null player");
             this.roleType = roleType;
             this.player = player;
-            this.inferredRoleTypes = null;
+            this.inferredRoleTypes = new HashSet<>();
             this.repetition = repetition;
             this.hash = Objects.hash(this.roleType, this.player, this.repetition);
         }
@@ -186,7 +186,7 @@ public class RelationConstraint extends ThingConstraint implements AlphaEquivale
                     cloner.clone(clone.player()),
                     clone.repetition()
             );
-            if (clone.roleType().isEmpty()) rolePlayer.setInferredRoleTypes(clone.inferredRoleTypes);
+            rolePlayer.setInferredRoleTypes(clone.inferredRoleTypes);
             return rolePlayer;
         }
 
@@ -199,14 +199,13 @@ public class RelationConstraint extends ThingConstraint implements AlphaEquivale
         }
 
         public Set<Label> inferredRoleTypes() {
-            assert inferredRoleTypes != null ^ roleType != null;
-            if (inferredRoleTypes == null) return roleType.inferredTypes();
-            else return inferredRoleTypes;
+            assert !inferredRoleTypes.isEmpty();
+            return inferredRoleTypes;
         }
 
         public void setInferredRoleTypes(Set<Label> roleTypes) {
-            assert roleType == null;
-            this.inferredRoleTypes = set(roleTypes);
+            this.inferredRoleTypes.clear();
+            this.inferredRoleTypes.addAll(roleTypes);
         }
 
         public ThingVariable player() {
@@ -220,6 +219,7 @@ public class RelationConstraint extends ThingConstraint implements AlphaEquivale
             RolePlayer that = (RolePlayer) o;
             return (Objects.equals(this.roleType, that.roleType) &&
                     this.player.equals(that.player) &&
+                    Objects.equals(this.inferredRoleTypes, that.inferredRoleTypes) &&
                     this.repetition == that.repetition);
         }
 
@@ -241,11 +241,11 @@ public class RelationConstraint extends ThingConstraint implements AlphaEquivale
         }
 
         public RolePlayer clone(Conjunction.Cloner cloner) {
-            assert roleType != null ^ inferredRoleTypes != null;
+            assert inferredRoleTypes.isEmpty();
             TypeVariable roleTypeClone = roleType == null ? null : cloner.cloneVariable(roleType);
             ThingVariable playerClone = cloner.cloneVariable(player);
             RolePlayer rpClone = new RolePlayer(roleTypeClone, playerClone, repetition);
-            if (roleType().isEmpty()) rpClone.setInferredRoleTypes(this.inferredRoleTypes);
+            rpClone.setInferredRoleTypes(this.inferredRoleTypes);
             return rpClone;
         }
     }
