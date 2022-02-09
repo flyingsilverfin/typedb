@@ -99,7 +99,7 @@ public class MergeMappedIterator<T, U extends Comparable<? super U>, ORDER exten
         else state = State.FETCHED;
     }
 
-    private void initialise() {
+    void initialise() {
         iterator.forEachRemaining(value -> {
             ITER sortedIterator = mappingFn.apply(value);
             if (sortedIterator.hasNext()) queue.add(new ComparableSortedIterator(sortedIterator));
@@ -127,7 +127,6 @@ public class MergeMappedIterator<T, U extends Comparable<? super U>, ORDER exten
         return queue.peek().iter.peek();
     }
 
-
     @Override
     public void recycle() {
         queue.forEach(queueNode -> queueNode.iter.recycle());
@@ -148,6 +147,8 @@ public class MergeMappedIterator<T, U extends Comparable<? super U>, ORDER exten
         @Override
         public void seek(U target) {
             if (last != null && !order.isValidNext(last, target)) throw TypeDBException.of(ILLEGAL_ARGUMENT);
+            if (state == State.INIT) initialise();
+            if (hasNext() && order.compare(peek(), target) == 0) return;
             notInQueue.forEach(iter -> iter.seek(target));
             queue.forEach(queueNode -> {
                 SortedIterator.Seekable<U, ORDER> iter = queueNode.iter;
