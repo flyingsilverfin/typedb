@@ -163,7 +163,7 @@ public abstract class ProcedureVertex<
         }
 
         Seekable<? extends ThingVertex, Order.Asc> iterateAndFilterFromIID(GraphManager graphMgr, Traversal.Parameters parameters) {
-            assert props().hasIID() && id().isVariable();
+            assert props().hasIID() && id().isVariable() && !props().types().isEmpty();
             Identifier.Variable id = id().asVariable();
             ThingVertex vertex = graphMgr.data().getReadable(parameters.getIID(id));
             if (vertex == null) return emptySorted();
@@ -174,6 +174,7 @@ public abstract class ProcedureVertex<
 
         Seekable<? extends ThingVertex, Order.Asc> iterateAndFilterFromTypes(GraphManager graphMgr,
                                                                              Traversal.Parameters parameters) {
+            assert !props().types().isEmpty();
             Seekable<? extends ThingVertex, Order.Asc> iter;
             Optional<Predicate.Value<?>> eq = iterate(props().predicates()).filter(p -> p.operator().equals(EQ)).first();
             if (eq.isPresent()) iter = iteratorOfAttributesWithTypes(graphMgr, parameters, eq.get());

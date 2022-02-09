@@ -384,14 +384,6 @@ public class TypeInference {
             }
         }
 
-        private TypeVariable registerRolePlayer(Retrievable ownerID, RelationConstraint.RolePlayer rolePlayer) {
-            Pair<Identifier.Variable, RelationConstraint.RolePlayer> ownerAndPlayer = new Pair<>(ownerID, rolePlayer);
-            if (rolePlayerToInference.containsKey(ownerAndPlayer)) return rolePlayerToInference.get(ownerAndPlayer);
-            TypeVariable inferenceVar = new TypeVariable(newID());
-            rolePlayerToInference.put(ownerAndPlayer, inferenceVar);
-            return inferenceVar;
-        }
-
         private void registerInsertableRelation(TypeVariable inferenceVar, RelationConstraint constraint) {
             for (RelationConstraint.RolePlayer rolePlayer : constraint.players()) {
                 TypeVariable playerVar = register(rolePlayer.player());
@@ -406,6 +398,14 @@ public class TypeInference {
                 traversal.relates(inferenceVar.id(), roleTypeVar.id());
                 traversal.plays(playerVar.id(), roleTypeVar.id());
             }
+        }
+
+        private TypeVariable registerRolePlayer(Retrievable ownerID, RelationConstraint.RolePlayer rolePlayer) {
+            Pair<Identifier.Variable, RelationConstraint.RolePlayer> ownerAndPlayer = new Pair<>(ownerID, rolePlayer);
+            if (rolePlayerToInference.containsKey(ownerAndPlayer)) return rolePlayerToInference.get(ownerAndPlayer);
+            TypeVariable inferenceVar = new TypeVariable(newID());
+            rolePlayerToInference.put(ownerAndPlayer, inferenceVar);
+            return inferenceVar;
         }
 
         private void registerSubAttribute(Variable inferenceVar) {

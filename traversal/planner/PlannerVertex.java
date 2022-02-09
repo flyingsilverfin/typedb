@@ -228,6 +228,7 @@ public abstract class PlannerVertex<PROPERTIES extends TraversalVertex.Propertie
             if (props().hasIID()) {
                 setObjectiveCoefficient(1);
             } else {
+                assert !props().types().isEmpty();
                 if (iterate(props().predicates()).anyMatch(p -> p.operator().equals(EQ))) {
                     setObjectiveCoefficient(props().types().size());
                 } else {

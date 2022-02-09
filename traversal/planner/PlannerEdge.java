@@ -532,6 +532,7 @@ public abstract class PlannerEdge<VERTEX_FROM extends PlannerVertex<?>, VERTEX_T
                         cost = 1;
                     } else {
                         Set<Label> toTypes = to.props().types();
+                        // TODO: should this calculate the average rather than max?
                         if (!isTransitive) cost = graphMgr.data().stats().thingVertexMax(toTypes);
                         else cost = graphMgr.data().stats().thingVertexTransitiveMax(toTypes);
                     }
@@ -1308,6 +1309,7 @@ public abstract class PlannerEdge<VERTEX_FROM extends PlannerVertex<?>, VERTEX_T
                             setObjectiveCoefficient(1);
                             return;
                         }
+
                         double cost = 0;
                         double div = graphMgr.data().stats().thingVertexSum(from.props().types());
                         if (div > 0) cost = graphMgr.data().stats().thingVertexSum(roleTypes) / div;

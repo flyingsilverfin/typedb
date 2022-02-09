@@ -565,8 +565,8 @@ public abstract class ErrorMessage extends com.vaticle.typedb.common.exception.E
                 new RuleWrite(3, "The rule '%s' contains a negation containing a disjunction, which is currently unsupported");
         public static final RuleWrite RULE_CONCLUSION_ILLEGAL_INSERT =
                 new RuleWrite(4, "The conclusion of rule '%s' may insert types '%s', which is not allowed in the current schema.");
-        public static final RuleWrite RULE_CONCLUSION_AMBIGUOUS_TYPES =
-                new RuleWrite(5, "The conclusion of rule '%s' contains '%s', which could represent types '%s' but may must represent only one.");
+        public static final RuleWrite RULE_CONCLUSION_AMBIGUOUS_LABELLED_TYPE =
+                new RuleWrite(5, "The conclusion of rule '%s' contains ambiguous label '%s' (could represent: '%s'). ");
         public static final RuleWrite RULE_WHEN_CANNOT_BE_SATISFIED =
                 new RuleWrite(6, "The rule '%s' has a when clause '%s' that can never be satisfied in the current schema.");
         public static final RuleWrite RULE_THEN_CANNOT_BE_SATISFIED =

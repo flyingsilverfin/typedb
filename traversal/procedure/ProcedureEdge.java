@@ -1276,13 +1276,13 @@ public abstract class ProcedureEdge<
                         Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> iter;
                         boolean filteredIID = false, filteredTypes = false;
 
-                        FunctionalIterator<TypeVertex> resolveRoleTypesIter = iterate(roleTypes).map(graphMgr.schema()::getType);
+                        FunctionalIterator<TypeVertex> roleTypeVertices = iterate(roleTypes).map(graphMgr.schema()::getType);
                         if (to.props().hasIID()) {
                             assert to.id().isVariable();
                             filteredIID = true;
                             ThingVertex relation = graphMgr.data().getReadable(params.getIID(to.id().asVariable()));
                             if (relation == null) return emptySorted();
-                            iter = resolveRoleTypesIter.mergeMap(
+                            iter = roleTypeVertices.mergeMap(
                                     ASC,
                                     rt -> player.ins()
                                             .edge(ROLEPLAYER, rt, relation.iid().prefix(), relation.iid().type())
@@ -1290,7 +1290,7 @@ public abstract class ProcedureEdge<
                             );
                         } else {
                             filteredTypes = true;
-                            iter = resolveRoleTypesIter.mergeMap(
+                            iter = roleTypeVertices.mergeMap(
                                     ASC,
                                     rt -> iterate(to.props().types()).map(l -> graphMgr.schema().getType(l)).noNulls()
                                             .mergeMap(ASC, t -> player.ins()
