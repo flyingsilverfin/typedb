@@ -180,7 +180,7 @@ public abstract class ProcedureVertex<
                 FunctionalIterator<TypeVertex> typeIter = iterate(props().types().iterator())
                         .map(l -> assertTypeNotNull(graphMgr.schema().getType(l), l));
                 if (id().isVariable()) typeIter = typeIter.filter(t -> !t.encoding().equals(ROLE_TYPE));
-                iter = typeIter.mergeMap(ASC, t -> graphMgr.data().getReadable(t));
+                iter = typeIter.mergeMap(t -> graphMgr.data().getReadable(t), ASC);
             }
 
             if (props().predicates().isEmpty()) return iter;
@@ -349,7 +349,7 @@ public abstract class ProcedureVertex<
         }
 
         private Seekable<TypeVertex, Order.Asc> iterateLabels(GraphManager graphMgr) {
-            return iterate(props().labels()).mergeMap(ASC, l -> iterateSorted(ASC, assertTypeNotNull(graphMgr.schema().getType(l), l)));
+            return iterate(props().labels()).mergeMap(l -> iterateSorted(ASC, assertTypeNotNull(graphMgr.schema().getType(l), l)), ASC);
         }
 
         private Seekable<TypeVertex, Order.Asc> filterLabels(Seekable<TypeVertex, Order.Asc> iterator) {

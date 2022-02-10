@@ -242,10 +242,10 @@ public abstract class ThingAdjacencyImpl<EDGE_VIEW extends ThingEdge.View<EDGE_V
                 iids = newIIDs;
             }
 
-            return iterate(iids).mergeMap(ASC, iid -> {
+            return iterate(iids).mergeMap(iid -> {
                 ConcurrentNavigableMap<EDGE_VIEW, ThingEdge> res;
                 return (res = edges.get(iid)) != null ? iterateSorted(res.keySet(), ASC) : emptySorted();
-            });
+            }, ASC);
         }
 
         @Override
