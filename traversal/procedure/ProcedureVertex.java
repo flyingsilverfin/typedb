@@ -265,7 +265,7 @@ public abstract class ProcedureVertex<
             TreeSet<AttributeVertex<?>> attributes = new TreeSet<>();
             attributeTypes.map(t -> attributeVertex(graphMgr, t, value))
                     .filter(Objects::nonNull).forEachRemaining(attributes::add);
-            return iterateSorted(ASC, attributes);
+            return iterateSorted(attributes, ASC);
         }
 
         private AttributeVertex<?> attributeVertex(GraphManager graphMgr, TypeVertex type,
@@ -365,7 +365,7 @@ public abstract class ProcedureVertex<
                 for (Encoding.ValueType valueType : props().valueTypes()) {
                     iterators.add(graphMgr.schema().attributeTypes(valueType));
                 }
-                return Iterators.Sorted.Seekable.merge(ASC, iterate(iterators));
+                return Iterators.Sorted.Seekable.merge(iterate(iterators), ASC);
             } else return filterValueTypes(iterator);
         }
 

@@ -227,7 +227,7 @@ public abstract class ThingAdjacencyImpl<EDGE_VIEW extends ThingEdge.View<EDGE_V
             ConcurrentNavigableMap<EDGE_VIEW, ThingEdge> result;
             InfixIID.Thing infixIID = infixIID(encoding, lookahead);
             if (lookahead.length == encoding.lookAhead()) {
-                return (result = edges.get(infixIID)) != null ? iterateSorted(ASC, result.keySet()) : emptySorted();
+                return (result = edges.get(infixIID)) != null ? iterateSorted(result.keySet(), ASC) : emptySorted();
             }
 
             assert lookahead.length < encoding.lookAhead();
@@ -244,7 +244,7 @@ public abstract class ThingAdjacencyImpl<EDGE_VIEW extends ThingEdge.View<EDGE_V
 
             return iterate(iids).mergeMap(ASC, iid -> {
                 ConcurrentNavigableMap<EDGE_VIEW, ThingEdge> res;
-                return (res = edges.get(iid)) != null ? iterateSorted(ASC, res.keySet()) : emptySorted();
+                return (res = edges.get(iid)) != null ? iterateSorted(res.keySet(), ASC) : emptySorted();
             });
         }
 
