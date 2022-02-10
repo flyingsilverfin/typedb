@@ -371,7 +371,7 @@ public abstract class ProcedureEdge<
                     FunctionalIterator<TypeVertex> typeIter;
 
                     if (!isTransitive) typeIter = single(type);
-                    else typeIter = tree(type, v -> v.ins().edge(SUB).from());
+                    else typeIter = graphMgr.schema().getSubtypes(type);
 
                     typeIter = typeIter.filter(t -> toTypes.contains(t.properLabel()));
                     if (to.id().isVariable()) typeIter = typeIter.filter(t -> !t.encoding().equals(ROLE_TYPE));
@@ -508,11 +508,7 @@ public abstract class ProcedureEdge<
                         Seekable<TypeVertex, Order.Asc> iter;
                         TypeVertex type = fromVertex.asType();
                         if (!isTransitive) iter = type.ins().edge(SUB).from();
-                        else {
-                            TreeSet<TypeVertex> subtypes = new TreeSet<>();
-                            tree(type, t -> t.ins().edge(SUB).from()).forEachRemaining(subtypes::add);
-                            iter = iterateSorted(subtypes, ASC);
-                        }
+                        else iter = graphMgr.schema().getSubtypes(type);
                         return to.filter(iter);
                     }
 

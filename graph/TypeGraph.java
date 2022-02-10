@@ -130,8 +130,9 @@ public class TypeGraph {
         private final ConcurrentMap<TypeVertex, NavigableSet<TypeVertex>> playedRoleTypes;
         private final ConcurrentMap<TypeVertex, NavigableSet<TypeVertex>> relatedRoleTypes;
         private final ConcurrentMap<TypeVertex, NavigableSet<TypeVertex>> relationsOfRoleType;
-        private final ConcurrentMap<Label, Set<Label>> resolvedRoleTypeLabels;
         private final ConcurrentMap<Encoding.ValueType, NavigableSet<TypeVertex>> valueAttributeTypes;
+        private final ConcurrentMap<TypeVertex, NavigableSet<TypeVertex>> subtypes;
+        private final ConcurrentMap<Label, Set<Label>> resolvedRoleTypeLabels;
         private NavigableSet<TypeVertex> entityTypes;
         private NavigableSet<TypeVertex> relationTypes;
         private NavigableSet<TypeVertex> roleTypes;
@@ -148,6 +149,7 @@ public class TypeGraph {
             relationsOfRoleType = new ConcurrentHashMap<>();
             resolvedRoleTypeLabels = new ConcurrentHashMap<>();
             valueAttributeTypes = new ConcurrentHashMap<>();
+            subtypes = new ConcurrentHashMap<>();
         }
 
         public void clear() {
@@ -165,6 +167,7 @@ public class TypeGraph {
             roleTypes = null;
             attributeTypes = null;
             valueAttributeTypes.clear();
+            subtypes.clear();
         }
     }
 
@@ -230,11 +233,13 @@ public class TypeGraph {
     }
 
     public Seekable<TypeVertex, Order.Asc> getSubtypes(TypeVertex type) {
-        // TODO: we can't make a seekable tree iterator without consuming the entire iterator?
-        // TODO: this should cache
-        TreeSet<TypeVertex> subtypes = new TreeSet<>();
-        tree(type, v -> v.ins().edge(SUB).from()).forEachRemaining(subtypes::add);
-        return iterateSorted(subtypes, ASC);
+        Supplier<NavigableSet<TypeVertex>> fn = () -> {
+            TreeSet<TypeVertex> subtypes = new TreeSet<>();
+            tree(type, v -> v.ins().edge(SUB).from()).forEachRemaining(subtypes::add);
+            return subtypes;
+        };
+        if (isReadOnly) return iterateSorted(cache.subtypes.computeIfAbsent(type, o -> fn.get()), ASC);
+        else return iterateSorted(fn.get(), ASC);
     }
 
     public Seekable<TypeVertex, Order.Asc> entityTypes() {
