@@ -64,6 +64,7 @@ import static com.vaticle.typedb.core.common.exception.ErrorMessage.Transaction.
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.TypeGraph.INVALID_SCHEMA_WRITE;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.TypeRead.TYPE_NOT_FOUND;
 import static com.vaticle.typedb.core.common.iterator.Iterators.Sorted.Seekable.iterateSorted;
+import static com.vaticle.typedb.core.common.iterator.Iterators.Sorted.Seekable.merge;
 import static com.vaticle.typedb.core.common.iterator.Iterators.iterate;
 import static com.vaticle.typedb.core.common.iterator.Iterators.link;
 import static com.vaticle.typedb.core.common.iterator.Iterators.loop;
@@ -225,11 +226,7 @@ public class TypeGraph {
     }
 
     public Seekable<TypeVertex, Order.Asc> thingTypes() {
-        // TODO: we can't make a seekable tree iterator without consuming the entire iterator?
-        // TODO: this should cache
-        TreeSet<TypeVertex> thingTypes = new TreeSet<>();
-        tree(rootThingType(), v -> v.ins().edge(SUB).from()).forEachRemaining(thingTypes::add);
-        return iterateSorted(ASC, thingTypes);
+        return merge(entityTypes(), relationTypes(), attributeTypes());
     }
 
     public Seekable<TypeVertex, Order.Asc> getSubtypes(TypeVertex type) {
@@ -237,32 +234,32 @@ public class TypeGraph {
         // TODO: this should cache
         TreeSet<TypeVertex> subtypes = new TreeSet<>();
         tree(type, v -> v.ins().edge(SUB).from()).forEachRemaining(subtypes::add);
-        return iterateSorted(ASC, subtypes);
+        return iterateSorted(subtypes, ASC);
     }
 
     public Seekable<TypeVertex, Order.Asc> entityTypes() {
         if (cache.entityTypes == null) cache.entityTypes = getSubtypes(rootEntityType()).toNavigableSet();
-        return iterateSorted(ASC, cache.entityTypes);
+        return iterateSorted(cache.entityTypes, ASC);
     }
 
     public Seekable<TypeVertex, Order.Asc> attributeTypes() {
         if (cache.attributeTypes == null) cache.attributeTypes = getSubtypes(rootAttributeType()).toNavigableSet();
-        return iterateSorted(ASC, cache.attributeTypes);
+        return iterateSorted(cache.attributeTypes, ASC);
     }
 
     public Seekable<TypeVertex, Order.Asc> attributeTypes(Encoding.ValueType valueType) {
-        return iterateSorted(ASC, cache.valueAttributeTypes.computeIfAbsent(valueType,
-                vt -> attributeTypes().filter(at -> at.valueType().equals(valueType)).toNavigableSet()));
+        return iterateSorted(cache.valueAttributeTypes.computeIfAbsent(valueType,
+                vt -> attributeTypes().filter(at -> at.valueType().equals(valueType)).toNavigableSet()), ASC);
     }
 
     public Seekable<TypeVertex, Order.Asc> relationTypes() {
         if (cache.relationTypes == null) cache.relationTypes = getSubtypes(rootRelationType()).toNavigableSet();
-        return iterateSorted(ASC, cache.relationTypes);
+        return iterateSorted(cache.relationTypes, ASC);
     }
 
     public Seekable<TypeVertex, Order.Asc> roleTypes() {
         if (cache.roleTypes == null) cache.roleTypes = getSubtypes(rootRoleType()).toNavigableSet();
-        return iterateSorted(ASC, cache.roleTypes);
+        return iterateSorted(cache.roleTypes, ASC);
     }
 
     private NavigableSet<TypeVertex> ownedAttributeTypes(TypeVertex owner, boolean isKey) {

@@ -319,7 +319,7 @@ public abstract class ProcedureEdge<
                 else {
                     TreeSet<TypeVertex> superTypes = new TreeSet<>();
                     loop(thing.type(), Objects::nonNull, v -> v.outs().edge(SUB).to().firstOrNull()).forEachRemaining(superTypes::add);
-                    return iterateSorted(ASC, superTypes);
+                    return iterateSorted(superTypes, ASC);
                 }
             }
 
@@ -461,7 +461,7 @@ public abstract class ProcedureEdge<
                     else {
                         TreeSet<TypeVertex> superTypes = new TreeSet<>();
                         loop(type, Objects::nonNull, v -> v.outs().edge(SUB).to().firstOrNull()).forEachRemaining(superTypes::add);
-                        return iterateSorted(ASC, superTypes);
+                        return iterateSorted(superTypes, ASC);
                     }
                 }
 
@@ -511,7 +511,7 @@ public abstract class ProcedureEdge<
                         else {
                             TreeSet<TypeVertex> subtypes = new TreeSet<>();
                             tree(type, t -> t.ins().edge(SUB).from()).forEachRemaining(subtypes::add);
-                            iter = iterateSorted(ASC, subtypes);
+                            iter = iterateSorted(subtypes, ASC);
                         }
                         return to.filter(iter);
                     }
@@ -565,7 +565,7 @@ public abstract class ProcedureEdge<
                     public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
                             GraphManager graphMgr, Vertex<?, ?> fromVertex, Traversal.Parameters params) {
                         assert fromVertex.isType();
-                        return to.filter(iterateSorted(ASC, ownedAttributeTypes(graphMgr, fromVertex.asType())));
+                        return to.filter(iterateSorted(ownedAttributeTypes(graphMgr, fromVertex.asType()), ASC));
                     }
 
                     @Override
@@ -602,7 +602,7 @@ public abstract class ProcedureEdge<
                     public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
                             GraphManager graphMgr, Vertex<?, ?> fromVertex, Traversal.Parameters params) {
                         assert fromVertex.isType();
-                        return to.filter(iterateSorted(ASC, ownersOfAttributeType(graphMgr, fromVertex.asType())));
+                        return to.filter(iterateSorted(ownersOfAttributeType(graphMgr, fromVertex.asType()), ASC));
                     }
 
                     @Override
@@ -641,7 +641,7 @@ public abstract class ProcedureEdge<
                     public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
                             GraphManager graphMgr, Vertex<?, ?> fromVertex, Traversal.Parameters params) {
                         assert fromVertex.isType();
-                        return to.filter(iterateSorted(ASC, graphMgr.schema().playedRoleTypes(fromVertex.asType())));
+                        return to.filter(iterateSorted(graphMgr.schema().playedRoleTypes(fromVertex.asType()), ASC));
                     }
 
                     @Override
@@ -672,7 +672,7 @@ public abstract class ProcedureEdge<
                     public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
                             GraphManager graphMgr, Vertex<?, ?> fromVertex, Traversal.Parameters params) {
                         assert fromVertex.isType();
-                        return to.filter(iterateSorted(ASC, graphMgr.schema().playersOfRoleType(fromVertex.asType())));
+                        return to.filter(iterateSorted(graphMgr.schema().playersOfRoleType(fromVertex.asType()), ASC));
                     }
 
                     @Override
@@ -712,7 +712,7 @@ public abstract class ProcedureEdge<
                     public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
                             GraphManager graphMgr, Vertex<?, ?> fromVertex, Traversal.Parameters params) {
                         assert fromVertex.isType();
-                        return to.filter(iterateSorted(ASC, graphMgr.schema().relatedRoleTypes(fromVertex.asType())));
+                        return to.filter(iterateSorted(graphMgr.schema().relatedRoleTypes(fromVertex.asType()), ASC));
                     }
 
                     @Override
@@ -742,7 +742,7 @@ public abstract class ProcedureEdge<
                     public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
                             GraphManager graphMgr, Vertex<?, ?> fromVertex, Traversal.Parameters params) {
                         assert fromVertex.isType();
-                        return to.filter(iterateSorted(ASC, graphMgr.schema().relationsOfRoleType(fromVertex.asType())));
+                        return to.filter(iterateSorted(graphMgr.schema().relationsOfRoleType(fromVertex.asType()), ASC));
                     }
 
                     @Override
