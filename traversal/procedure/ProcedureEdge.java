@@ -40,7 +40,7 @@ import com.vaticle.typedb.core.traversal.scanner.GraphIterator;
 import com.vaticle.typedb.core.traversal.structure.StructureEdge;
 import com.vaticle.typeql.lang.common.TypeQLToken;
 
-import java.util.HashSet;
+import java.util.NavigableSet;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -68,7 +68,6 @@ import static com.vaticle.typedb.core.graph.common.Encoding.Edge.Thing.Base.PLAY
 import static com.vaticle.typedb.core.graph.common.Encoding.Edge.Thing.Base.RELATING;
 import static com.vaticle.typedb.core.graph.common.Encoding.Edge.Thing.Optimised.ROLEPLAYER;
 import static com.vaticle.typedb.core.graph.common.Encoding.Edge.Type.OWNS;
-import static com.vaticle.typedb.core.graph.common.Encoding.Edge.Type.OWNS_KEY;
 import static com.vaticle.typedb.core.graph.common.Encoding.Edge.Type.PLAYS;
 import static com.vaticle.typedb.core.graph.common.Encoding.Edge.Type.RELATES;
 import static com.vaticle.typedb.core.graph.common.Encoding.Edge.Type.SUB;
@@ -551,45 +550,29 @@ public abstract class ProcedureEdge<
                         super(from, to, order, FORWARD, isKey);
                     }
 
-                    private Seekable<KeyValue<TypeVertex, TypeVertex>, Order.Asc> ownsAndOverridden(TypeVertex owner) {
-                        if (isKey) return owner.outs().edge(OWNS_KEY).toAndOverridden();
-                        else {
-                            return owner.outs().edge(OWNS).toAndOverridden().merge(owner.outs().edge(OWNS_KEY).toAndOverridden());
-                        }
-                    }
-
-                    private Seekable<TypeVertex, Order.Asc> ownedAttributeTypes(TypeVertex owner) {
-                        Set<TypeVertex> overriddens = new HashSet<>();
-                        FunctionalIterator<TypeVertex> supertypes;
-                        Seekable<TypeVertex, Order.Asc> iterator;
-
-                        supertypes = loop(owner, Objects::nonNull, o -> o.outs().edge(SUB).to().firstOrNull());
-                        iterator = supertypes.mergeMap(ASC, o -> ownsAndOverridden(o).mapSorted(
-                                e -> {
-                                    if (e.value() != null) overriddens.add(e.value());
-                                    if (!overriddens.contains(e.key())) return e.key();
-                                    else return null;
-                                }, vertex -> KeyValue.of(vertex, null), ASC
-                        ).filter(Objects::nonNull));
-                        return iterator;
-                    }
-
                     @Override
                     public boolean onlyStartsFromThingType() {
                         return true;
+                    }
+
+                    private NavigableSet<TypeVertex> ownedAttributeTypes(GraphManager graphMgr, TypeVertex fromVertex) {
+                        return isKey ?
+                                graphMgr.schema().ownedKeyAttributeTypes(fromVertex) :
+                                graphMgr.schema().ownedAttributeTypes(fromVertex);
                     }
 
                     @Override
                     public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
                             GraphManager graphMgr, Vertex<?, ?> fromVertex, Traversal.Parameters params) {
                         assert fromVertex.isType();
-                        return to.filter(ownedAttributeTypes(fromVertex.asType()));
+                        return to.filter(iterateSorted(ASC, ownedAttributeTypes(graphMgr, fromVertex.asType())));
                     }
 
                     @Override
                     public boolean isClosure(GraphManager graphMgr, Vertex<?, ?> fromVertex, Vertex<?, ?> toVertex,
                                              Traversal.Parameters params) {
-                        return ownedAttributeTypes(fromVertex.asType()).matchFirst(toVertex.asType()).isPresent();
+                        assert fromVertex.isType() && toVertex.isType();
+                        return ownedAttributeTypes(graphMgr, fromVertex.asType()).contains(toVertex.asType());
                     }
 
                     @Override
@@ -604,43 +587,29 @@ public abstract class ProcedureEdge<
                         super(from, to, order, BACKWARD, isKey);
                     }
 
-                    private FunctionalIterator<TypeVertex> overriddens(TypeVertex owner) {
-                        if (isKey) return owner.outs().edge(OWNS_KEY).overridden().noNulls();
-                        else return link(owner.outs().edge(OWNS).overridden().noNulls(),
-                                owner.outs().edge(OWNS_KEY).overridden().noNulls());
-                    }
-
-                    private FunctionalIterator<TypeVertex> declaredOwnersOfAttType(TypeVertex attType) {
-                        if (isKey) return attType.ins().edge(OWNS_KEY).from();
-                        else return link(attType.ins().edge(OWNS).from(), attType.ins().edge(OWNS_KEY).from());
-                    }
-
-                    private FunctionalIterator<TypeVertex> ownersOfAttType(TypeVertex attType) {
-                        return declaredOwnersOfAttType(attType).flatMap(owner -> tree(owner, o ->
-                                o.ins().edge(SUB).from().filter(s -> overriddens(s).noneMatch(ov -> ov.equals(attType)))
-                        ));
-                    }
-
                     @Override
                     public boolean onlyStartsFromAttributeType() {
                         return true;
+                    }
+
+                    private NavigableSet<TypeVertex> ownersOfAttributeType(GraphManager graphMgr, TypeVertex attType) {
+                        return isKey ?
+                                graphMgr.schema().ownersOfKeyAttributeType(attType) :
+                                graphMgr.schema().ownersOfAttributeType(attType);
                     }
 
                     @Override
                     public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
                             GraphManager graphMgr, Vertex<?, ?> fromVertex, Traversal.Parameters params) {
                         assert fromVertex.isType();
-                        // TODO: this should read from type graph cache
-                        TreeSet<TypeVertex> ownerTypes = new TreeSet<>();
-                        ownersOfAttType(fromVertex.asType()).forEachRemaining(ownerTypes::add);
-                        return to.filter(iterateSorted(ASC, ownerTypes));
+                        return to.filter(iterateSorted(ASC, ownersOfAttributeType(graphMgr, fromVertex.asType())));
                     }
 
                     @Override
                     public boolean isClosure(GraphManager graphMgr, Vertex<?, ?> fromVertex, Vertex<?, ?> toVertex,
                                              Traversal.Parameters params) {
-                        // TODO when this reads from a cached seekable set, we should optimise with matchFirst
-                        return ownersOfAttType(fromVertex.asType()).anyMatch(o -> o.equals(toVertex.asType()));
+                        assert fromVertex.isType() && toVertex.isType();
+                        return ownersOfAttributeType(graphMgr, fromVertex.asType()).contains(toVertex.asType());
                     }
 
                     @Override
@@ -663,19 +632,6 @@ public abstract class ProcedureEdge<
                         super(from, to, order, FORWARD);
                     }
 
-                    private FunctionalIterator<TypeVertex> playedRoleTypes(TypeVertex player) {
-                        Set<TypeVertex> overriddens = new HashSet<>();
-                        FunctionalIterator<TypeVertex> supertypes, iterator;
-
-                        supertypes = loop(player, Objects::nonNull, p -> p.outs().edge(SUB).to().firstOrNull());
-                        iterator = supertypes.flatMap(s -> s.outs().edge(PLAYS).toAndOverridden().map(e -> {
-                            if (e.value() != null) overriddens.add(e.value());
-                            if (!overriddens.contains(e.key())) return e.key();
-                            else return null;
-                        }).noNulls());
-                        return iterator;
-                    }
-
                     @Override
                     public boolean onlyStartsFromThingType() {
                         return true;
@@ -685,17 +641,14 @@ public abstract class ProcedureEdge<
                     public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
                             GraphManager graphMgr, Vertex<?, ?> fromVertex, Traversal.Parameters params) {
                         assert fromVertex.isType();
-                        // TODO: this should read from type graph cache
-                        TreeSet<TypeVertex> roleTypes = new TreeSet<>();
-                        playedRoleTypes(fromVertex.asType()).forEachRemaining(roleTypes::add);
-                        return to.filter(iterateSorted(ASC, roleTypes));
+                        return to.filter(iterateSorted(ASC, graphMgr.schema().playedRoleTypes(fromVertex.asType())));
                     }
 
                     @Override
                     public boolean isClosure(GraphManager graphMgr, Vertex<?, ?> fromVertex, Vertex<?, ?> toVertex,
                                              Traversal.Parameters params) {
-                        // TODO when this reads from a cached seekable set, we should optimise with matchFirst
-                        return playedRoleTypes(fromVertex.asType()).anyMatch(rt -> rt.equals(toVertex.asType()));
+                        assert fromVertex.isType() && toVertex.isType();
+                        return graphMgr.schema().playedRoleTypes(fromVertex.asType()).contains(toVertex.asType());
                     }
 
                     @Override
@@ -710,12 +663,6 @@ public abstract class ProcedureEdge<
                         super(from, to, order, BACKWARD);
                     }
 
-                    private FunctionalIterator<TypeVertex> playersOfRoleType(TypeVertex roleType) {
-                        return roleType.ins().edge(PLAYS).from().flatMap(player -> tree(player, p ->
-                                p.ins().edge(SUB).from().filter(s -> s.outs().edge(PLAYS).overridden()
-                                        .noNulls().noneMatch(ov -> ov.equals(roleType)))));
-                    }
-
                     @Override
                     public boolean onlyStartsFromRoleType() {
                         return true;
@@ -725,17 +672,14 @@ public abstract class ProcedureEdge<
                     public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
                             GraphManager graphMgr, Vertex<?, ?> fromVertex, Traversal.Parameters params) {
                         assert fromVertex.isType();
-                        // TODO: this should read from type graph cache
-                        TreeSet<TypeVertex> playerTypes = new TreeSet<>();
-                        playersOfRoleType(fromVertex.asType()).forEachRemaining(playerTypes::add);
-                        return to.filter(iterateSorted(ASC, playerTypes));
+                        return to.filter(iterateSorted(ASC, graphMgr.schema().playersOfRoleType(fromVertex.asType())));
                     }
 
                     @Override
                     public boolean isClosure(GraphManager graphMgr, Vertex<?, ?> fromVertex, Vertex<?, ?> toVertex,
                                              Traversal.Parameters params) {
-                        // TODO when this reads from a cached seekable set, we should optimise with matchFirst
-                        return playersOfRoleType(fromVertex.asType()).anyMatch(p -> p.equals(toVertex.asType()));
+                        assert fromVertex.isType() && toVertex.isType();
+                        return graphMgr.schema().playersOfRoleType(fromVertex.asType()).contains(toVertex.asType());
                     }
 
                     @Override
@@ -758,18 +702,6 @@ public abstract class ProcedureEdge<
                         super(from, to, order, FORWARD);
                     }
 
-                    private FunctionalIterator<TypeVertex> relatedRoleTypes(TypeVertex relation) {
-                        Set<TypeVertex> overriddens = new HashSet<>();
-                        FunctionalIterator<TypeVertex> supertypes, iterator;
-
-                        supertypes = loop(relation, Objects::nonNull, r -> r.outs().edge(SUB).to().firstOrNull());
-                        iterator = supertypes.flatMap(s -> s.outs().edge(RELATES).toAndOverridden().map(e -> {
-                            if (e.value() != null) overriddens.add(e.value());
-                            if (!overriddens.contains(e.key())) return e.key();
-                            else return null;
-                        }).noNulls());
-                        return iterator;
-                    }
 
                     @Override
                     public boolean onlyStartsFromRelationType() {
@@ -780,17 +712,13 @@ public abstract class ProcedureEdge<
                     public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
                             GraphManager graphMgr, Vertex<?, ?> fromVertex, Traversal.Parameters params) {
                         assert fromVertex.isType();
-                        // TODO: this should read from type graph cache
-                        TreeSet<TypeVertex> roleTypes = new TreeSet<>();
-                        relatedRoleTypes(fromVertex.asType()).forEachRemaining(roleTypes::add);
-                        return to.filter(iterateSorted(ASC, roleTypes));
+                        return to.filter(iterateSorted(ASC, graphMgr.schema().relatedRoleTypes(fromVertex.asType())));
                     }
 
                     @Override
                     public boolean isClosure(GraphManager graphMgr, Vertex<?, ?> fromVertex, Vertex<?, ?> toVertex,
                                              Traversal.Parameters params) {
-                        // TODO when this reads from a cached seekable set, we should optimise with matchFirst
-                        return relatedRoleTypes(fromVertex.asType()).anyMatch(rt -> rt.equals(toVertex.asType()));
+                        return graphMgr.schema().relatedRoleTypes(fromVertex.asType()).contains(toVertex.asType());
                     }
 
                     @Override
@@ -805,12 +733,6 @@ public abstract class ProcedureEdge<
                         super(from, to, order, BACKWARD);
                     }
 
-                    private FunctionalIterator<TypeVertex> relationsOfRoleType(TypeVertex roleType) {
-                        return roleType.ins().edge(RELATES).from().flatMap(relation -> tree(relation, r ->
-                                r.ins().edge(SUB).from().filter(s -> s.outs().edge(RELATES).overridden()
-                                        .noNulls().noneMatch(ov -> ov.equals(roleType)))));
-                    }
-
                     @Override
                     public boolean onlyStartsFromRoleType() {
                         return true;
@@ -820,17 +742,14 @@ public abstract class ProcedureEdge<
                     public Seekable<? extends Vertex<?, ?>, Order.Asc> branch(
                             GraphManager graphMgr, Vertex<?, ?> fromVertex, Traversal.Parameters params) {
                         assert fromVertex.isType();
-                        // TODO: this should read from type graph cache
-                        TreeSet<TypeVertex> relations = new TreeSet<>();
-                        relationsOfRoleType(fromVertex.asType()).forEachRemaining(relations::add);
-                        return to.filter(iterateSorted(ASC, relations));
+                        return to.filter(iterateSorted(ASC, graphMgr.schema().relationsOfRoleType(fromVertex.asType())));
                     }
 
                     @Override
                     public boolean isClosure(GraphManager graphMgr, Vertex<?, ?> fromVertex, Vertex<?, ?> toVertex,
                                              Traversal.Parameters params) {
-                        // TODO when this reads from a cached seekable set, we should optimise with matchFirst
-                        return relationsOfRoleType(fromVertex.asType()).anyMatch(rel -> rel.equals(toVertex.asType()));
+                        assert fromVertex.isType() && toVertex.isType();
+                        return graphMgr.schema().relationsOfRoleType(fromVertex.asType()).contains(toVertex.asType());
                     }
 
                     @Override
