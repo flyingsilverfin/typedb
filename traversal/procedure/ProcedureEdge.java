@@ -55,6 +55,7 @@ import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.UNR
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.UNSUPPORTED_OPERATION;
 import static com.vaticle.typedb.core.common.iterator.Iterators.Sorted.Seekable.emptySorted;
 import static com.vaticle.typedb.core.common.iterator.Iterators.Sorted.Seekable.iterateSorted;
+import static com.vaticle.typedb.core.common.iterator.Iterators.empty;
 import static com.vaticle.typedb.core.common.iterator.Iterators.iterate;
 import static com.vaticle.typedb.core.common.iterator.Iterators.link;
 import static com.vaticle.typedb.core.common.iterator.Iterators.loop;
@@ -368,11 +369,13 @@ public abstract class ProcedureEdge<
                         GraphManager graphMgr, Vertex<?, ?> fromVertex, Traversal.Parameters params) {
                     assert fromVertex.isType();
                     TypeVertex type = fromVertex.asType();
-                    Set<TypeVertex> types = isTransitive ? graphMgr.schema().getSubtypes(type) : set(type);
+                    Set<TypeVertex> isaTypes = isTransitive ? graphMgr.schema().getSubtypes(type) : set(type);
                     if (to.props().hasIID()) {
-                        return to.iterateAndFilterFromIID(graphMgr, params).filter(vertex -> types.contains(vertex.type()));
+                        return to.iterateAndFilterFromIID(graphMgr, params).filter(vertex -> isaTypes.contains(vertex.type()));
                     } else {
-                        return to.iterateAndFilterFromTypes(graphMgr, params, iterate(types));
+                        FunctionalIterator<TypeVertex> toTypes = iterate(isaTypes).filter(v -> to.props().types().contains(type.properLabel()));
+                        if (!toTypes.hasNext()) return emptySorted();
+                        else return to.iterateAndFilterFromTypes(graphMgr, params, toTypes);
                     }
                 }
 
@@ -1199,7 +1202,7 @@ public abstract class ProcedureEdge<
                             iter.seek(KeyValue.of(relation, null));
                         } else {
                             iter = roleTypeVertices.mergeMap(
-                                    rt -> iterate(to.props().types()).map(l -> graphMgr.schema().getType(l)).noNulls()
+                                    rt -> iterate(to.props().types()).map(l -> graphMgr.schema().getType(l))
                                             .mergeMap(t -> player.ins()
                                                     .edge(ROLEPLAYER, rt, PrefixIID.of(t.encoding().instance()), t.iid())
                                                     .fromAndOptimised(), ASC
