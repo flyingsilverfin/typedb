@@ -76,6 +76,7 @@ import static com.vaticle.typedb.core.graph.common.Encoding.Vertex.Thing.RELATIO
 import static com.vaticle.typedb.core.graph.common.Encoding.Vertex.Type.ROLE_TYPE;
 import static com.vaticle.typedb.core.traversal.predicate.PredicateOperator.Equality.EQ;
 import static com.vaticle.typedb.core.traversal.procedure.ProcedureVertex.Thing.filterAttributes;
+import static com.vaticle.typedb.core.traversal.procedure.ProcedureVertex.Thing.mapToAttributes;
 
 public abstract class ProcedureEdge<
         VERTEX_FROM extends ProcedureVertex<?, ?>, VERTEX_TO extends ProcedureVertex<?, ?>
@@ -912,7 +913,7 @@ public abstract class ProcedureEdge<
                         }
 
                         if (to.props().predicates().isEmpty()) return iter;
-                        else return to.filterPredicates(iter.mapSorted(ThingVertex::asAttribute, v -> v, ASC), params);
+                        else return to.filterPredicates(mapToAttributes(iter), params);
                     }
 
                     @Override
@@ -973,7 +974,7 @@ public abstract class ProcedureEdge<
                         }
 
                         if (to.props().predicates().isEmpty()) return iter;
-                        else return to.filterPredicates(iter.mapSorted(ThingVertex::asAttribute, v -> v, ASC), params);
+                        else return to.filterPredicates(mapToAttributes(iter), params);
                     }
 
                     @Override
