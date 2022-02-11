@@ -26,7 +26,6 @@ import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Seekable;
 import com.vaticle.typedb.core.common.parameters.Label;
 import com.vaticle.typedb.core.graph.GraphManager;
 import com.vaticle.typedb.core.graph.common.Encoding;
-import com.vaticle.typedb.core.graph.edge.ThingEdge;
 import com.vaticle.typedb.core.graph.iid.PrefixIID;
 import com.vaticle.typedb.core.graph.iid.VertexIID;
 import com.vaticle.typedb.core.graph.vertex.AttributeVertex;
@@ -352,7 +351,7 @@ public abstract class ProcedureEdge<
                 public boolean isClosure(GraphManager graphMgr, Vertex<?, ?> fromVertex, Vertex<?, ?> toVertex,
                                          Traversal.Parameters params) {
                     assert fromVertex.isThing() && toVertex.isType();
-                    return isaTypes(fromVertex.asThing()).matchFirst(toVertex.asType()).isPresent();
+                    return isaTypes(fromVertex.asThing()).findFirst(toVertex.asType()).isPresent();
                 }
             }
 
@@ -388,7 +387,7 @@ public abstract class ProcedureEdge<
                 public boolean isClosure(GraphManager graphMgr, Vertex<?, ?> fromVertex, Vertex<?, ?> toVertex,
                                          Traversal.Parameters params) {
                     assert fromVertex.isType() && toVertex.isThing();
-                    return isaTypes(toVertex.asThing()).matchFirst(fromVertex.asType()).isPresent();
+                    return isaTypes(toVertex.asThing()).findFirst(fromVertex.asType()).isPresent();
                 }
             }
         }
@@ -486,7 +485,7 @@ public abstract class ProcedureEdge<
                     @Override
                     public boolean isClosure(GraphManager graphMgr, Vertex<?, ?> fromVertex, Vertex<?, ?> toVertex,
                                              Traversal.Parameters params) {
-                        return superTypes(fromVertex.asType()).matchFirst(toVertex.asType()).isPresent();
+                        return superTypes(fromVertex.asType()).findFirst(toVertex.asType()).isPresent();
                     }
 
                     @Override
@@ -515,7 +514,7 @@ public abstract class ProcedureEdge<
                     @Override
                     public boolean isClosure(GraphManager graphMgr, Vertex<?, ?> fromVertex, Vertex<?, ?> toVertex,
                                              Traversal.Parameters params) {
-                        return superTypes(toVertex.asType()).matchFirst(fromVertex.asType()).isPresent();
+                        return superTypes(toVertex.asType()).findFirst(fromVertex.asType()).isPresent();
                     }
 
                     @Override
@@ -1172,10 +1171,9 @@ public abstract class ProcedureEdge<
                                 .mergeMap(
                                         rt -> rel.outs()
                                                 .edge(ROLEPLAYER, rt, player.iid().prefix(), player.iid().type())
-                                                .toAndOptimised()
-                                                .filter(kv -> kv.key().equals(player) && !scoped.contains(kv.value())),
+                                                .toAndOptimised(),
                                         ASC
-                                );
+                                ).filter(kv -> kv.key().equals(player) && !scoped.contains(kv.value()));
                         closures.seek(KeyValue.of(player, null));
                         Optional<KeyValue<ThingVertex, ThingVertex>> valid = closures.first();
                         valid.ifPresent(kv -> scoped.push(kv.value(), order()));
@@ -1208,7 +1206,7 @@ public abstract class ProcedureEdge<
                             iter = roleTypeVertices.mergeMap(
                                     rt -> player.ins()
                                             .edge(ROLEPLAYER, rt, relation.iid().prefix(), relation.iid().type())
-                                            .fromAndOptimised().filter(r -> r.key().equals(relation)),
+                                            .fromAndOptimised(),
                                     ASC
                             ).filter(kv -> kv.key().equals(relation));
                             iter.seek(KeyValue.of(relation, null));
@@ -1240,10 +1238,9 @@ public abstract class ProcedureEdge<
                                 .filter(rt -> relationRoleTypes.contains(rt) && roleTypesPlayed.contains(rt))
                                 .mergeMap(
                                         rt -> player.ins().edge(ROLEPLAYER, rt, rel.iid().prefix(), rel.iid().type())
-                                                .fromAndOptimised()
-                                                .filter(kv -> kv.key().equals(rel) && !scoped.contains(kv.value())),
+                                                .fromAndOptimised(),
                                         ASC
-                                );
+                                ).filter(kv -> kv.key().equals(rel) && !scoped.contains(kv.value()));
                         closures.seek(KeyValue.of(rel, null));
                         Optional<KeyValue<ThingVertex, ThingVertex>> valid = closures.first();
                         valid.ifPresent(kv -> scoped.push(kv.value(), order()));
