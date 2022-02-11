@@ -822,7 +822,8 @@ public abstract class ProcedureEdge<
                                                                             Encoding.Edge.Thing.Base encoding) {
                 assert !to.props().hasIID() && to.props().predicates().isEmpty();
                 ThingVertex relation = fromVertex.asThing();
-                return iterate(to.props().types()).map(l -> graphMgr.schema().getType(l))
+                return iterate(to.props().types())
+                        .map(l -> graphMgr.schema().getType(l))
                         .mergeMap(t -> relation.outs().edge(encoding, PrefixIID.of(VERTEX_ROLE), t.iid()).to(), ASC);
             }
 
@@ -864,7 +865,10 @@ public abstract class ProcedureEdge<
                                 iter = to.iteratorOfAttributesWithTypes(graphMgr, params, eq)
                                         .filter(a -> owner.outs().edge(HAS, a.asAttribute()) != null);
                             } else {
-                                iter = iterate(to.props().types()).map(l -> graphMgr.schema().getType(l)).noNulls()
+                                Set<TypeVertex> attributes = graphMgr.schema().ownedAttributeTypes(owner.type());
+                                iter = iterate(to.props().types())
+                                        .map(l -> graphMgr.schema().getType(l))
+                                        .filter(attributes::contains)
                                         .mergeMap(
                                                 t -> owner.outs().edge(HAS, PrefixIID.of(VERTEX_ATTRIBUTE), t.iid()).to(), ASC
                                         ).mapSorted(ThingVertex::asAttribute, v -> v, ASC);
@@ -899,12 +903,14 @@ public abstract class ProcedureEdge<
                         assert fromVertex.isThing() && fromVertex.asThing().isAttribute();
                         Seekable<ThingVertex, Order.Asc> iter;
                         AttributeVertex<?> att = fromVertex.asThing().asAttribute();
-                        // TODO filter types by what this exact instance can own
 
                         if (to.props().hasIID()) {
                             iter = backwardBranchToIIDFiltered(graphMgr, att, HAS, params.getIID(to.id().asVariable()), to.props().types());
                         } else {
-                            iter = iterate(to.props().types()).map(l -> graphMgr.schema().getType(l))
+                            Set<TypeVertex> owners = graphMgr.schema().ownersOfAttributeType(att.type());
+                            iter = iterate(to.props().types())
+                                    .map(l -> graphMgr.schema().getType(l))
+                                    .filter(owners::contains)
                                     .mergeMap(t -> att.ins().edge(HAS, PrefixIID.of(t.encoding().instance()), t.iid()).from(), ASC);
                         }
 
@@ -965,7 +971,10 @@ public abstract class ProcedureEdge<
                             assert to.id().isVariable();
                             iter = backwardBranchToIIDFiltered(graphMgr, role, PLAYING, params.getIID(to.id().asVariable()), toTypes);
                         } else {
-                            iter = iterate(toTypes).map(l -> graphMgr.schema().getType(l))
+                            Set<TypeVertex> players = graphMgr.schema().playersOfRoleType(role.type());
+                            iter = iterate(toTypes)
+                                    .map(l -> graphMgr.schema().getType(l))
+                                    .filter(players::contains)
                                     .mergeMap(t -> role.ins().edge(PLAYING, PrefixIID.of(t.encoding().instance()), t.iid()).from(), ASC);
                         }
 
@@ -1031,7 +1040,10 @@ public abstract class ProcedureEdge<
                             assert to.id().isVariable();
                             iter = backwardBranchToIIDFiltered(graphMgr, role, RELATING, params.getIID(to.id().asVariable()), toTypes);
                         } else {
-                            iter = iterate(toTypes).map(l -> graphMgr.schema().getType(l))
+                            Set<TypeVertex> relations = graphMgr.schema().relationsOfRoleType(role.type());
+                            iter = iterate(toTypes)
+                                    .map(l -> graphMgr.schema().getType(l))
+                                    .filter(relations::contains)
                                     .mergeMap(t -> role.ins().edge(RELATING, PrefixIID.of(RELATION), t.iid()).from(), ASC);
                         }
                         return iter;
@@ -1136,7 +1148,7 @@ public abstract class ProcedureEdge<
                         } else {
                             iter = possibleRoleTypes.mergeMap(
                                     rt -> iterate(to.props().types())
-                                            .map(l -> graphMgr.schema().getType(l)).noNulls()
+                                            .map(l -> graphMgr.schema().getType(l))
                                             .mergeMap(
                                                     t -> rel.outs()
                                                             .edge(ROLEPLAYER, rt, PrefixIID.of(t.encoding().instance()), t.iid())
