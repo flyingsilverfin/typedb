@@ -176,16 +176,6 @@ public class MergeMappedIterator<T, U extends Comparable<? super U>, ORDER exten
 
         private void seekUnfetched(U target) {
             unfetched.forEach(iter -> iter.seek(target));
-
-//            Iterator<SortedIterator.Seekable<U, ORDER>> unfetchedIterators = unfetched.iterator();
-//            while (unfetchedIterators.hasNext()) {
-//                SortedIterator.Seekable<U, ORDER> iter = unfetchedIterators.next();
-//                if (iter.hasNext()) iter.seek(target);
-//                else {
-//                    iter.recycle();
-//                    unfetchedIterators.remove();
-//                }
-//            }
         }
 
         private void seekFetched(U target) {

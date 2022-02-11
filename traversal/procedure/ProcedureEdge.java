@@ -896,6 +896,7 @@ public abstract class ProcedureEdge<
                         assert fromVertex.isThing() && fromVertex.asThing().isAttribute();
                         Seekable<ThingVertex, Order.Asc> iter;
                         AttributeVertex<?> att = fromVertex.asThing().asAttribute();
+                        // TODO filter types by what this exact instance can own
 
                         if (to.props().hasIID()) {
                             iter = backwardBranchToIIDFiltered(graphMgr, att, HAS, params.getIID(to.id().asVariable()), to.props().types());
@@ -1114,7 +1115,6 @@ public abstract class ProcedureEdge<
                         assert fromVertex.isThing() && !roleTypes.isEmpty();
                         ThingVertex rel = fromVertex.asThing();
                         Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> iter;
-                        boolean filteredTypes = false;
 
                         Set<TypeVertex> relationRoleTypes = graphMgr.schema().relatedRoleTypes(rel.type());
                         FunctionalIterator<TypeVertex> possibleRoleTypes = iterate(this.roleTypes).map(graphMgr.schema()::getType)
