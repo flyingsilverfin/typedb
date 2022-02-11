@@ -109,13 +109,6 @@ public abstract class ProcedureVertex<
         throw TypeDBException.of(ILLEGAL_CAST, className(this.getClass()), className(ProcedureVertex.Type.class));
     }
 
-    static TypeVertex assertTypeNotNull(TypeVertex type, Label label) {
-        // TODO: replace this with assertions once query validation is implemented
-        // TODO: what happens to the state of transaction if we throw in a traversal/match?
-        if (type == null) throw TypeDBException.of(TYPE_NOT_FOUND, label);
-        else return type;
-    }
-
     @Override
     public String toString() {
         String str = super.toString();
@@ -178,15 +171,14 @@ public abstract class ProcedureVertex<
             if (eq.isPresent()) iter = iteratorOfAttributesWithTypes(graphMgr, parameters, eq.get());
             else {
                 FunctionalIterator<TypeVertex> typeIter = iterate(props().types().iterator())
-                        .map(l -> assertTypeNotNull(graphMgr.schema().getType(l), l));
+                        .map(l -> graphMgr.schema().getType(l));
                 if (id().isVariable()) typeIter = typeIter.filter(t -> !t.encoding().equals(ROLE_TYPE));
                 iter = typeIter.mergeMap(t -> graphMgr.data().getReadable(t), ASC);
             }
 
             if (props().predicates().isEmpty()) return iter;
             else {
-                // TODO we shouldn't need to filter attributes since the type iterator should already filter in attribute types only to start with.
-                return filterPredicates(filterAttributes(iter), parameters, eq.orElse(null));
+                return filterPredicates(mapToAttributes(iter), parameters, eq.orElse(null));
             }
         }
 
@@ -218,8 +210,6 @@ public abstract class ProcedureVertex<
         Seekable<? extends AttributeVertex<?>, Order.Asc> filterPredicates(Seekable<? extends AttributeVertex<?>, Order.Asc> iterator,
                                                                            Traversal.Parameters parameters,
                                                                            @Nullable Predicate.Value<?> exclude) {
-            // TODO: should we throw an exception if the user asserts a value predicate on a non-attribute?
-            // TODO: should we throw an exception if the user assert a value non-comparable value types?
             assert id().isVariable();
             for (Predicate.Value<?> predicate : props().predicates()) {
                 if (Objects.equals(predicate, exclude)) continue;
@@ -246,10 +236,10 @@ public abstract class ProcedureVertex<
                                                                                         Traversal.Parameters params,
                                                                                         Predicate.Value<?> eq) {
             FunctionalIterator<TypeVertex> attributeTypes = iterate(props().types().iterator())
-                    .map(l -> graphMgr.schema().getType(l)).noNulls()
+                    .map(l -> graphMgr.schema().getType(l))
                     .map(t -> {
-                        if (t.isAttributeType()) return t;
-                        else throw TypeDBException.of(TYPE_NOT_ATTRIBUTE_TYPE, t.properLabel());
+                        assert t.isAttributeType();
+                        return t;
                     }).filter(t -> eq.valueType().assignables().contains(t.valueType()));
             return iteratorOfAttributes(graphMgr, attributeTypes, params, eq);
         }
@@ -288,9 +278,12 @@ public abstract class ProcedureVertex<
         }
 
         static Seekable<AttributeVertex<?>, Order.Asc> filterAttributes(Seekable<? extends ThingVertex, Order.Asc> iterator) {
+            return mapToAttributes(iterator.filter(ThingVertex::isAttribute));
+        }
+
+        static Seekable<AttributeVertex<?>, Order.Asc> mapToAttributes(Seekable<? extends ThingVertex, Order.Asc> iterator) {
             // TODO: trying to achieve this without casting seems impossible due to the reverse mapping required by mapSorted?
-            return ((Seekable<ThingVertex, Order.Asc>) iterator).filter(ThingVertex::isAttribute)
-                    .mapSorted(ThingVertex::asAttribute, v -> v, ASC);
+            return ((Seekable<ThingVertex, Order.Asc>) iterator).mapSorted(ThingVertex::asAttribute, v -> v, ASC);
         }
     }
 
@@ -349,7 +342,7 @@ public abstract class ProcedureVertex<
         }
 
         private Seekable<TypeVertex, Order.Asc> iterateLabels(GraphManager graphMgr) {
-            return iterate(props().labels()).mergeMap(l -> iterateSorted(ASC, assertTypeNotNull(graphMgr.schema().getType(l), l)), ASC);
+            return iterate(props().labels()).mergeMap(l -> iterateSorted(ASC, graphMgr.schema().getType(l)), ASC);
         }
 
         private Seekable<TypeVertex, Order.Asc> filterLabels(Seekable<TypeVertex, Order.Asc> iterator) {
