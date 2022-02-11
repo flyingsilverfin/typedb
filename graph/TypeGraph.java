@@ -274,8 +274,8 @@ public class TypeGraph {
         supertypes = loop(owner, Objects::nonNull, o -> o.outs().edge(SUB).to().firstOrNull());
         supertypes.flatMap(o -> {
             FunctionalIterator<KeyValue<TypeVertex, TypeVertex>> ownsAndOverridden = isKey ?
-                    owner.outs().edge(OWNS_KEY).toAndOverridden() :
-                    owner.outs().edge(OWNS).toAndOverridden().link(owner.outs().edge(OWNS_KEY).toAndOverridden());
+                    o.outs().edge(OWNS_KEY).toAndOverridden() :
+                    o.outs().edge(OWNS).toAndOverridden().link(o.outs().edge(OWNS_KEY).toAndOverridden());
             return ownsAndOverridden.map(e -> {
                 if (e.value() != null) overriddens.add(e.value());
                 if (!overriddens.contains(e.key())) return e.key();
