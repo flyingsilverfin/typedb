@@ -166,39 +166,32 @@ public abstract class ProcedureVertex<
         Seekable<? extends ThingVertex, Order.Asc> iterateAndFilterFromTypes(GraphManager graphMgr,
                                                                              Traversal.Parameters parameters) {
             assert !props().types().isEmpty();
+            return iterateAndFilterFromTypes(graphMgr, parameters, iterate(props().types()).map(graphMgr.schema()::getType));
+        }
+
+        Seekable<? extends ThingVertex, Order.Asc> iterateAndFilterFromTypes(GraphManager graphMgr,
+                                                                             Traversal.Parameters parameters,
+                                                                             FunctionalIterator<TypeVertex> types) {
+            assert types.hasNext();
             Seekable<? extends ThingVertex, Order.Asc> iter;
             Optional<Predicate.Value<?>> eq = iterate(props().predicates()).filter(p -> p.operator().equals(EQ)).first();
             if (eq.isPresent()) iter = iteratorOfAttributesWithTypes(graphMgr, parameters, eq.get());
             else {
-                FunctionalIterator<TypeVertex> typeIter = iterate(props().types().iterator())
-                        .map(l -> graphMgr.schema().getType(l));
-                if (id().isVariable()) typeIter = typeIter.filter(t -> !t.encoding().equals(ROLE_TYPE));
-                iter = typeIter.mergeMap(t -> graphMgr.data().getReadable(t), ASC);
+                if (id().isVariable()) types = types.filter(t -> !t.encoding().equals(ROLE_TYPE));
+                iter = types.mergeMap(t -> graphMgr.data().getReadable(t), ASC);
             }
 
             if (props().predicates().isEmpty()) return iter;
-            else {
-                return filterPredicates(mapToAttributes(iter), parameters, eq.orElse(null));
-            }
+            else return filterPredicates(mapToAttributes(iter), parameters, eq.orElse(null));
         }
 
-        Seekable<? extends ThingVertex, Order.Asc> filterIID(Seekable<? extends ThingVertex, Order.Asc> iterator,
+        private Seekable<? extends ThingVertex, Order.Asc> filterIID(Seekable<? extends ThingVertex, Order.Asc> iterator,
                                                              Traversal.Parameters parameters) {
-            // TODO optimise with seek
+            assert parameters.getIID(id().asVariable()) != null;
             return iterator.filter(v -> v.iid().equals(parameters.getIID(id().asVariable())));
         }
 
-        Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> filterIIDOnPlayerAndRole(Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> iterator,
-                                                                                         Traversal.Parameters parameters) {
-            // TODO optimise with seek if we can
-            return iterator.filter(kv -> kv.key().iid().equals(parameters.getIID(id().asVariable())));
-        }
-
-        Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> filterTypesOnEdge(Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> iterator) {
-            return iterator.filter(kv -> props().types().contains(kv.key().type().properLabel()));
-        }
-
-        Seekable<? extends ThingVertex, Order.Asc> filterTypes(Seekable<? extends ThingVertex, Order.Asc> iterator) {
+        private Seekable<? extends ThingVertex, Order.Asc> filterTypes(Seekable<? extends ThingVertex, Order.Asc> iterator) {
             return iterator.filter(v -> props().types().contains(v.type().properLabel()));
         }
 
@@ -210,6 +203,7 @@ public abstract class ProcedureVertex<
         Seekable<? extends AttributeVertex<?>, Order.Asc> filterPredicates(Seekable<? extends AttributeVertex<?>, Order.Asc> iterator,
                                                                            Traversal.Parameters parameters,
                                                                            @Nullable Predicate.Value<?> exclude) {
+            // TODO we should be using seek() to optimise filtering for >, <, and =
             assert id().isVariable();
             for (Predicate.Value<?> predicate : props().predicates()) {
                 if (Objects.equals(predicate, exclude)) continue;

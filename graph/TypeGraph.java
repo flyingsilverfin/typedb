@@ -133,10 +133,6 @@ public class TypeGraph {
         private final ConcurrentMap<Encoding.ValueType, NavigableSet<TypeVertex>> valueAttributeTypes;
         private final ConcurrentMap<TypeVertex, NavigableSet<TypeVertex>> subtypes;
         private final ConcurrentMap<Label, Set<Label>> resolvedRoleTypeLabels;
-        private NavigableSet<TypeVertex> entityTypes;
-        private NavigableSet<TypeVertex> relationTypes;
-        private NavigableSet<TypeVertex> roleTypes;
-        private NavigableSet<TypeVertex> attributeTypes;
 
         Cache() {
             ownedAttributeTypes = new ConcurrentHashMap<>();
@@ -162,10 +158,6 @@ public class TypeGraph {
             relatedRoleTypes.clear();
             relationsOfRoleType.clear();
             resolvedRoleTypeLabels.clear();
-            entityTypes = null;
-            relationTypes = null;
-            roleTypes = null;
-            attributeTypes = null;
             valueAttributeTypes.clear();
             subtypes.clear();
         }
@@ -232,24 +224,22 @@ public class TypeGraph {
         return merge(iterateSorted(ASC, rootThingType()), entityTypes(), relationTypes(), attributeTypes());
     }
 
-    public Seekable<TypeVertex, Order.Asc> getSubtypes(TypeVertex type) {
+    public NavigableSet<TypeVertex> getSubtypes(TypeVertex type) {
         Supplier<NavigableSet<TypeVertex>> fn = () -> {
             TreeSet<TypeVertex> subtypes = new TreeSet<>();
             tree(type, v -> v.ins().edge(SUB).from()).forEachRemaining(subtypes::add);
             return subtypes;
         };
-        if (isReadOnly) return iterateSorted(cache.subtypes.computeIfAbsent(type, o -> fn.get()), ASC);
-        else return iterateSorted(fn.get(), ASC);
+        if (isReadOnly) return cache.subtypes.computeIfAbsent(type, o -> fn.get());
+        else return fn.get();
     }
 
     public Seekable<TypeVertex, Order.Asc> entityTypes() {
-        if (cache.entityTypes == null) cache.entityTypes = getSubtypes(rootEntityType()).toNavigableSet();
-        return iterateSorted(cache.entityTypes, ASC);
+        return iterateSorted(getSubtypes(rootEntityType()), ASC);
     }
 
     public Seekable<TypeVertex, Order.Asc> attributeTypes() {
-        if (cache.attributeTypes == null) cache.attributeTypes = getSubtypes(rootAttributeType()).toNavigableSet();
-        return iterateSorted(cache.attributeTypes, ASC);
+        return iterateSorted(getSubtypes(rootAttributeType()), ASC);
     }
 
     public Seekable<TypeVertex, Order.Asc> attributeTypes(Encoding.ValueType valueType) {
@@ -258,13 +248,11 @@ public class TypeGraph {
     }
 
     public Seekable<TypeVertex, Order.Asc> relationTypes() {
-        if (cache.relationTypes == null) cache.relationTypes = getSubtypes(rootRelationType()).toNavigableSet();
-        return iterateSorted(cache.relationTypes, ASC);
+        return iterateSorted(getSubtypes(rootRelationType()), ASC);
     }
 
     public Seekable<TypeVertex, Order.Asc> roleTypes() {
-        if (cache.roleTypes == null) cache.roleTypes = getSubtypes(rootRoleType()).toNavigableSet();
-        return iterateSorted(cache.roleTypes, ASC);
+        return iterateSorted(getSubtypes(rootRoleType()), ASC);
     }
 
     private NavigableSet<TypeVertex> ownedAttributeTypes(TypeVertex owner, boolean isKey) {

@@ -46,6 +46,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 
+import static com.vaticle.typedb.common.collection.Collections.set;
 import static com.vaticle.typedb.common.util.Objects.className;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.ILLEGAL_CAST;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.ILLEGAL_OPERATION;
@@ -367,21 +368,12 @@ public abstract class ProcedureEdge<
                         GraphManager graphMgr, Vertex<?, ?> fromVertex, Traversal.Parameters params) {
                     assert fromVertex.isType();
                     TypeVertex type = fromVertex.asType();
-                    Set<Label> toTypes = to.props().types();
-                    FunctionalIterator<TypeVertex> typeIter;
-
-                    if (!isTransitive) typeIter = single(type);
-                    else typeIter = graphMgr.schema().getSubtypes(type);
-
-                    typeIter = typeIter.filter(t -> toTypes.contains(t.properLabel()));
-                    if (to.id().isVariable()) typeIter = typeIter.filter(t -> !t.encoding().equals(ROLE_TYPE));
-
-                    Seekable<? extends ThingVertex, Order.Asc> iter = typeIter.mergeMap(t -> graphMgr.data().getReadable(t), ASC);
-                    if (to.props().hasIID()) iter = to.filterIID(iter, params);
-                    if (!to.props().predicates().isEmpty()) {
-                        iter = to.filterPredicates(filterAttributes(iter), params);
+                    Set<TypeVertex> types = isTransitive ? graphMgr.schema().getSubtypes(type) : set(type);
+                    if (to.props().hasIID()) {
+                        return to.iterateAndFilterFromIID(graphMgr, params).filter(vertex -> types.contains(vertex.type()));
+                    } else {
+                        return to.iterateAndFilterFromTypes(graphMgr, params, iterate(types));
                     }
-                    return iter;
                 }
 
                 @Override
@@ -508,7 +500,7 @@ public abstract class ProcedureEdge<
                         Seekable<TypeVertex, Order.Asc> iter;
                         TypeVertex type = fromVertex.asType();
                         if (!isTransitive) iter = type.ins().edge(SUB).from();
-                        else iter = graphMgr.schema().getSubtypes(type);
+                        else iter = iterateSorted(graphMgr.schema().getSubtypes(type), ASC);
                         return to.filter(iter);
                     }
 
@@ -1122,14 +1114,13 @@ public abstract class ProcedureEdge<
                         assert fromVertex.isThing() && !roleTypes.isEmpty();
                         ThingVertex rel = fromVertex.asThing();
                         Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> iter;
-                        boolean filteredIID = false, filteredTypes = false;
+                        boolean filteredTypes = false;
 
                         Set<TypeVertex> relationRoleTypes = graphMgr.schema().relatedRoleTypes(rel.type());
                         FunctionalIterator<TypeVertex> possibleRoleTypes = iterate(this.roleTypes).map(graphMgr.schema()::getType)
                                 .filter(relationRoleTypes::contains);
                         if (to.props().hasIID()) {
                             assert to.id().isVariable();
-                            filteredIID = true;
                             ThingVertex player = graphMgr.data().getReadable(params.getIID(to.id().asVariable()));
                             if (player == null) return emptySorted();
                             iter = possibleRoleTypes.mergeMap(
@@ -1140,7 +1131,6 @@ public abstract class ProcedureEdge<
                             ).filter(kv -> kv.key().equals(player));
                             iter.seek(KeyValue.of(player, null));
                         } else {
-                            filteredTypes = true;
                             iter = possibleRoleTypes.mergeMap(
                                     rt -> iterate(to.props().types())
                                             .map(l -> graphMgr.schema().getType(l)).noNulls()
@@ -1154,8 +1144,6 @@ public abstract class ProcedureEdge<
                             );
                         }
 
-                        if (!filteredIID && to.props().hasIID()) iter = to.filterIIDOnPlayerAndRole(iter, params);
-                        if (!filteredTypes) iter = to.filterTypesOnEdge(iter);
                         if (!to.props().predicates().isEmpty()) iter = to.filterPredicatesOnEdge(iter, params);
                         return iter;
                     }
@@ -1194,14 +1182,12 @@ public abstract class ProcedureEdge<
                         assert fromVertex.isThing() && to.props().predicates().isEmpty() && !roleTypes.isEmpty();
                         ThingVertex player = fromVertex.asThing();
                         Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> iter;
-                        boolean filteredIID = false, filteredTypes = false;
 
                         Set<TypeVertex> roleTypesPlayed = graphMgr.schema().playedRoleTypes(player.type());
                         FunctionalIterator<TypeVertex> roleTypeVertices = iterate(roleTypes).map(graphMgr.schema()::getType)
                                 .filter(roleTypesPlayed::contains);
                         if (to.props().hasIID()) {
                             assert to.id().isVariable();
-                            filteredIID = true;
                             ThingVertex relation = graphMgr.data().getReadable(params.getIID(to.id().asVariable()));
                             if (relation == null) return emptySorted();
                             iter = roleTypeVertices.mergeMap(
@@ -1212,7 +1198,6 @@ public abstract class ProcedureEdge<
                             ).filter(kv -> kv.key().equals(relation));
                             iter.seek(KeyValue.of(relation, null));
                         } else {
-                            filteredTypes = true;
                             iter = roleTypeVertices.mergeMap(
                                     rt -> iterate(to.props().types()).map(l -> graphMgr.schema().getType(l)).noNulls()
                                             .mergeMap(t -> player.ins()
@@ -1222,9 +1207,6 @@ public abstract class ProcedureEdge<
                                     ASC
                             );
                         }
-
-                        if (!filteredIID && to.props().hasIID()) iter = to.filterIIDOnPlayerAndRole(iter, params);
-                        if (!filteredTypes) iter = to.filterTypesOnEdge(iter);
                         return iter;
                     }
 
