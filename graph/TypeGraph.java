@@ -229,7 +229,7 @@ public class TypeGraph {
     }
 
     public Seekable<TypeVertex, Order.Asc> thingTypes() {
-        return merge(entityTypes(), relationTypes(), attributeTypes());
+        return merge(iterateSorted(ASC, rootThingType()), entityTypes(), relationTypes(), attributeTypes());
     }
 
     public Seekable<TypeVertex, Order.Asc> getSubtypes(TypeVertex type) {
