@@ -23,10 +23,7 @@ import com.vaticle.typedb.core.common.iterator.FunctionalIterator;
 import com.vaticle.typedb.core.common.iterator.Iterators;
 import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Order;
 
-import javax.annotation.Nullable;
 import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.PriorityQueue;
 import java.util.function.Function;
@@ -41,7 +38,7 @@ public class MergeMappedIterator<T, U extends Comparable<? super U>, ORDER exten
     private final Function<T, ITER> mappingFn;
     final FunctionalIterator<T> iterator;
     final PriorityQueue<ComparableSortedIterator> fetched;
-    final List<ITER> unfetched;
+    final LockableList<ITER> unfetched;
     State state;
     U last;
 
@@ -53,7 +50,7 @@ public class MergeMappedIterator<T, U extends Comparable<? super U>, ORDER exten
         this.mappingFn = mappingFn;
         this.fetched = new PriorityQueue<>();
         this.state = State.INIT;
-        this.unfetched = new ArrayList<>();
+        this.unfetched = new LockableList<>(new ArrayList<>());
         this.last = null;
     }
 
@@ -137,7 +134,11 @@ public class MergeMappedIterator<T, U extends Comparable<? super U>, ORDER exten
     public void recycle() {
         fetched.forEach(queueNode -> queueNode.iter.recycle());
         fetched.clear();
-        unfetched.forEach(FunctionalIterator::recycle);
+        if (!unfetched.isEmpty()) {
+            unfetched.setLocked(true, Thread.currentThread().getStackTrace());
+            unfetched.forEach(FunctionalIterator::recycle);
+            unfetched.setLocked(false, null);
+        }
         unfetched.clear();
         iterator.recycle();
     }

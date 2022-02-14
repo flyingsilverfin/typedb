@@ -118,7 +118,8 @@ public class AsyncProducer<T> implements FunctionalProducer<T> {
         }
     }
 
-    private void job(Queue<T> queue, FunctionalIterator<T> iterator, int request, Executor executor) {
+    private synchronized void job(Queue<T> queue, FunctionalIterator<T> iterator, int request, Executor executor) {
+        if (!runningJobs.containsKey(iterator)) return;
         try {
             int unfulfilled = request;
             if (runningJobs.containsKey(iterator)) {
@@ -148,5 +149,6 @@ public class AsyncProducer<T> implements FunctionalProducer<T> {
     public synchronized void recycle() {
         iterators.recycle();
         runningJobs.keySet().forEach(FunctionalIterator::recycle);
+        runningJobs.clear();
     }
 }

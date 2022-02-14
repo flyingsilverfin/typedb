@@ -116,6 +116,7 @@ public class GraphIterator extends AbstractFunctionalIterator<VertexMap> {
             } else {
                 LOG.error("Parameters: " + params.toString());
                 LOG.error("GraphProcedure: " + procedure.toString());
+                LOG.error("error from: " , e);
             }
             throw e;
         }
