@@ -118,7 +118,7 @@ public class AsyncProducer<T> implements FunctionalProducer<T> {
         }
     }
 
-    private synchronized void job(Queue<T> queue, FunctionalIterator<T> iterator, int request, Executor executor) {
+    private void job(Queue<T> queue, FunctionalIterator<T> iterator, int request, Executor executor) {
         if (!runningJobs.containsKey(iterator)) return;
         try {
             int unfulfilled = request;
