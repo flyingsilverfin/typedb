@@ -23,11 +23,15 @@ import com.vaticle.typedb.common.collection.Triple;
 import com.vaticle.typedb.core.common.iterator.FunctionalIterator;
 
 import javax.annotation.concurrent.ThreadSafe;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
@@ -35,89 +39,101 @@ import java.util.function.Predicate;
 public class AsyncProducerNew<T> implements FunctionalProducer<T> {
 
     private final int parallelisation;
-    private final ProduceManager produceManager;
+    private final ProduceManager workManager;
+    private final IteratorManager iteratorManager;
     private int workers;
-    private boolean done;
-
-    private final FunctionalIterator<FunctionalIterator<T>> iteratorSource;
-    private final List<FunctionalIterator<T>> reserved;
-    private final List<FunctionalIterator<T>> available;
+    private volatile boolean done;
 
     AsyncProducerNew(FunctionalIterator<FunctionalIterator<T>> iteratorSource, int parallelisation) {
         assert parallelisation > 0;
         this.parallelisation = parallelisation;
-        this.produceManager = new ProduceManager();
+        this.workManager = new ProduceManager();
+        this.iteratorManager = new IteratorManager(iteratorSource);
         this.workers = 0;
         this.done = false;
-        this.iteratorSource = iteratorSource;
-        this.reserved = new LinkedList<>();
-        this.available = new LinkedList<>();
     }
 
     @Override
     public <U> AsyncProducerNew<U> map(Function<T, U> mappingFn) {
-        return new AsyncProducerNew<>(iteratorSource.map(iter -> iter.map(mappingFn)), parallelisation);
+        return new AsyncProducerNew<>(iteratorManager.iteratorSource.map(iter -> iter.map(mappingFn)), parallelisation);
     }
 
     @Override
     public AsyncProducerNew<T> filter(Predicate<T> predicate) {
-        return new AsyncProducerNew<>(iteratorSource.map(iter -> iter.filter(predicate)), parallelisation);
+        return new AsyncProducerNew<>(iteratorManager.iteratorSource.map(iter -> iter.filter(predicate)), parallelisation);
     }
 
     @Override
     public AsyncProducerNew<T> distinct() {
         ConcurrentSet<T> produced = new ConcurrentSet<>();
-        return new AsyncProducerNew<>(iteratorSource.map(iter -> iter.distinct(produced)), parallelisation);
+        return new AsyncProducerNew<>(iteratorManager.iteratorSource.map(iter -> iter.distinct(produced)), parallelisation);
     }
 
     @Override
     public void produce(Queue<T> queue, int request, Executor executor) {
-        produceManager.add(queue, request, executor);
+        workManager.add(queue, request, executor);
+        if (!iteratorManager.hasIterator()) {
+            executor.execute(queue::done);
+            return;
+        }
         synchronized (this) {
             int availableWorkers = parallelisation - workers;
-            for (int i = 0; i < availableWorkers && produceManager.hasNext(); i++) {
+            for (int i = 0; i < availableWorkers && workManager.hasNext(); i++) {
                 createWorker();
             }
         }
     }
 
     private synchronized void createWorker() {
-        assert produceManager.hasNext();
-        Optional<Triple<Queue<T>, Integer, Executor>> next = produceManager.next();
+        assert workManager.hasNext();
+        Optional<Triple<Queue<T>, Integer, Executor>> next = workManager.next();
         CompletableFuture.runAsync(() -> fulfill(next.get().first(), next.get().second()), next.get().third());
         workers++;
-    }
-
-    synchronized void workerFinished(Queue<T> queue) {
-        workers--;
-        if (workers == 0 && !produceManager.hasNext() && !iteratorSource.hasNext() && !done) {
-            queue.done();
-            done = true;
-        } else if (produceManager.hasNext()) {
-            createWorker();
-        }
     }
 
     private void fulfill(Queue<T> queue, int requested) {
         assert requested > 0;
         FunctionalIterator<T> iter = null;
-        for (int i = 0; i < requested; i++) {
+        for (int i = 0; i < requested && !done; i++) {
             if (iter == null || !iter.hasNext()) {
-                Optional<FunctionalIterator<T>> newIterator = reserveIterator();
-                if (!newIterator.isPresent()) {
-                    workerFinished(queue);
-                    return;
-                }
+                if (iter != null) iteratorManager.unreserveFinished(iter);
+                Optional<FunctionalIterator<T>> newIterator = iteratorManager.reserve();
+                if (!newIterator.isPresent()) break;
                 iter = newIterator.get();
             }
             queue.put(iter.next());
         }
-        if (iter.hasNext()) releaseIterator(iter);
+        iteratorManager.unreserve(iter);
         workerFinished(queue);
     }
 
-    private Optional<FunctionalIterator<T>> reserveIterator() {
-        synchronized (available) {
+    synchronized void workerFinished(Queue<T> queue) {
+        workers--;
+        if (workers == 0 && !iteratorManager.hasIterator() && !done) {
+            queue.done();
+            done = true;
+        } else if (iteratorManager.hasIterator() && workManager.hasNext()) {
+            createWorker();
+        }
+    }
+
+    private class IteratorManager {
+
+        private final FunctionalIterator<FunctionalIterator<T>> iteratorSource;
+        private final Set<FunctionalIterator<T>> reserved;
+        private final List<FunctionalIterator<T>> available;
+
+        IteratorManager(FunctionalIterator<FunctionalIterator<T>> iteratorSource) {
+            this.iteratorSource = iteratorSource;
+            this.reserved = new HashSet<>();
+            this.available = new LinkedList<>();
+        }
+
+        private synchronized boolean hasIterator() {
+            return !available.isEmpty() || iteratorSource.hasNext();
+        }
+
+        private synchronized Optional<FunctionalIterator<T>> reserve() {
             if (!available.isEmpty()) return Optional.of(available.remove(0));
             else if (iteratorSource.hasNext()) {
                 FunctionalIterator<T> next = iteratorSource.next();
@@ -125,12 +141,22 @@ public class AsyncProducerNew<T> implements FunctionalProducer<T> {
                 return Optional.of(next);
             } else return Optional.empty();
         }
-    }
 
-    private synchronized void releaseIterator(FunctionalIterator<T> iterator) {
-        synchronized (available) {
-            assert iterator.hasNext();
-            available.add(iterator);
+        private synchronized void unreserve(FunctionalIterator<T> iterator) {
+            if (iterator != null) {
+                reserved.remove(iterator);
+                if (iterator.hasNext()) available.add(iterator);
+            }
+        }
+
+        public synchronized void unreserveFinished(FunctionalIterator<T> iterator) {
+            reserved.remove(iterator);
+        }
+
+        public synchronized void recycleIterators() {
+            iteratorSource.recycle();
+            reserved.forEach(FunctionalIterator::recycle);
+            available.forEach(FunctionalIterator::recycle);
         }
     }
 
@@ -165,23 +191,10 @@ public class AsyncProducerNew<T> implements FunctionalProducer<T> {
         }
     }
 
-    private void done(Queue<T> queue) {
-        if (isDone.compareAndSet(false, true)) {
-            queue.done();
-        }
-    }
-
-    private void done(Queue<T> queue, Throwable e) {
-        if (isDone.compareAndSet(false, true)) {
-            queue.done(e);
-        }
-    }
-
     @Override
     public synchronized void recycle() {
-        iteratorSource.recycle();
-        runningJobs.keySet().forEach(FunctionalIterator::recycle);
-        runningJobs.clear();
+        done = true;
+        iteratorManager.recycleIterators();
     }
 //
 //    private synchronized void initialise(Queue<T> queue) {
