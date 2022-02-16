@@ -57,7 +57,6 @@ import java.util.concurrent.locks.StampedLock;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
 
-import static com.vaticle.typedb.common.collection.Collections.list;
 import static com.vaticle.typedb.common.collection.Collections.pair;
 import static com.vaticle.typedb.common.collection.Collections.set;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Transaction.TRANSACTION_SCHEMA_READ_VIOLATION;
@@ -227,7 +226,7 @@ public class TypeGraph {
     public NavigableSet<TypeVertex> getSubtypes(TypeVertex type) {
         Supplier<NavigableSet<TypeVertex>> fn = () -> {
             TreeSet<TypeVertex> subtypes = new TreeSet<>();
-            tree(type, v -> v.ins().edge(SUB).from()).forEachRemaining(subtypes::add);
+            tree(type, v -> v.ins().edge(SUB).from()).toSet(subtypes);
             return subtypes;
         };
         if (isReadOnly) return cache.subtypes.computeIfAbsent(type, o -> fn.get());
@@ -257,19 +256,18 @@ public class TypeGraph {
 
     private NavigableSet<TypeVertex> ownedAttributeTypes(TypeVertex owner, boolean isKey) {
         Set<TypeVertex> overriddens = new HashSet<>();
-        FunctionalIterator<TypeVertex> supertypes;
         NavigableSet<TypeVertex> ownedAttributeTypes = new TreeSet<>();
-        supertypes = loop(owner, Objects::nonNull, o -> o.outs().edge(SUB).to().firstOrNull());
-        supertypes.flatMap(o -> {
-            FunctionalIterator<KeyValue<TypeVertex, TypeVertex>> ownsAndOverridden = isKey ?
-                    o.outs().edge(OWNS_KEY).toAndOverridden() :
-                    o.outs().edge(OWNS).toAndOverridden().link(o.outs().edge(OWNS_KEY).toAndOverridden());
-            return ownsAndOverridden.map(e -> {
-                if (e.value() != null) overriddens.add(e.value());
-                if (!overriddens.contains(e.key())) return e.key();
-                else return null;
-            }).filter(Objects::nonNull);
-        }).toSet(ownedAttributeTypes);
+        loop(owner, Objects::nonNull, o -> o.outs().edge(SUB).to().firstOrNull())
+                .flatMap(o -> {
+                    FunctionalIterator<KeyValue<TypeVertex, TypeVertex>> ownsAndOverridden = isKey ?
+                            o.outs().edge(OWNS_KEY).toAndOverridden() :
+                            o.outs().edge(OWNS).toAndOverridden().link(o.outs().edge(OWNS_KEY).toAndOverridden());
+                    return ownsAndOverridden.map(e -> {
+                        if (e.value() != null) overriddens.add(e.value());
+                        if (!overriddens.contains(e.key())) return e.key();
+                        else return null;
+                    }).filter(Objects::nonNull);
+                }).toSet(ownedAttributeTypes);
         return ownedAttributeTypes;
     }
 
@@ -374,10 +372,10 @@ public class TypeGraph {
             NavigableSet<TypeVertex> roleTypes = new TreeSet<>();
             loop(relation, Objects::nonNull, r -> r.outs().edge(SUB).to().firstOrNull())
                     .flatMap(s -> s.outs().edge(RELATES).toAndOverridden().map(e -> {
-                if (e.value() != null) overriddens.add(e.value());
-                if (!overriddens.contains(e.key())) return e.key();
-                else return null;
-            }).noNulls()).toSet(roleTypes);
+                        if (e.value() != null) overriddens.add(e.value());
+                        if (!overriddens.contains(e.key())) return e.key();
+                        else return null;
+                    }).noNulls()).toSet(roleTypes);
             return roleTypes;
         };
         if (isReadOnly) return cache.relatedRoleTypes.computeIfAbsent(relation, o -> fn.get());
