@@ -1132,13 +1132,13 @@ public abstract class ProcedureEdge<
                         Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> iter;
 
                         Set<TypeVertex> relationRoleTypes = graphMgr.schema().relatedRoleTypes(rel.type());
-                        FunctionalIterator<TypeVertex> possibleRoleTypes = iterate(this.roleTypes).map(graphMgr.schema()::getType)
+                        FunctionalIterator<TypeVertex> instanceRoleTypes = iterate(this.roleTypes).map(graphMgr.schema()::getType)
                                 .filter(relationRoleTypes::contains);
                         if (to.props().hasIID()) {
                             assert to.id().isVariable();
                             ThingVertex player = graphMgr.data().getReadable(params.getIID(to.id().asVariable()));
                             if (player == null) return emptySorted();
-                            iter = possibleRoleTypes.mergeMap(
+                            iter = instanceRoleTypes.mergeMap(
                                     rt -> rel.outs()
                                             .edge(ROLEPLAYER, rt, player.iid().prefix(), player.iid().type())
                                             .toAndOptimised(),
@@ -1146,7 +1146,7 @@ public abstract class ProcedureEdge<
                             ).filter(kv -> kv.key().equals(player));
                             iter.seek(KeyValue.of(player, null));
                         } else {
-                            iter = possibleRoleTypes.mergeMap(
+                            iter = instanceRoleTypes.mergeMap(
                                     rt -> iterate(to.props().types())
                                             .map(l -> graphMgr.schema().getType(l))
                                             .mergeMap(
@@ -1178,8 +1178,7 @@ public abstract class ProcedureEdge<
                                                 .toAndOptimised(),
                                         ASC
                                 ).filter(kv -> kv.key().equals(player) && !scoped.contains(kv.value()));
-                        closures.seek(KeyValue.of(player, null));
-                        Optional<KeyValue<ThingVertex, ThingVertex>> valid = closures.first();
+                        Optional<KeyValue<ThingVertex, ThingVertex>> valid = closures.findFirst(KeyValue.of(player, null));
                         valid.ifPresent(kv -> scoped.push(kv.value(), order()));
                         return valid.isPresent();
                     }
@@ -1239,8 +1238,7 @@ public abstract class ProcedureEdge<
                                                 .fromAndOptimised(),
                                         ASC
                                 ).filter(kv -> kv.key().equals(rel) && !scoped.contains(kv.value()));
-                        closures.seek(KeyValue.of(rel, null));
-                        Optional<KeyValue<ThingVertex, ThingVertex>> valid = closures.first();
+                        Optional<KeyValue<ThingVertex, ThingVertex>> valid = closures.findFirst(KeyValue.of(rel, null));
                         valid.ifPresent(kv -> scoped.push(kv.value(), order()));
                         return valid.isPresent();
                     }
