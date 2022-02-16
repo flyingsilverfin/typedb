@@ -1178,9 +1178,14 @@ public abstract class ProcedureEdge<
                                                 .toAndOptimised(),
                                         ASC
                                 ).filter(kv -> kv.key().equals(player) && !scoped.contains(kv.value()));
-                        Optional<KeyValue<ThingVertex, ThingVertex>> valid = closures.findFirst(KeyValue.of(player, null));
-                        valid.ifPresent(kv -> scoped.push(kv.value(), order()));
-                        return valid.isPresent();
+                        closures.seek(KeyValue.of(player, null));
+                        Optional<KeyValue<ThingVertex, ThingVertex>> next = closures.first();
+                        if (next.isPresent() && next.get().key().equals(player)) {
+                            scoped.push(next.get().value(), order());
+                            return true;
+                        } else {
+                            return false;
+                        }
                     }
                 }
 
@@ -1238,9 +1243,14 @@ public abstract class ProcedureEdge<
                                                 .fromAndOptimised(),
                                         ASC
                                 ).filter(kv -> kv.key().equals(rel) && !scoped.contains(kv.value()));
-                        Optional<KeyValue<ThingVertex, ThingVertex>> valid = closures.findFirst(KeyValue.of(rel, null));
-                        valid.ifPresent(kv -> scoped.push(kv.value(), order()));
-                        return valid.isPresent();
+                        closures.seek(KeyValue.of(rel, null));
+                        Optional<KeyValue<ThingVertex, ThingVertex>> next = closures.first();
+                        if (next.isPresent() && next.get().key().equals(rel)) {
+                            scoped.push(next.get().value(), order());
+                            return true;
+                        } else {
+                            return false;
+                        }
                     }
 
                     @Override
