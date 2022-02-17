@@ -55,21 +55,21 @@ public interface ThingType extends Type {
 
     void unsetOwns(AttributeType attributeType);
 
-    Seekable<? extends AttributeType, Order.Asc> getOwns();
+    Seekable<AttributeType, Order.Asc> getOwns();
 
-    Seekable<? extends AttributeType, Order.Asc> getOwnsExplicit();
+    Seekable<AttributeType, Order.Asc> getOwnsExplicit();
 
-    Seekable<? extends AttributeType, Order.Asc> getOwns(boolean onlyKey);
+    Seekable<AttributeType, Order.Asc> getOwns(boolean onlyKey);
 
-    Seekable<? extends AttributeType, Order.Asc> getOwnsExplicit(boolean onlyKey);
+    Seekable<AttributeType, Order.Asc> getOwnsExplicit(boolean onlyKey);
 
-    Seekable<? extends AttributeType, Order.Asc> getOwns(AttributeType.ValueType valueType);
+    Seekable<AttributeType, Order.Asc> getOwns(AttributeType.ValueType valueType);
 
-    Seekable<? extends AttributeType, Order.Asc> getOwnsExplicit(AttributeType.ValueType valueType);
+    Seekable<AttributeType, Order.Asc> getOwnsExplicit(AttributeType.ValueType valueType);
 
-    Seekable<? extends AttributeType, Order.Asc> getOwns(AttributeType.ValueType valueType, boolean onlyKey);
+    Seekable<AttributeType, Order.Asc> getOwns(AttributeType.ValueType valueType, boolean onlyKey);
 
-    Seekable<? extends AttributeType, Order.Asc> getOwnsExplicit(AttributeType.ValueType valueType, boolean onlyKey);
+    Seekable<AttributeType, Order.Asc> getOwnsExplicit(AttributeType.ValueType valueType, boolean onlyKey);
 
     AttributeType getOwnsOverridden(AttributeType attributeType);
 
@@ -79,9 +79,9 @@ public interface ThingType extends Type {
 
     void unsetPlays(RoleType roleType);
 
-    Seekable<? extends RoleType, Order.Asc> getPlays();
+    Seekable<RoleType, Order.Asc> getPlays();
 
-    Seekable<? extends RoleType, Order.Asc> getPlaysExplicit();
+    Seekable<RoleType, Order.Asc> getPlaysExplicit();
 
     RoleType getPlaysOverridden(RoleType roleType);
 }
