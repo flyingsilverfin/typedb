@@ -55,11 +55,8 @@ import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.UNR
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.UNSUPPORTED_OPERATION;
 import static com.vaticle.typedb.core.common.iterator.Iterators.Sorted.Seekable.emptySorted;
 import static com.vaticle.typedb.core.common.iterator.Iterators.Sorted.Seekable.iterateSorted;
-import static com.vaticle.typedb.core.common.iterator.Iterators.empty;
 import static com.vaticle.typedb.core.common.iterator.Iterators.iterate;
-import static com.vaticle.typedb.core.common.iterator.Iterators.link;
 import static com.vaticle.typedb.core.common.iterator.Iterators.loop;
-import static com.vaticle.typedb.core.common.iterator.Iterators.single;
 import static com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.ASC;
 import static com.vaticle.typedb.core.graph.common.Encoding.Direction.Edge.BACKWARD;
 import static com.vaticle.typedb.core.graph.common.Encoding.Direction.Edge.FORWARD;
@@ -75,9 +72,7 @@ import static com.vaticle.typedb.core.graph.common.Encoding.Edge.Type.SUB;
 import static com.vaticle.typedb.core.graph.common.Encoding.Prefix.VERTEX_ATTRIBUTE;
 import static com.vaticle.typedb.core.graph.common.Encoding.Prefix.VERTEX_ROLE;
 import static com.vaticle.typedb.core.graph.common.Encoding.Vertex.Thing.RELATION;
-import static com.vaticle.typedb.core.graph.common.Encoding.Vertex.Type.ROLE_TYPE;
 import static com.vaticle.typedb.core.traversal.predicate.PredicateOperator.Equality.EQ;
-import static com.vaticle.typedb.core.traversal.procedure.ProcedureVertex.Thing.filterAttributes;
 import static com.vaticle.typedb.core.traversal.procedure.ProcedureVertex.Thing.mapToAttributes;
 
 public abstract class ProcedureEdge<
@@ -821,10 +816,13 @@ public abstract class ProcedureEdge<
             Seekable<? extends Vertex<?, ?>, Order.Asc> forwardBranchToRole(GraphManager graphMgr, Vertex<?, ?> fromVertex,
                                                                             Encoding.Edge.Thing.Base encoding) {
                 assert !to.props().hasIID() && to.props().predicates().isEmpty();
-                ThingVertex relation = fromVertex.asThing();
-                return iterate(to.props().types())
-                        .map(l -> graphMgr.schema().getType(l))
-                        .mergeMap(t -> relation.outs().edge(encoding, PrefixIID.of(VERTEX_ROLE), t.iid()).to(), ASC);
+                ThingVertex relationOrPlayer = fromVertex.asThing();
+                TypeVertex type = relationOrPlayer.type();
+                Set<TypeVertex> roleTypes = type.isRelationType() ?
+                        graphMgr.schema().relatedRoleTypes(type) : graphMgr.schema().playedRoleTypes(type);
+                return iterate(roleTypes)
+                        .filter(rt -> to.props().types().contains(rt.properLabel()))
+                        .mergeMap(t -> relationOrPlayer.outs().edge(encoding, PrefixIID.of(VERTEX_ROLE), t.iid()).to(), ASC);
             }
 
             static abstract class Has extends Thing {
@@ -866,9 +864,8 @@ public abstract class ProcedureEdge<
                                         .filter(a -> owner.outs().edge(HAS, a.asAttribute()) != null);
                             } else {
                                 Set<TypeVertex> attributes = graphMgr.schema().ownedAttributeTypes(owner.type());
-                                iter = iterate(to.props().types())
-                                        .map(l -> graphMgr.schema().getType(l))
-                                        .filter(attributes::contains)
+                                iter = iterate(attributes)
+                                        .filter(attr -> to.props().types().contains(attr.properLabel()))
                                         .mergeMap(
                                                 t -> owner.outs().edge(HAS, PrefixIID.of(VERTEX_ATTRIBUTE), t.iid()).to(), ASC
                                         ).mapSorted(ThingVertex::asAttribute, v -> v, ASC);
@@ -908,9 +905,8 @@ public abstract class ProcedureEdge<
                             iter = backwardBranchToIIDFiltered(graphMgr, att, HAS, params.getIID(to.id().asVariable()), to.props().types());
                         } else {
                             Set<TypeVertex> owners = graphMgr.schema().ownersOfAttributeType(att.type());
-                            iter = iterate(to.props().types())
-                                    .map(l -> graphMgr.schema().getType(l))
-                                    .filter(owners::contains)
+                            iter = iterate(owners)
+                                    .filter(owner -> to.props().types().contains(owner.properLabel()))
                                     .mergeMap(t -> att.ins().edge(HAS, PrefixIID.of(t.encoding().instance()), t.iid()).from(), ASC);
                         }
 
@@ -972,9 +968,8 @@ public abstract class ProcedureEdge<
                             iter = backwardBranchToIIDFiltered(graphMgr, role, PLAYING, params.getIID(to.id().asVariable()), toTypes);
                         } else {
                             Set<TypeVertex> players = graphMgr.schema().playersOfRoleType(role.type());
-                            iter = iterate(toTypes)
-                                    .map(l -> graphMgr.schema().getType(l))
-                                    .filter(players::contains)
+                            iter = iterate(players)
+                                    .filter(player -> toTypes.contains(player.properLabel()))
                                     .mergeMap(t -> role.ins().edge(PLAYING, PrefixIID.of(t.encoding().instance()), t.iid()).from(), ASC);
                         }
 
@@ -1041,9 +1036,8 @@ public abstract class ProcedureEdge<
                             iter = backwardBranchToIIDFiltered(graphMgr, role, RELATING, params.getIID(to.id().asVariable()), toTypes);
                         } else {
                             Set<TypeVertex> relations = graphMgr.schema().relationsOfRoleType(role.type());
-                            iter = iterate(toTypes)
-                                    .map(l -> graphMgr.schema().getType(l))
-                                    .filter(relations::contains)
+                            iter = iterate(relations)
+                                    .filter(rel -> toTypes.contains(rel.properLabel()))
                                     .mergeMap(t -> role.ins().edge(RELATING, PrefixIID.of(RELATION), t.iid()).from(), ASC);
                         }
                         return iter;
@@ -1132,8 +1126,8 @@ public abstract class ProcedureEdge<
                         Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> iter;
 
                         Set<TypeVertex> relationRoleTypes = graphMgr.schema().relatedRoleTypes(rel.type());
-                        FunctionalIterator<TypeVertex> instanceRoleTypes = iterate(this.roleTypes).map(graphMgr.schema()::getType)
-                                .filter(relationRoleTypes::contains);
+                        FunctionalIterator<TypeVertex> instanceRoleTypes = iterate(relationRoleTypes)
+                                .filter(rt -> this.roleTypes.contains(rt.properLabel()));
                         if (to.props().hasIID()) {
                             assert to.id().isVariable();
                             ThingVertex player = graphMgr.data().getReadable(params.getIID(to.id().asVariable()));
@@ -1169,9 +1163,8 @@ public abstract class ProcedureEdge<
                         ThingVertex player = toVertex.asThing();
                         Set<TypeVertex> relationRoleTypes = graphMgr.schema().relatedRoleTypes(rel.type());
                         Set<TypeVertex> roleTypesPlayed = graphMgr.schema().playedRoleTypes(player.type());
-                        Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> closures = iterate(roleTypes)
-                                .map(graphMgr.schema()::getType)
-                                .filter(rt -> relationRoleTypes.contains(rt) && roleTypesPlayed.contains(rt))
+                        Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> closures = iterate(relationRoleTypes)
+                                .filter(rt -> roleTypes.contains(rt.properLabel()) && roleTypesPlayed.contains(rt))
                                 .mergeMap(
                                         rt -> rel.outs()
                                                 .edge(ROLEPLAYER, rt, player.iid().prefix(), player.iid().type())
@@ -1203,8 +1196,8 @@ public abstract class ProcedureEdge<
                         Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> iter;
 
                         Set<TypeVertex> roleTypesPlayed = graphMgr.schema().playedRoleTypes(player.type());
-                        FunctionalIterator<TypeVertex> roleTypeVertices = iterate(roleTypes).map(graphMgr.schema()::getType)
-                                .filter(roleTypesPlayed::contains);
+                        FunctionalIterator<TypeVertex> roleTypeVertices = iterate(roleTypesPlayed)
+                                .filter(rt -> roleTypes.contains(rt.properLabel()));
                         if (to.props().hasIID()) {
                             assert to.id().isVariable();
                             ThingVertex relation = graphMgr.data().getReadable(params.getIID(to.id().asVariable()));
@@ -1235,9 +1228,8 @@ public abstract class ProcedureEdge<
                         ThingVertex rel = toVertex.asThing();
                         Set<TypeVertex> relationRoleTypes = graphMgr.schema().relatedRoleTypes(rel.type());
                         Set<TypeVertex> roleTypesPlayed = graphMgr.schema().playedRoleTypes(player.type());
-                        Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> closures = iterate(roleTypes)
-                                .map(graphMgr.schema()::getType)
-                                .filter(rt -> relationRoleTypes.contains(rt) && roleTypesPlayed.contains(rt))
+                        Seekable<KeyValue<ThingVertex, ThingVertex>, Order.Asc> closures = iterate(relationRoleTypes)
+                                .filter(rt -> roleTypes.contains(rt.properLabel()) && roleTypesPlayed.contains(rt))
                                 .mergeMap(
                                         rt -> player.ins().edge(ROLEPLAYER, rt, rel.iid().prefix(), rel.iid().type())
                                                 .fromAndOptimised(),
