@@ -110,7 +110,8 @@ public class RoleTypeImpl extends TypeImpl implements RoleType {
 
     @Override
     public Seekable<RelationTypeImpl, Order.Asc> getRelationTypes() {
-        return getRelationType().getSubtypes().filter(r -> r.overriddenRoles().noneMatch(o -> o.equals(this)));
+        return iterateSorted(graphMgr.schema().relationsOfRoleType(vertex), ASC)
+                .mapSorted(v -> RelationTypeImpl.of(graphMgr, v), relType -> relType.vertex, ASC);
     }
 
     @Override

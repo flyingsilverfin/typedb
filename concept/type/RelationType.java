@@ -19,24 +19,25 @@
 package com.vaticle.typedb.core.concept.type;
 
 import com.vaticle.typedb.core.common.iterator.FunctionalIterator;
+import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator;
+import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Order;
 import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Seekable;
 import com.vaticle.typedb.core.concept.thing.Relation;
 
-import static com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Order.Asc;
 
 public interface RelationType extends ThingType {
 
     @Override
-    Seekable<? extends RelationType, Asc> getSubtypes();
+    Seekable<? extends RelationType, Order.Asc> getSubtypes();
 
     @Override
-    Seekable<? extends RelationType, Asc> getSubtypesExplicit();
+    Seekable<? extends RelationType, Order.Asc> getSubtypesExplicit();
 
     @Override
-    Seekable<? extends Relation, Asc> getInstances();
+    Seekable<? extends Relation, Order.Asc> getInstances();
 
     @Override
-    Seekable<? extends Relation, Asc> getInstancesExplicit();
+    Seekable<? extends Relation, Order.Asc> getInstancesExplicit();
 
     void setSupertype(RelationType superType);
 
@@ -46,9 +47,9 @@ public interface RelationType extends ThingType {
 
     void unsetRelates(String roleLabel);
 
-    FunctionalIterator<? extends RoleType> getRelates();
+    Seekable<? extends RoleType, Order.Asc> getRelates();
 
-    FunctionalIterator<? extends RoleType> getRelatesExplicit();
+    Seekable<? extends RoleType, Order.Asc> getRelatesExplicit();
 
     RoleType getRelates(String roleLabel);
 

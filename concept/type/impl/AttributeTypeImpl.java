@@ -159,19 +159,12 @@ public abstract class AttributeTypeImpl extends ThingTypeImpl implements Attribu
     @Override
     public Seekable<? extends ThingTypeImpl, Order.Asc> getOwners(boolean onlyKey) {
         if (isRoot()) return emptySorted();
-        return directOwners(onlyKey)
-                .mergeMap(ThingTypeImpl::getSubtypes, ASC)
-                .filter(t -> t.overriddenOwns(onlyKey, true).noneMatch(o -> o.equals(this)));
-    }
-
-    private Seekable<? extends ThingTypeImpl, Order.Asc> directOwners(boolean onlyKey) {
-        if (isRoot()) return emptySorted();
-
-        if (onlyKey) {
-            return vertex.ins().edge(OWNS_KEY).from().mapSorted(v -> ThingTypeImpl.of(graphMgr, v), t -> t.vertex, ASC);
+        else if (onlyKey) {
+            return iterateSorted(graphMgr.schema().ownersOfKeyAttributeType(vertex), ASC)
+                    .mapSorted(v -> ThingTypeImpl.of(graphMgr, v), thingType -> thingType.vertex, ASC);
         } else {
-            return vertex.ins().edge(OWNS_KEY).from().merge(vertex.ins().edge(OWNS).from())
-                    .mapSorted(v -> ThingTypeImpl.of(graphMgr, v), t -> t.vertex, ASC);
+            return iterateSorted(graphMgr.schema().ownersOfAttributeType(vertex), ASC)
+                    .mapSorted(v -> ThingTypeImpl.of(graphMgr, v), thingType -> thingType.vertex, ASC);
         }
     }
 

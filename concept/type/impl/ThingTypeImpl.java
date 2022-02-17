@@ -395,14 +395,9 @@ public abstract class ThingTypeImpl extends TypeImpl implements ThingType {
     @Override
     public Seekable<RoleType, Order.Asc> getPlays() {
         if (isRoot()) return emptySorted();
-        Set<TypeVertex> overridden = new HashSet<>();
-        vertex.outs().edge(Encoding.Edge.Type.PLAYS).overridden().filter(Objects::nonNull).forEachRemaining(overridden::add);
         assert getSupertype() != null;
-        return vertex.outs().edge(Encoding.Edge.Type.PLAYS).to()
-                .mapSorted(v -> (RoleType) RoleTypeImpl.of(graphMgr, v), roleType -> ((RoleTypeImpl) roleType).vertex, ASC)
-                .merge(
-                        getSupertype().getPlays().filter(rt -> !overridden.contains(((RoleTypeImpl) rt).vertex))
-                );
+        return iterateSorted(graphMgr.schema().playedRoleTypes(vertex), ASC)
+                .mapSorted(v -> RoleTypeImpl.of(graphMgr, v), roleType -> ((RoleTypeImpl) roleType).vertex, ASC);
     }
 
     @Override
