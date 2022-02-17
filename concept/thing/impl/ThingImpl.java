@@ -286,4 +286,9 @@ public abstract class ThingImpl extends ConceptImpl implements Thing {
     public final int hashCode() {
         return readableVertex().hashCode(); // does not need caching
     }
+
+    @Override
+    public int compareTo(Thing other) {
+        return vertex.compareTo(((ThingImpl) other).vertex);
+    }
 }

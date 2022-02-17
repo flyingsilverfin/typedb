@@ -21,6 +21,9 @@ package com.vaticle.typedb.core.concept.type.impl;
 import com.vaticle.typedb.core.common.exception.TypeDBException;
 import com.vaticle.typedb.core.common.iterator.FunctionalIterator;
 import com.vaticle.typedb.core.common.iterator.Iterators;
+import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator;
+import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Order;
+import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Seekable;
 import com.vaticle.typedb.core.concept.thing.Attribute;
 import com.vaticle.typedb.core.concept.thing.Thing;
 import com.vaticle.typedb.core.concept.thing.impl.AttributeImpl;
@@ -49,9 +52,12 @@ import static com.vaticle.typedb.core.common.exception.ErrorMessage.TypeWrite.AT
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.TypeWrite.ATTRIBUTE_UNSET_ABSTRACT_HAS_SUBTYPES;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.TypeWrite.ROOT_TYPE_MUTATION;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.TypeWrite.TYPE_HAS_INSTANCES_SET_ABSTRACT;
+import static com.vaticle.typedb.core.common.iterator.Iterators.Sorted.Seekable.emptySorted;
+import static com.vaticle.typedb.core.common.iterator.Iterators.Sorted.Seekable.iterateSorted;
 import static com.vaticle.typedb.core.common.iterator.Iterators.empty;
 import static com.vaticle.typedb.core.common.iterator.Iterators.iterate;
 import static com.vaticle.typedb.core.common.iterator.Iterators.link;
+import static com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.ASC;
 import static com.vaticle.typedb.core.graph.common.Encoding.Edge.Type.OWNS;
 import static com.vaticle.typedb.core.graph.common.Encoding.Edge.Type.OWNS_KEY;
 import static com.vaticle.typedb.core.graph.common.Encoding.Edge.Type.SUB;
@@ -108,19 +114,20 @@ public abstract class AttributeTypeImpl extends ThingTypeImpl implements Attribu
     }
 
     @Override
-    public abstract FunctionalIterator<? extends AttributeTypeImpl> getSubtypes();
+    public abstract Seekable<? extends AttributeTypeImpl, Order.Asc> getSubtypes();
 
     @Override
-    public abstract FunctionalIterator<? extends AttributeTypeImpl> getSubtypesExplicit();
+    public abstract Seekable<? extends AttributeTypeImpl, Order.Asc> getSubtypesExplicit();
 
     @Override
-    public abstract FunctionalIterator<? extends AttributeImpl<?>> getInstances();
+    public abstract Seekable<? extends AttributeImpl<?>, Order.Asc> getInstances();
 
-    FunctionalIterator<TypeVertex> getSubtypeVertices(Encoding.ValueType valueType) {
-        return Iterators.tree(vertex, v -> v.ins().edge(SUB).from().filter(sv -> sv.valueType().equals(valueType)));
+    Seekable<TypeVertex, Order.Asc> getSubtypeVertices(Encoding.ValueType valueType) {
+        return iterateSorted(graphMgr.schema().getSubtypes(vertex), ASC)
+                .filter(sv -> sv.valueType().equals(valueType));
     }
 
-    FunctionalIterator<TypeVertex> getSubtypeVerticesDirect(Encoding.ValueType valueType) {
+    Seekable<TypeVertex, Order.Asc> getSubtypeVerticesDirect(Encoding.ValueType valueType) {
         return vertex.ins().edge(SUB).from().filter(sv -> sv.valueType().equals(valueType));
     }
 
@@ -145,27 +152,26 @@ public abstract class AttributeTypeImpl extends ThingTypeImpl implements Attribu
     public abstract ValueType getValueType();
 
     @Override
-    public FunctionalIterator<? extends ThingTypeImpl> getOwners() {
+    public Seekable<? extends ThingTypeImpl, Order.Asc> getOwners() {
         return getOwners(false);
     }
 
     @Override
-    public FunctionalIterator<? extends ThingTypeImpl> getOwners(boolean onlyKey) {
-        if (isRoot()) return Iterators.empty();
-
+    public Seekable<? extends ThingTypeImpl, Order.Asc> getOwners(boolean onlyKey) {
+        if (isRoot()) return emptySorted();
         return directOwners(onlyKey)
-                .flatMap(ThingTypeImpl::getSubtypes)
+                .mergeMap(ThingTypeImpl::getSubtypes, ASC)
                 .filter(t -> t.overriddenOwns(onlyKey, true).noneMatch(o -> o.equals(this)));
     }
 
-    private FunctionalIterator<? extends ThingTypeImpl> directOwners(boolean onlyKey) {
-        if (isRoot()) return Iterators.empty();
+    private Seekable<? extends ThingTypeImpl, Order.Asc> directOwners(boolean onlyKey) {
+        if (isRoot()) return emptySorted();
 
         if (onlyKey) {
-            return vertex.ins().edge(OWNS_KEY).from().map(v -> ThingTypeImpl.of(graphMgr, v));
+            return vertex.ins().edge(OWNS_KEY).from().mapSorted(v -> ThingTypeImpl.of(graphMgr, v), t -> t.vertex, ASC);
         } else {
-            return link(vertex.ins().edge(OWNS_KEY).from(), vertex.ins().edge(OWNS).from())
-                    .map(v -> ThingTypeImpl.of(graphMgr, v));
+            return vertex.ins().edge(OWNS_KEY).from().merge(vertex.ins().edge(OWNS).from())
+                    .mapSorted(v -> ThingTypeImpl.of(graphMgr, v), t -> t.vertex, ASC);
         }
     }
 
@@ -309,8 +315,8 @@ public abstract class AttributeTypeImpl extends ThingTypeImpl implements Attribu
         }
 
         @Override
-        public FunctionalIterator<AttributeTypeImpl> getSubtypes() {
-            return iterate(graphMgr.schema().getSubtypes(vertex)).map(v -> {
+        public Seekable<AttributeTypeImpl, Order.Asc> getSubtypes() {
+            return iterateSorted(graphMgr.schema().getSubtypes(vertex), ASC).mapSorted(v -> {
                 switch (v.valueType()) {
                     case OBJECT:
                         assert vertex == v;
@@ -328,11 +334,11 @@ public abstract class AttributeTypeImpl extends ThingTypeImpl implements Attribu
                     default:
                         throw exception(TypeDBException.of(UNRECOGNISED_VALUE));
                 }
-            });
+            }, attrType -> attrType.vertex, ASC);
         }
 
         @Override
-        public FunctionalIterator<AttributeTypeImpl> getSubtypesExplicit() {
+        public Seekable<AttributeTypeImpl, Order.Asc> getSubtypesExplicit() {
             return getSubtypesExplicit(v -> {
                 switch (v.valueType()) {
                     case BOOLEAN:
@@ -352,13 +358,13 @@ public abstract class AttributeTypeImpl extends ThingTypeImpl implements Attribu
         }
 
         @Override
-        public FunctionalIterator<AttributeImpl<?>> getInstances() {
+        public Seekable<AttributeImpl<?>, Order.Asc> getInstances() {
             return instances(v -> AttributeImpl.of(v.asAttribute()));
         }
 
         @Override
-        public FunctionalIterator<AttributeImpl<?>> getInstancesExplicit() {
-            return empty();
+        public Seekable<AttributeImpl<?>, Order.Asc> getInstancesExplicit() {
+            return emptySorted();
         }
 
         @Override
@@ -409,22 +415,23 @@ public abstract class AttributeTypeImpl extends ThingTypeImpl implements Attribu
         }
 
         @Override
-        public FunctionalIterator<AttributeTypeImpl.Boolean> getSubtypes() {
-            return iterate(graphMgr.schema().getSubtypes(vertex)).map(v -> AttributeTypeImpl.Boolean.of(graphMgr, v));
+        public Seekable<AttributeTypeImpl.Boolean, Order.Asc> getSubtypes() {
+            return iterateSorted(graphMgr.schema().getSubtypes(vertex), ASC)
+                    .mapSorted(v -> AttributeTypeImpl.Boolean.of(graphMgr, v), attrType -> attrType.vertex, ASC);
         }
 
         @Override
-        public FunctionalIterator<AttributeTypeImpl.Boolean> getSubtypesExplicit() {
+        public Seekable<AttributeTypeImpl.Boolean, Order.Asc> getSubtypesExplicit() {
             return super.getSubtypesExplicit(v -> AttributeTypeImpl.Boolean.of(graphMgr, v));
         }
 
         @Override
-        public FunctionalIterator<AttributeImpl.Boolean> getInstances() {
+        public Seekable<AttributeImpl.Boolean, Order.Asc> getInstances() {
             return instances(v -> new AttributeImpl.Boolean(v.asAttribute().asBoolean()));
         }
 
         @Override
-        public FunctionalIterator<AttributeImpl.Boolean> getInstancesExplicit() {
+        public Seekable<AttributeImpl.Boolean, Order.Asc> getInstancesExplicit() {
             return instancesExplicit(v -> new AttributeImpl.Boolean(v.asAttribute().asBoolean()));
         }
 
@@ -475,13 +482,15 @@ public abstract class AttributeTypeImpl extends ThingTypeImpl implements Attribu
             }
 
             @Override
-            public FunctionalIterator<AttributeTypeImpl.Boolean> getSubtypes() {
-                return super.getSubtypeVertices(BOOLEAN).map(v -> AttributeTypeImpl.Boolean.of(graphMgr, v));
+            public Seekable<AttributeTypeImpl.Boolean, Order.Asc> getSubtypes() {
+                return super.getSubtypeVertices(BOOLEAN)
+                        .mapSorted(v -> AttributeTypeImpl.Boolean.of(graphMgr, v), attrType -> attrType.vertex, ASC);
             }
 
             @Override
-            public FunctionalIterator<AttributeTypeImpl.Boolean> getSubtypesExplicit() {
-                return super.getSubtypeVerticesDirect(BOOLEAN).map(v -> AttributeTypeImpl.Boolean.of(graphMgr, v));
+            public Seekable<AttributeTypeImpl.Boolean, Order.Asc> getSubtypesExplicit() {
+                return super.getSubtypeVerticesDirect(BOOLEAN)
+                        .mapSorted(v -> AttributeTypeImpl.Boolean.of(graphMgr, v), attrType -> attrType.vertex, ASC);
             }
 
             @Override
@@ -547,22 +556,23 @@ public abstract class AttributeTypeImpl extends ThingTypeImpl implements Attribu
         }
 
         @Override
-        public FunctionalIterator<AttributeTypeImpl.Long> getSubtypes() {
-            return iterate(graphMgr.schema().getSubtypes(vertex)).map(v -> AttributeTypeImpl.Long.of(graphMgr, v));
+        public Seekable<AttributeTypeImpl.Long, Order.Asc> getSubtypes() {
+            return iterateSorted(graphMgr.schema().getSubtypes(vertex), ASC)
+                    .mapSorted(v -> AttributeTypeImpl.Long.of(graphMgr, v), attrType -> attrType.vertex, ASC);
         }
 
         @Override
-        public FunctionalIterator<AttributeTypeImpl.Long> getSubtypesExplicit() {
+        public Seekable<AttributeTypeImpl.Long, Order.Asc> getSubtypesExplicit() {
             return super.getSubtypesExplicit(v -> AttributeTypeImpl.Long.of(graphMgr, v));
         }
 
         @Override
-        public FunctionalIterator<AttributeImpl.Long> getInstances() {
+        public Seekable<AttributeImpl.Long, Order.Asc> getInstances() {
             return instances(v -> new AttributeImpl.Long(v.asAttribute().asLong()));
         }
 
         @Override
-        public FunctionalIterator<AttributeImpl.Long> getInstancesExplicit() {
+        public Seekable<AttributeImpl.Long, Order.Asc> getInstancesExplicit() {
             return instancesExplicit(v -> new AttributeImpl.Long(v.asAttribute().asLong()));
         }
 
@@ -613,13 +623,15 @@ public abstract class AttributeTypeImpl extends ThingTypeImpl implements Attribu
             }
 
             @Override
-            public FunctionalIterator<AttributeTypeImpl.Long> getSubtypes() {
-                return super.getSubtypeVertices(LONG).map(v -> AttributeTypeImpl.Long.of(graphMgr, v));
+            public Seekable<AttributeTypeImpl.Long, Order.Asc> getSubtypes() {
+                return super.getSubtypeVertices(LONG)
+                        .mapSorted(v -> AttributeTypeImpl.Long.of(graphMgr, v), attrType -> attrType.vertex, ASC);
             }
 
             @Override
-            public FunctionalIterator<AttributeTypeImpl.Long> getSubtypesExplicit() {
-                return super.getSubtypeVerticesDirect(LONG).map(v -> AttributeTypeImpl.Long.of(graphMgr, v));
+            public Seekable<AttributeTypeImpl.Long, Order.Asc> getSubtypesExplicit() {
+                return super.getSubtypeVerticesDirect(LONG)
+                        .mapSorted(v -> AttributeTypeImpl.Long.of(graphMgr, v), attrType -> attrType.vertex, ASC);
             }
 
             @Override
@@ -685,22 +697,23 @@ public abstract class AttributeTypeImpl extends ThingTypeImpl implements Attribu
         }
 
         @Override
-        public FunctionalIterator<AttributeTypeImpl.Double> getSubtypes() {
-            return iterate(graphMgr.schema().getSubtypes(vertex)).map(v -> AttributeTypeImpl.Double.of(graphMgr, v));
+        public Seekable<AttributeTypeImpl.Double, Order.Asc> getSubtypes() {
+            return iterateSorted(graphMgr.schema().getSubtypes(vertex), ASC)
+                    .mapSorted(v -> AttributeTypeImpl.Double.of(graphMgr, v), attrType -> attrType.vertex, ASC);
         }
 
         @Override
-        public FunctionalIterator<AttributeTypeImpl.Double> getSubtypesExplicit() {
+        public Seekable<AttributeTypeImpl.Double, Order.Asc> getSubtypesExplicit() {
             return super.getSubtypesExplicit(v -> AttributeTypeImpl.Double.of(graphMgr, v));
         }
 
         @Override
-        public FunctionalIterator<AttributeImpl.Double> getInstances() {
+        public Seekable<AttributeImpl.Double, Order.Asc> getInstances() {
             return instances(v -> new AttributeImpl.Double(v.asAttribute().asDouble()));
         }
 
         @Override
-        public FunctionalIterator<AttributeImpl.Double> getInstancesExplicit() {
+        public Seekable<AttributeImpl.Double, Order.Asc> getInstancesExplicit() {
             return instancesExplicit(v -> new AttributeImpl.Double(v.asAttribute().asDouble()));
         }
 
@@ -751,13 +764,15 @@ public abstract class AttributeTypeImpl extends ThingTypeImpl implements Attribu
             }
 
             @Override
-            public FunctionalIterator<AttributeTypeImpl.Double> getSubtypes() {
-                return super.getSubtypeVertices(DOUBLE).map(v -> AttributeTypeImpl.Double.of(graphMgr, v));
+            public Seekable<AttributeTypeImpl.Double, Order.Asc> getSubtypes() {
+                return super.getSubtypeVertices(DOUBLE)
+                        .mapSorted(v -> AttributeTypeImpl.Double.of(graphMgr, v), attrType -> attrType.vertex, ASC);
             }
 
             @Override
-            public FunctionalIterator<AttributeTypeImpl.Double> getSubtypesExplicit() {
-                return super.getSubtypeVerticesDirect(DOUBLE).map(v -> AttributeTypeImpl.Double.of(graphMgr, v));
+            public Seekable<AttributeTypeImpl.Double, Order.Asc> getSubtypesExplicit() {
+                return super.getSubtypeVerticesDirect(DOUBLE)
+                        .mapSorted(v -> AttributeTypeImpl.Double.of(graphMgr, v), attrType -> attrType.vertex, ASC);
             }
 
             @Override
@@ -823,22 +838,23 @@ public abstract class AttributeTypeImpl extends ThingTypeImpl implements Attribu
         }
 
         @Override
-        public FunctionalIterator<AttributeTypeImpl.String> getSubtypes() {
-            return iterate(graphMgr.schema().getSubtypes(vertex)).map(v -> AttributeTypeImpl.String.of(graphMgr, v));
+        public Seekable<AttributeTypeImpl.String, Order.Asc> getSubtypes() {
+            return iterateSorted(graphMgr.schema().getSubtypes(vertex), ASC)
+                    .mapSorted(v -> AttributeTypeImpl.String.of(graphMgr, v), attrType -> attrType.vertex, ASC);
         }
 
         @Override
-        public FunctionalIterator<AttributeTypeImpl.String> getSubtypesExplicit() {
+        public Seekable<AttributeTypeImpl.String, Order.Asc> getSubtypesExplicit() {
             return super.getSubtypesExplicit(v -> AttributeTypeImpl.String.of(graphMgr, v));
         }
 
         @Override
-        public FunctionalIterator<AttributeImpl.String> getInstances() {
+        public Seekable<AttributeImpl.String, Order.Asc> getInstances() {
             return instances(v -> new AttributeImpl.String(v.asAttribute().asString()));
         }
 
         @Override
-        public FunctionalIterator<AttributeImpl.String> getInstancesExplicit() {
+        public Seekable<AttributeImpl.String, Order.Asc> getInstancesExplicit() {
             return instancesExplicit(v -> new AttributeImpl.String(v.asAttribute().asString()));
         }
 
@@ -918,13 +934,15 @@ public abstract class AttributeTypeImpl extends ThingTypeImpl implements Attribu
             }
 
             @Override
-            public FunctionalIterator<AttributeTypeImpl.String> getSubtypes() {
-                return super.getSubtypeVertices(STRING).map(v -> AttributeTypeImpl.String.of(graphMgr, v));
+            public Seekable<AttributeTypeImpl.String, Order.Asc> getSubtypes() {
+                return super.getSubtypeVertices(STRING)
+                        .mapSorted(v -> AttributeTypeImpl.String.of(graphMgr, v), attrType -> attrType.vertex, ASC);
             }
 
             @Override
-            public FunctionalIterator<AttributeTypeImpl.String> getSubtypesExplicit() {
-                return super.getSubtypeVerticesDirect(STRING).map(v -> AttributeTypeImpl.String.of(graphMgr, v));
+            public Seekable<AttributeTypeImpl.String, Order.Asc> getSubtypesExplicit() {
+                return super.getSubtypeVerticesDirect(STRING)
+                        .mapSorted(v -> AttributeTypeImpl.String.of(graphMgr, v), attrType -> attrType.vertex, ASC);
             }
 
             @Override
@@ -1000,22 +1018,23 @@ public abstract class AttributeTypeImpl extends ThingTypeImpl implements Attribu
         }
 
         @Override
-        public FunctionalIterator<AttributeTypeImpl.DateTime> getSubtypes() {
-            return iterate(graphMgr.schema().getSubtypes(vertex)).map(v -> AttributeTypeImpl.DateTime.of(graphMgr, v));
+        public Seekable<AttributeTypeImpl.DateTime, Order.Asc> getSubtypes() {
+            return iterateSorted(graphMgr.schema().getSubtypes(vertex), ASC)
+                    .mapSorted(v -> AttributeTypeImpl.DateTime.of(graphMgr, v), attrType -> attrType.vertex, ASC);
         }
 
         @Override
-        public FunctionalIterator<AttributeTypeImpl.DateTime> getSubtypesExplicit() {
+        public Seekable<AttributeTypeImpl.DateTime, Order.Asc> getSubtypesExplicit() {
             return super.getSubtypesExplicit(v -> AttributeTypeImpl.DateTime.of(graphMgr, v));
         }
 
         @Override
-        public FunctionalIterator<AttributeImpl.DateTime> getInstances() {
+        public Seekable<AttributeImpl.DateTime, Order.Asc> getInstances() {
             return instances(v -> new AttributeImpl.DateTime(v.asAttribute().asDateTime()));
         }
 
         @Override
-        public FunctionalIterator<AttributeImpl.DateTime> getInstancesExplicit() {
+        public Seekable<AttributeImpl.DateTime, Order.Asc> getInstancesExplicit() {
             return instancesExplicit(v -> new AttributeImpl.DateTime(v.asAttribute().asDateTime()));
         }
 
@@ -1066,13 +1085,16 @@ public abstract class AttributeTypeImpl extends ThingTypeImpl implements Attribu
             }
 
             @Override
-            public FunctionalIterator<AttributeTypeImpl.DateTime> getSubtypes() {
-                return super.getSubtypeVertices(DATETIME).map(v -> AttributeTypeImpl.DateTime.of(graphMgr, v));
+            public Seekable<AttributeTypeImpl.DateTime, Order.Asc> getSubtypes() {
+                return super.getSubtypeVertices(DATETIME)
+                        .mapSorted(v -> AttributeTypeImpl.DateTime.of(graphMgr, v), attrType -> attrType.vertex, ASC);
+
             }
 
             @Override
-            public FunctionalIterator<AttributeTypeImpl.DateTime> getSubtypesExplicit() {
-                return super.getSubtypeVerticesDirect(DATETIME).map(v -> AttributeTypeImpl.DateTime.of(graphMgr, v));
+            public Seekable<AttributeTypeImpl.DateTime, Order.Asc> getSubtypesExplicit() {
+                return super.getSubtypeVerticesDirect(DATETIME)
+                        .mapSorted(v -> AttributeTypeImpl.DateTime.of(graphMgr, v), attrType -> attrType.vertex, ASC);
             }
 
             @Override

@@ -20,6 +20,8 @@ package com.vaticle.typedb.core.concept.type.impl;
 
 import com.vaticle.typedb.core.common.exception.TypeDBException;
 import com.vaticle.typedb.core.common.iterator.FunctionalIterator;
+import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Order;
+import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Seekable;
 import com.vaticle.typedb.core.concept.thing.Relation;
 import com.vaticle.typedb.core.concept.thing.impl.RelationImpl;
 import com.vaticle.typedb.core.concept.type.AttributeType;
@@ -43,8 +45,9 @@ import static com.vaticle.typedb.core.common.exception.ErrorMessage.TypeWrite.RE
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.TypeWrite.RELATION_RELATES_ROLE_NOT_AVAILABLE;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.TypeWrite.ROOT_TYPE_MUTATION;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.TypeWrite.TYPE_HAS_INSTANCES_SET_ABSTRACT;
-import static com.vaticle.typedb.core.common.iterator.Iterators.iterate;
+import static com.vaticle.typedb.core.common.iterator.Iterators.Sorted.Seekable.iterateSorted;
 import static com.vaticle.typedb.core.common.iterator.Iterators.link;
+import static com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.ASC;
 import static com.vaticle.typedb.core.graph.common.Encoding.Edge.Type.RELATES;
 import static com.vaticle.typedb.core.graph.common.Encoding.Vertex.Type.RELATION_TYPE;
 import static com.vaticle.typedb.core.graph.common.Encoding.Vertex.Type.Root.RELATION;
@@ -103,22 +106,23 @@ public class RelationTypeImpl extends ThingTypeImpl implements RelationType {
     }
 
     @Override
-    public FunctionalIterator<RelationTypeImpl> getSubtypes() {
-        return iterate(graphMgr.schema().getSubtypes(vertex)).map(v -> of(graphMgr, v));
+    public Seekable<RelationTypeImpl, Order.Asc> getSubtypes() {
+        return iterateSorted(graphMgr.schema().getSubtypes(vertex), ASC)
+                .mapSorted(v -> of(graphMgr, v), relationType -> relationType.vertex, ASC);
     }
 
     @Override
-    public FunctionalIterator<RelationTypeImpl> getSubtypesExplicit() {
+    public Seekable<RelationTypeImpl, Order.Asc> getSubtypesExplicit() {
         return super.getSubtypesExplicit(v -> of(graphMgr, v));
     }
 
     @Override
-    public FunctionalIterator<RelationImpl> getInstances() {
+    public Seekable<RelationImpl, Order.Asc> getInstances() {
         return instances(RelationImpl::of);
     }
 
     @Override
-    public FunctionalIterator<RelationImpl> getInstancesExplicit() {
+    public Seekable<RelationImpl, Order.Asc> getInstancesExplicit() {
         return instancesExplicit(RelationImpl::of);
     }
 
