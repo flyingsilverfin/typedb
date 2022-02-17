@@ -19,21 +19,24 @@
 package com.vaticle.typedb.core.concept.type;
 
 import com.vaticle.typedb.core.common.iterator.FunctionalIterator;
+import com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Seekable;
 import com.vaticle.typedb.core.concept.thing.Relation;
+
+import static com.vaticle.typedb.core.common.iterator.sorted.SortedIterator.Order.Asc;
 
 public interface RelationType extends ThingType {
 
     @Override
-    FunctionalIterator<? extends RelationType> getSubtypes();
+    Seekable<? extends RelationType, Asc> getSubtypes();
 
     @Override
-    FunctionalIterator<? extends RelationType> getSubtypesExplicit();
+    Seekable<? extends RelationType, Asc> getSubtypesExplicit();
 
     @Override
-    FunctionalIterator<? extends Relation> getInstances();
+    Seekable<? extends Relation, Asc> getInstances();
 
     @Override
-    FunctionalIterator<? extends Relation> getInstancesExplicit();
+    Seekable<? extends Relation, Asc> getInstancesExplicit();
 
     void setSupertype(RelationType superType);
 

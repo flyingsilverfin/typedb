@@ -77,7 +77,7 @@ public abstract class ThingImpl extends ConceptImpl implements Thing {
         }
     }
 
-    protected ThingVertex readableVertex() {
+    public ThingVertex readableVertex() {
         return vertex;
     }
 
