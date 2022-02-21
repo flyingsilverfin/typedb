@@ -54,6 +54,7 @@ import static com.vaticle.typedb.core.common.exception.ErrorMessage.TypeWrite.RO
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.TypeWrite.TYPE_HAS_INSTANCES_SET_ABSTRACT;
 import static com.vaticle.typedb.core.common.iterator.Iterators.Sorted.Seekable.emptySorted;
 import static com.vaticle.typedb.core.common.iterator.Iterators.Sorted.Seekable.iterateSorted;
+import static com.vaticle.typedb.core.common.iterator.Iterators.Sorted.Seekable.merge;
 import static com.vaticle.typedb.core.common.iterator.Iterators.empty;
 import static com.vaticle.typedb.core.common.iterator.Iterators.iterate;
 import static com.vaticle.typedb.core.common.iterator.Iterators.link;
@@ -476,8 +477,12 @@ public abstract class AttributeTypeImpl extends ThingTypeImpl implements Attribu
 
             @Override
             public Seekable<AttributeTypeImpl.Boolean, Order.Asc> getSubtypes() {
-                return super.getSubtypeVertices(BOOLEAN)
-                        .mapSorted(v -> AttributeTypeImpl.Boolean.of(graphMgr, v), attrType -> attrType.vertex, ASC);
+                return merge(
+                        iterateSorted(ASC, this),
+                        super.getSubtypeVertices(BOOLEAN).mapSorted(v ->
+                                AttributeTypeImpl.Boolean.of(graphMgr, v), attrType -> attrType.vertex, ASC
+                        )
+                );
             }
 
             @Override
@@ -617,8 +622,12 @@ public abstract class AttributeTypeImpl extends ThingTypeImpl implements Attribu
 
             @Override
             public Seekable<AttributeTypeImpl.Long, Order.Asc> getSubtypes() {
-                return super.getSubtypeVertices(LONG)
-                        .mapSorted(v -> AttributeTypeImpl.Long.of(graphMgr, v), attrType -> attrType.vertex, ASC);
+                return merge(
+                        iterateSorted(ASC, this),
+                        super.getSubtypeVertices(LONG).mapSorted(v ->
+                                AttributeTypeImpl.Long.of(graphMgr, v), attrType -> attrType.vertex, ASC
+                        )
+                );
             }
 
             @Override
@@ -758,8 +767,12 @@ public abstract class AttributeTypeImpl extends ThingTypeImpl implements Attribu
 
             @Override
             public Seekable<AttributeTypeImpl.Double, Order.Asc> getSubtypes() {
-                return super.getSubtypeVertices(DOUBLE)
-                        .mapSorted(v -> AttributeTypeImpl.Double.of(graphMgr, v), attrType -> attrType.vertex, ASC);
+                return merge(
+                        iterateSorted(ASC, this),
+                        super.getSubtypeVertices(DOUBLE).mapSorted(v ->
+                                AttributeTypeImpl.Double.of(graphMgr, v), attrType -> attrType.vertex, ASC
+                        )
+                );
             }
 
             @Override
@@ -928,8 +941,12 @@ public abstract class AttributeTypeImpl extends ThingTypeImpl implements Attribu
 
             @Override
             public Seekable<AttributeTypeImpl.String, Order.Asc> getSubtypes() {
-                return super.getSubtypeVertices(STRING)
-                        .mapSorted(v -> AttributeTypeImpl.String.of(graphMgr, v), attrType -> attrType.vertex, ASC);
+                return merge(
+                        iterateSorted(ASC, this),
+                        super.getSubtypeVertices(STRING).mapSorted(v ->
+                                AttributeTypeImpl.String.of(graphMgr, v), attrType -> attrType.vertex, ASC
+                        )
+                );
             }
 
             @Override
@@ -1079,9 +1096,12 @@ public abstract class AttributeTypeImpl extends ThingTypeImpl implements Attribu
 
             @Override
             public Seekable<AttributeTypeImpl.DateTime, Order.Asc> getSubtypes() {
-                return super.getSubtypeVertices(DATETIME)
-                        .mapSorted(v -> AttributeTypeImpl.DateTime.of(graphMgr, v), attrType -> attrType.vertex, ASC);
-
+                return merge(
+                        iterateSorted(ASC, this),
+                        super.getSubtypeVertices(DATETIME).mapSorted(v ->
+                                AttributeTypeImpl.DateTime.of(graphMgr, v), attrType -> attrType.vertex, ASC
+                        )
+                );
             }
 
             @Override
