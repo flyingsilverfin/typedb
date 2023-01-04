@@ -48,12 +48,12 @@ import java.util.TreeSet;
 import java.util.function.Function;
 
 import static com.vaticle.typedb.common.collection.Collections.intersection;
-import static com.vaticle.typedb.common.collection.Collections.list;
 import static com.vaticle.typedb.common.collection.Collections.set;
 import static com.vaticle.typedb.common.util.Objects.className;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.ILLEGAL_CAST;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.ILLEGAL_STATE;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.UNSUPPORTED_OPERATION;
+import static com.vaticle.typedb.core.common.iterator.Iterators.empty;
 import static com.vaticle.typedb.core.common.iterator.Iterators.iterate;
 import static com.vaticle.typedb.core.common.iterator.sorted.SortedIterators.Forwardable.emptySorted;
 import static com.vaticle.typedb.core.common.iterator.sorted.SortedIterators.Forwardable.iterateSorted;
@@ -217,13 +217,13 @@ public abstract class ProcedureVertex<
             assert types.hasNext();
             Optional<Predicate.Value<?, ?>> eq = iterate(props().predicates()).filter(p -> p.operator().equals(EQ)).first();
             if (eq.isPresent()) {
-                List<AttributeVertex<?>> attributes = attributesEqual(graphMgr, parameters, eq.get());
+                List<? extends AttributeVertex<?>> attributes = attributesEqual(graphMgr, parameters, eq.get()).toList();
                 return iterateAndFilterPredicates(attributes, parameters, order, forceValueSort);
             } else {
                 if (id().isVariable()) types = types.filter(t -> !t.encoding().equals(ROLE_TYPE));
-                List<Pair<TypeVertex, Forwardable<ThingVertex, ORDER>>> itersByType = types.map(t ->
+                FunctionalIterator<Pair<TypeVertex, Forwardable<ThingVertex, ORDER>>> itersByType = types.map(t ->
                         new Pair<>(t, graphMgr.data().getReadable(t, order))
-                ).toList();
+                );
                 return mergeAndFilterPredicatesOnVertices(
                         graphMgr, itersByType, parameters, order, forceValueSort
                 );
@@ -305,18 +305,18 @@ public abstract class ProcedureVertex<
         }
 
         <ORDER extends Order> Forwardable<? extends ThingVertex, ORDER> mergeAndFilterPredicatesOnVertices(
-                GraphManager graphMgr, List<Pair<TypeVertex, Forwardable<ThingVertex, ORDER>>> vertexIters,
+                GraphManager graphMgr, FunctionalIterator<Pair<TypeVertex, Forwardable<ThingVertex, ORDER>>> vertexIters,
                 Traversal.Parameters params, ORDER order
         ) {
             return mergeAndFilterPredicatesOnVertices(graphMgr, vertexIters, params, order, false);
         }
 
         <ORDER extends Order> Forwardable<? extends ThingVertex, ORDER> mergeAndFilterPredicatesOnVertices(
-                GraphManager graphMgr, List<Pair<TypeVertex, Forwardable<ThingVertex, ORDER>>> vertexIters,
+                GraphManager graphMgr, FunctionalIterator<Pair<TypeVertex, Forwardable<ThingVertex, ORDER>>> vertexIters,
                 Traversal.Parameters params, ORDER order, boolean forceValueSort
         ) {
             if (forceValueSort) {
-                FunctionalIterator<Forwardable<ThingVertex, ORDER>> mapped = iterate(vertexIters).map(pair -> {
+                FunctionalIterator<Forwardable<ThingVertex, ORDER>> mapped = vertexIters.map(pair -> {
                     if (pair.first().isAttributeType() && pair.first().asType().valueType().equals(STRING)) {
                         // TODO: once strings are sortable by value, we can optimise the predicates
                         return pair.second().filter(v -> checkPredicates(v, params, set()));
@@ -335,7 +335,7 @@ public abstract class ProcedureVertex<
                 });
                 return merge(mapped, order);
             } else {
-                return merge(iterate(vertexIters).map(pair -> {
+                return merge(vertexIters.map(pair -> {
                     if (pair.first().isAttributeType() && pair.first().asType().valueType().equals(STRING)) {
                         // TODO: once strings are sortable by value, we can optimise the predicates
                         return pair.second().filter(v -> checkPredicates(v, params, set()));
@@ -347,19 +347,19 @@ public abstract class ProcedureVertex<
         }
 
         <ORDER extends Order> Forwardable<KeyValue<ThingVertex, ThingVertex>, ORDER> mergeAndFilterPredicatesOnEdges(
-                GraphManager graphMgr, List<Pair<TypeVertex, Forwardable<KeyValue<ThingVertex, ThingVertex>, ORDER>>> edgeIters,
+                GraphManager graphMgr, FunctionalIterator<Pair<TypeVertex, Forwardable<KeyValue<ThingVertex, ThingVertex>, ORDER>>> edgeIters,
                 Traversal.Parameters params, ORDER order
         ) {
-            if (props().predicates().isEmpty()) return merge(iterate(edgeIters).map(Pair::second), order);
-            else if (iterate(edgeIters).anyMatch(pair -> pair.first().isAttributeType() && pair.first().asType().valueType().equals(STRING))) {
+            if (props().predicates().isEmpty()) return merge(edgeIters.map(Pair::second), order);
+            else if (edgeIters.anyMatch(pair -> pair.first().isAttributeType() && pair.first().asType().valueType().equals(STRING))) {
                 // TODO: once strings are sortable by value, we can optimise the predicates
                 return merge(
-                        iterate(edgeIters).map(pair -> pair.second().filter(a -> checkPredicates(a.key(), params, set()))),
+                        edgeIters.map(pair -> pair.second().filter(a -> checkPredicates(a.key(), params, set()))),
                         order
                 );
             } else {
                 return merge(
-                        iterate(edgeIters).map(pair -> applyPredicatesOnEdges(graphMgr, params, pair.first(), pair.second())),
+                        edgeIters.map(pair -> applyPredicatesOnEdges(graphMgr, params, pair.first(), pair.second())),
                         order
                 );
             }
@@ -449,7 +449,7 @@ public abstract class ProcedureVertex<
             return props().types().contains(vertex.type().properLabel());
         }
 
-        List<AttributeVertex<?>> attributesEqual(
+        FunctionalIterator<? extends AttributeVertex<?>> attributesEqual(
                 GraphManager graphMgr, Traversal.Parameters params, Predicate.Value<?, ?> eq
         ) {
             FunctionalIterator<TypeVertex> attributeTypes = iterate(props().types().iterator())
@@ -458,18 +458,15 @@ public abstract class ProcedureVertex<
             return attributesEqual(graphMgr, attributeTypes, params, eq);
         }
 
-        List<AttributeVertex<?>> attributesEqual(
+        FunctionalIterator<? extends AttributeVertex<?>> attributesEqual(
                 GraphManager graphMgr, FunctionalIterator<TypeVertex> attributeTypes,
                 Traversal.Parameters parameters, Predicate.Value<?, ?> eqPredicate
         ) {
             assert id().isVariable();
             Set<Traversal.Parameters.Value<?>> values = parameters.getValues(id().asVariable(), eqPredicate);
-            if (values.size() > 1) return list();
+            if (values.size() > 1) return empty();
             Traversal.Parameters.Value<?> value = values.iterator().next();
-            List<AttributeVertex<?>> attributes = new ArrayList<>();
-            attributeTypes.map(t -> attributeVertex(graphMgr, t, value))
-                    .filter(Objects::nonNull).forEachRemaining(attributes::add);
-            return attributes;
+            return attributeTypes.map(t -> attributeVertex(graphMgr, t, value)).filter(Objects::nonNull);
         }
 
         private <T> AttributeVertex<?> attributeVertex(

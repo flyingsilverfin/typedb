@@ -180,7 +180,8 @@ public class GraphPlanner implements ComponentPlanner {
 
     private void createOptimiserConstraints() {
         String conPrefix = "planner_con_";
-        for (int i = 0; i < vertices.size(); i++) {
+        int verticesSize = vertices.size();
+        for (int i = 0; i < verticesSize; i++) {
             OptimiserConstraint conOneVertexAtOrderI = optimiser.constraint(1, 1, conPrefix + "one_vertex_at_order_" + i);
             for (PlannerVertex<?> vertex : vertices.values()) {
                 conOneVertexAtOrderI.setCoefficient(vertex.varOrderAssignment[i], 1);
@@ -440,7 +441,8 @@ public class GraphPlanner implements ComponentPlanner {
     private void initialiseVertexOrderGreedy() {
         Set<PlannerVertex<?>> unorderedVertices = new HashSet<>(vertices.values());
         int vertexOrder;
-        for (vertexOrder = 0; vertexOrder < modifiers.sorting().variables().size(); vertexOrder++) {
+        int sortingSize = modifiers.sorting().variables().size();
+        for (vertexOrder = 0; vertexOrder < sortingSize; vertexOrder++) {
             PlannerVertex<?> vertex = vertices.get(modifiers.sorting().variables().get(vertexOrder));
             vertex.setOrder(vertexOrder);
             unorderedVertices.remove(vertex);

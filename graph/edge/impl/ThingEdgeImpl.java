@@ -20,13 +20,13 @@ package com.vaticle.typedb.core.graph.edge.impl;
 
 import com.vaticle.typedb.core.common.collection.ByteArray;
 import com.vaticle.typedb.core.common.exception.TypeDBException;
-import com.vaticle.typedb.core.graph.ThingGraph;
 import com.vaticle.typedb.core.encoding.Encoding;
-import com.vaticle.typedb.core.graph.edge.ThingEdge;
 import com.vaticle.typedb.core.encoding.iid.EdgeViewIID;
 import com.vaticle.typedb.core.encoding.iid.InfixIID;
 import com.vaticle.typedb.core.encoding.iid.KeyIID;
 import com.vaticle.typedb.core.encoding.iid.VertexIID;
+import com.vaticle.typedb.core.graph.ThingGraph;
+import com.vaticle.typedb.core.graph.edge.ThingEdge;
 import com.vaticle.typedb.core.graph.vertex.ThingVertex;
 import com.vaticle.typedb.core.graph.vertex.TypeVertex;
 
@@ -147,7 +147,7 @@ public abstract class ThingEdgeImpl implements ThingEdge {
         private final ThingVertex.Write from;
         private final ThingVertex.Write to;
         private final ThingVertex.Write optimised;
-        private final int hash;
+        private int hash = 0;
 
         /**
          * Default constructor for {@code ThingEdgeImpl.Buffered}.
@@ -177,7 +177,6 @@ public abstract class ThingEdgeImpl implements ThingEdge {
             this.from = from;
             this.to = to;
             this.optimised = optimised;
-            this.hash = hash(Buffered.class, encoding, from, to);
             committed = new AtomicBoolean(false);
         }
 
@@ -297,6 +296,7 @@ public abstract class ThingEdgeImpl implements ThingEdge {
          */
         @Override
         public final int hashCode() {
+            if (hash == 0) hash = hash(Buffered.class, encoding, from, to);
             return hash;
         }
     }
@@ -306,7 +306,7 @@ public abstract class ThingEdgeImpl implements ThingEdge {
         private final ThingVertex from;
         private final ThingVertex to;
         private final TypeVertex optimisedType;
-        private final int hash;
+        private int hash = 0;
 
         public Target(Encoding.Edge.Thing encoding, ThingVertex from, ThingVertex to, @Nullable TypeVertex optimisedType) {
             super(from.graph(), encoding, false);
@@ -314,7 +314,6 @@ public abstract class ThingEdgeImpl implements ThingEdge {
             this.from = from;
             this.to = to;
             this.optimisedType = optimisedType;
-            this.hash = hash(Target.class, encoding, from, to, optimisedType);
         }
 
         @Override
@@ -392,6 +391,7 @@ public abstract class ThingEdgeImpl implements ThingEdge {
 
         @Override
         public final int hashCode() {
+            if (hash == 0) hash = hash(Target.class, encoding, from, to, optimisedType);
             return hash;
         }
     }
@@ -401,7 +401,7 @@ public abstract class ThingEdgeImpl implements ThingEdge {
         private final VertexIID.Thing fromIID;
         private final VertexIID.Thing toIID;
         private final VertexIID.Thing optimisedIID;
-        private final int hash;
+        private int hash = 0;
 
         /**
          * Default constructor for {@code Edge.Persisted}.
@@ -435,8 +435,6 @@ public abstract class ThingEdgeImpl implements ThingEdge {
             } else {
                 optimisedIID = null;
             }
-
-            this.hash = hash(Persisted.class, encoding, fromIID.hashCode(), toIID.hashCode());
         }
 
         @Override
@@ -558,6 +556,7 @@ public abstract class ThingEdgeImpl implements ThingEdge {
          */
         @Override
         public final int hashCode() {
+            if (hash == 0) hash = hash(Persisted.class, encoding, fromIID, toIID);
             return hash;
         }
     }

@@ -160,7 +160,8 @@ public class RelationIterator extends AbstractFunctionalIterator<VertexMap> {
     }
 
     private void fetchOrRenewProposed() {
-        for (int i = 0; i < edges.size(); i++) {
+        int edgesSize = edges.size();
+        for (int i = 0; i < edgesSize; i++) {
             if (i == proposer) continue;
             verifyProposed(i);
             if (state == State.COMPLETED) return;

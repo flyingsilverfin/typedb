@@ -41,7 +41,7 @@ public abstract class Options<PARENT extends Options<?, ?>, SELF extends Options
     public static final boolean DEFAULT_INFER = false;
     public static final boolean DEFAULT_TRACE_INFERENCE = false;
     public static final boolean DEFAULT_EXPLAIN = false;
-    public static final boolean DEFAULT_PARALLEL = true;
+    public static final boolean DEFAULT_PARALLEL = false;
     public static final boolean DEFAULT_QUERY_READ_PREFETCH = true;
     public static final boolean DEFAULT_QUERY_WRITE_PREFETCH = false;
     public static final boolean DEFAULT_READ_ANY_REPLICA = false;
@@ -115,9 +115,10 @@ public abstract class Options<PARENT extends Options<?, ?>, SELF extends Options
     }
 
     public boolean parallel() {
-        if (parallel != null) return parallel;
-        else if (parent != null) return parent.parallel();
-        else return DEFAULT_PARALLEL;
+        return false;
+//        if (parallel != null) return parallel;
+//        else if (parent != null) return parent.parallel();
+//        else return DEFAULT_PARALLEL;
     }
 
     public SELF parallel(boolean parallel) {

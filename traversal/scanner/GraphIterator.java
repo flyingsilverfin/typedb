@@ -45,7 +45,6 @@ import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.Set;
-import java.util.SortedSet;
 import java.util.TreeSet;
 
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.ILLEGAL_STATE;
@@ -70,8 +69,8 @@ public class GraphIterator extends AbstractFunctionalIterator<VertexMap> {
     private final Map<Identifier.Variable, Scope> scopes;
     private final Map<ProcedureVertex<?, ?>, VertexTraverser> vertexTraversers;
     private final Vertex<?, ?> initial;
-    private final SortedSet<ProcedureVertex<?, ?>> toTraverse;
-    private final SortedSet<ProcedureVertex<?, ?>> toRevisit;
+    private final TreeSet<ProcedureVertex<?, ?>> toTraverse;
+    private final TreeSet<ProcedureVertex<?, ?>> toRevisit;
     private Direction direction;
     private IteratorState iteratorState;
 
@@ -112,7 +111,7 @@ public class GraphIterator extends AbstractFunctionalIterator<VertexMap> {
     /**
      * We make explicit hidden dependencies caused by filtering roles through scopes. A vertex that must backtrack
      * to another vertex in order to find permutations of role instances is annotated with an implicit dependency.
-     *
+     * <p>
      * Specifically, this occurs when traversing over two sibling edges that can take on an overlapping set of roles.
      * In this case, the two destinations vertices have an implicit dependency.
      * It can also happen between a pair of vertices that can take on overlapping Role instances.
@@ -214,10 +213,10 @@ public class GraphIterator extends AbstractFunctionalIterator<VertexMap> {
                 ((direction == Direction.REVISIT_ALL || direction == Direction.REVISIT_RETRIEVED) && !toRevisit.isEmpty())) {
             ProcedureVertex<?, ?> vertex;
             if (direction == Direction.TRAVERSE) {
-                toTraverse.remove(vertex = toTraverse.first());
+                vertex = toTraverse.pollFirst();
                 traverse(vertex);
             } else if (direction == Direction.REVISIT_ALL) {
-                toRevisit.remove(vertex = toRevisit.last());
+                vertex = toRevisit.pollLast();
                 revisit(vertex);
             } else {
                 toRevisit.remove(vertex = toRevisit.last());
@@ -232,8 +231,7 @@ public class GraphIterator extends AbstractFunctionalIterator<VertexMap> {
         if (vertexTraverser.findNextVertex()) {
             success(vertexTraverser);
             assert direction == Direction.TRAVERSE;
-        }
-        else {
+        } else {
             failed(vertexTraverser);
             direction = Direction.REVISIT_ALL;
         }
@@ -291,6 +289,9 @@ public class GraphIterator extends AbstractFunctionalIterator<VertexMap> {
         private Vertex<?, ?> vertex;
         private boolean anyAnswerFound;
 
+        // caches
+        private final List<ProcedureEdge<?, ?>> inRolePlayerEdges;
+
         private VertexTraverser(ProcedureVertex<?, ?> procedureVertex) {
             this.procedureVertex = procedureVertex;
             this.localScope = procedureVertex.id().isScoped() ? scopes.get(procedureVertex.id().asScoped().scope()) : null;
@@ -305,6 +306,8 @@ public class GraphIterator extends AbstractFunctionalIterator<VertexMap> {
                 order = ASC;
                 sortByValue = false;
             }
+
+            inRolePlayerEdges = iterate(procedureVertex.ins()).filter(ProcedureEdge::isRolePlayer).toList();
         }
 
         public void addImplicitDependee(ProcedureVertex<?, ?> from) {
@@ -366,11 +369,9 @@ public class GraphIterator extends AbstractFunctionalIterator<VertexMap> {
         private void clearScopes() {
             if (localScope != null) localScope.removeSource(procedureVertex);
             else {
-                for (ProcedureEdge<?, ?> edge : procedureVertex.ins()) {
-                    if (edge.isRolePlayer()) {
-                        Scope scope = scopes.get(edge.asRolePlayer().scope());
-                        scope.removeSource(edge);
-                    }
+                for (ProcedureEdge<?, ?> edge : inRolePlayerEdges) {
+                    Scope scope = scopes.get(edge.asRolePlayer().scope());
+                    scope.removeSource(edge);
                 }
             }
         }

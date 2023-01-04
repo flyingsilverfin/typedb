@@ -214,7 +214,7 @@ public class ThingGraph {
 
     private <VAL, IID extends VertexIID.Attribute<VAL>, VERTEX extends AttributeVertex<VAL>> VERTEX getOrReadFromStorage(
             Map<IID, ? extends VERTEX> map, IID attIID, Function<IID, VERTEX> vertexConstructor) {
-        VERTEX vertex = map.get(attIID);
+        VERTEX vertex = !map.isEmpty() ? map.get(attIID) : null;
         if (vertex == null && storage.get(attIID) != null) return vertexConstructor.apply(attIID);
         else return vertex;
     }
@@ -525,7 +525,7 @@ public class ThingGraph {
 
     /**
      * Commits all the writes captured in
-     *
+     * <p>
      * We start off by generating new IIDs for every {@code ThingVertex} (which
      * does not actually include {@code AttributeVertex}). We then write the every
      * {@code ThingVertex} onto the storage. Once all commit operations for every
@@ -631,7 +631,7 @@ public class ThingGraph {
         /**
          * Get the latest committed statistics version, across all transactions (is not snapshot-bound)
          * NB: persisting a statistics version number in RocksDB that is stored per snapshot & read in every transaction
-         *     ends up being a performance bottleneck during heavy writes.
+         * ends up being a performance bottleneck during heavy writes.
          */
         public long getDBStatisticsVersion() {
             return DBStatisticsVersion.get();

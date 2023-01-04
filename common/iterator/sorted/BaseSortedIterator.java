@@ -37,9 +37,10 @@ public class BaseSortedIterator<T extends Comparable<? super T>, ORDER extends O
     }
 
     private static <T extends Comparable<? super T>, ORD extends Order> boolean isSorted(ORD order, List<T> source) {
-        if (source.size() <= 1) return true;
+        int size = source.size();
+        if (size <= 1) return true;
         T last = source.get(0);
-        for (int i = 1; i < source.size(); i++) {
+        for (int i = 1; i < size; i++) {
             T next = source.get(i);
             if (!order.inOrder(last, next)) return false;
             last = next;

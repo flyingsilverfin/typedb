@@ -263,15 +263,16 @@ public abstract class ThingAdjacencyImpl<EDGE_VIEW extends ThingEdge.View<EDGE_V
         Forwardable<EDGE_VIEW, Order.Asc> iterateBufferedViews(Encoding.Edge.Thing encoding, List<IID> lookahead) {
             ConcurrentNavigableMap<EDGE_VIEW, ThingEdgeImpl.Buffered> result;
             List<IID> iidsWithEncoding = lookaheadWithEncoding(encoding, lookahead);
-            if (lookahead.size() == encoding.lookAhead()) {
+            int lookaheadSize = lookahead.size();
+            if (lookaheadSize == encoding.lookAhead()) {
                 return (result = edges.get(iidsWithEncoding)) != null ? iterateSorted(result.keySet(), ASC) : emptySorted();
             }
 
-            assert lookahead.size() < encoding.lookAhead();
-            Set<List<IID>> extendedIIDs = new HashSet<>();
+            assert lookaheadSize < encoding.lookAhead();
+            List<List<IID>> extendedIIDs = new ArrayList<>();
             extendedIIDs.add(iidsWithEncoding);
-            for (int i = lookahead.size(); i < encoding.lookAhead() && !extendedIIDs.isEmpty(); i++) {
-                Set<List<IID>> newIIDs = new HashSet<>();
+            for (int i = lookaheadSize; i < encoding.lookAhead() && !extendedIIDs.isEmpty(); i++) {
+                List<List<IID>> newIIDs = new ArrayList<>(extendedIIDs.size());
                 for (List<IID> iids : extendedIIDs) {
                     Set<List<IID>> someNewIIDs = infixes.get(iids);
                     if (someNewIIDs != null) newIIDs.addAll(someNewIIDs);

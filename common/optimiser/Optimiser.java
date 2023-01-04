@@ -148,9 +148,10 @@ public class Optimiser {
 
     private void setSolutionAsHints() {
         assert iterate(variables).allMatch(OptimiserVariable::hasValue);
-        MPVariable[] mpVariables = new MPVariable[variables.size()];
-        double[] hints = new double[variables.size()];
-        for (int i = 0; i < variables.size(); i++) {
+        int size = variables.size();
+        MPVariable[] mpVariables = new MPVariable[size];
+        double[] hints = new double[size];
+        for (int i = 0; i < size; i++) {
             mpVariables[i] = variables.get(i).mpVariable();
             hints[i] = variables.get(i).valueAsDouble();
         }

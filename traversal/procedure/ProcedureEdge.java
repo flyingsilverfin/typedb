@@ -882,7 +882,7 @@ public abstract class ProcedureEdge<
                         } else {
                             Optional<Value<?, ?>> eq = iterate(to.props().predicates()).filter(p -> p.operator().equals(EQ)).first();
                             if (eq.isPresent()) {
-                                return to.iterateAndFilterPredicates(branchToEq(graphMgr, params, owner, eq.get()), params, ASC );
+                                return to.iterateAndFilterPredicates(branchToEq(graphMgr, params, owner, eq.get()).toList(), params, ASC);
                             } else {
                                 return to.mergeAndFilterPredicatesOnVertices(graphMgr, branchToTypes(graphMgr, owner), params, ASC);
                             }
@@ -900,20 +900,19 @@ public abstract class ProcedureEdge<
                         } else return Optional.empty();
                     }
 
-                    private List<AttributeVertex<?>> branchToEq(
+                    private FunctionalIterator<? extends AttributeVertex<?>> branchToEq(
                             GraphManager graphMgr, Traversal.Parameters params, ThingVertex owner, Value<?, ?> eq
                     ) {
-                        return iterate(to.attributesEqual(graphMgr, params, eq)).filter(a -> owner.outs().edge(HAS, a.asAttribute()) != null).toList();
+                        return to.attributesEqual(graphMgr, params, eq).filter(a -> owner.outs().edge(HAS, a.asAttribute()) != null);
                     }
 
-                    private List<Pair<TypeVertex, Forwardable<ThingVertex, Order.Asc>>> branchToTypes(
+                    private FunctionalIterator<Pair<TypeVertex, Forwardable<ThingVertex, Order.Asc>>> branchToTypes(
                             GraphManager graphMgr, ThingVertex owner
                     ) {
                         Set<TypeVertex> types = graphMgr.schema().ownedAttributeTypes(owner.type());
                         return iterate(types)
                                 .filter(t -> to.props().types().contains(t.properLabel()))
-                                .map(t -> new Pair<>(t, owner.outs().edge(HAS, PrefixIID.of(VERTEX_ATTRIBUTE), t.iid()).to()))
-                                .toList();
+                                .map(t -> new Pair<>(t, owner.outs().edge(HAS, PrefixIID.of(VERTEX_ATTRIBUTE), t.iid()).to()));
                     }
 
                     @Override
@@ -950,8 +949,7 @@ public abstract class ProcedureEdge<
                             return to.mergeAndFilterPredicatesOnVertices(
                                     graphMgr,
                                     iterate(owners).filter(owner -> to.props().types().contains(owner.properLabel()))
-                                            .map(t -> new Pair<>(t, att.ins().edge(HAS, PrefixIID.of(t.encoding().instance()), t.iid()).from()))
-                                            .toList(),
+                                            .map(t -> new Pair<>(t, att.ins().edge(HAS, PrefixIID.of(t.encoding().instance()), t.iid()).from())),
                                     params, ASC
                             );
                         }
@@ -1030,8 +1028,7 @@ public abstract class ProcedureEdge<
                             return to.mergeAndFilterPredicatesOnVertices(
                                     graphMgr,
                                     iterate(players).filter(player -> toTypes.contains(player.properLabel()))
-                                            .map(t -> new Pair<>(t, role.ins().edge(PLAYING, PrefixIID.of(t.encoding().instance()), t.iid()).from()))
-                                            .toList(),
+                                            .map(t -> new Pair<>(t, role.ins().edge(PLAYING, PrefixIID.of(t.encoding().instance()), t.iid()).from())),
                                     params, ASC
                             );
                         }
@@ -1252,7 +1249,7 @@ public abstract class ProcedureEdge<
                         return toAndRole;
                     }
 
-                    private List<Pair<TypeVertex, Forwardable<KeyValue<ThingVertex, ThingVertex>, Order.Asc>>> branchToTypes(
+                    private FunctionalIterator<Pair<TypeVertex, Forwardable<KeyValue<ThingVertex, ThingVertex>, Order.Asc>>> branchToTypes(
                             GraphManager graphMgr, ThingVertex rel, FunctionalIterator<TypeVertex> roleTypes
                     ) {
                         return roleTypes.flatMap(rt ->
@@ -1263,7 +1260,7 @@ public abstract class ProcedureEdge<
                                                 .edge(ROLEPLAYER, rt, PrefixIID.of(t.encoding().instance()), t.iid())
                                                 .toAndOptimised())
                                         )
-                        ).toList();
+                        );
                     }
 
                     public boolean isClosure(

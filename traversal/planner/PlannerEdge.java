@@ -251,8 +251,9 @@ public abstract class PlannerEdge<VERTEX_FROM extends PlannerVertex<?>, VERTEX_T
             double[] filters = to.ins().stream().filter(e -> !e.equals(this)).filter(this::cheaperThan).mapToDouble(e -> e.safeCost() / to.safeCost()).toArray();
             double averageFilter = 1.0;
             if (filters.length > 0) averageFilter = pow(Arrays.stream(filters).reduce(1.0, (a,b) -> a*b), 1.0 / filters.length);
-            
-            for (int i = 0; i < to.ins().size(); i++) {
+
+            int insSize = to.ins().size();
+            for (int i = 0; i < insSize; i++) {
                 planner.optimiser().setObjectiveCoefficient(varIsMinimalWithMultiplicity[i], log(1 + safeCost() * pow(averageFilter, i)));
             }
         }
@@ -280,7 +281,8 @@ public abstract class PlannerEdge<VERTEX_FROM extends PlannerVertex<?>, VERTEX_T
                                     filter(e -> e.from().getOrder() < e.to().getOrder()).
                                     noneMatch(e -> e.cheaperThan(this))
             );
-            for (int i = 0; i < to.ins().size(); i++) {
+            int insSize = to.ins().size();
+            for (int i = 0; i < insSize; i++) {
                 varIsMinimalWithMultiplicity[i].setValue(varIsMinimal.value() && to.varNumInsSelected.value() == i+1);
             }
         }
