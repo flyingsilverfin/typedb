@@ -16,11 +16,13 @@
 #
 
 
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 
-exports_files(
-    ["libspeedb.so.2.2.0"],
-    visibility = ["//visibility:public"]
+
+filegroup(
+    name = "rocksdb",
+    srcs = [":libspeedb.so.2.2.0"],
+    visibility = ["//visibility:public"],
 )
 
 rust_library(
@@ -32,4 +34,18 @@ rust_library(
         "@vaticle_dependencies//library/crates:rocksdb"
     ],
     visibility = ["//visibility:public"]
+)
+
+genrule(
+    name = "prepare-dirs",
+    srcs = [":rocksdb"],
+    cmd = "mkdir -p $(@D) && cp -R $(location :rocksdb) $(@D)/rocksdb.so",
+    outs = ["lib"]
+)
+
+rust_binary(
+    name = "typedb-binary",
+    srcs = ["main.rs"],
+    deps = [":typedb"],
+    data = [":prepare-dirs"]
 )
