@@ -16,36 +16,55 @@
 #
 
 
-load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+load("@vaticle_dependencies//tool/checkstyle:rules.bzl", "checkstyle_test")
 
 
 filegroup(
-    name = "rocksdb",
-    srcs = [":libspeedb.so.2.2.0"],
+    name = "librocksdb-mac",
+    srcs = [":librocksdb.7.10.dylib"],
     visibility = ["//visibility:public"],
 )
 
-rust_library(
-    name = "typedb",
-    srcs = glob([
-        "*.rs",
-    ]),
-    deps = [
-        "@vaticle_dependencies//library/crates:rocksdb"
-    ],
-    visibility = ["//visibility:public"]
+filegroup(
+    name = "librocksdb-linux",
+    srcs = ["libspeedb.so.2.2.0"],
+    visibility = ["//visibility:public"],
 )
 
 genrule(
-    name = "prepare-dirs",
-    srcs = [":rocksdb"],
-    cmd = "mkdir -p $(@D) && cp -R $(location :rocksdb) $(@D)/rocksdb.so",
-    outs = ["lib"]
+    name = "prepare-dirs-compile-mac",
+    srcs = [":librocksdb-mac"],
+    cmd = "mkdir -p $(@D) && cp $(location :rocksdb) $(@D)/librocksdb.dylib",
+    outs = ["lib/librocksdb.dylib"]
+)
+
+# this will put the DYLIB in the output lib/ directory. However, this wont be in the search path on Mac automatically, we may have to use 'DYLD_LIBRARY_PATH=lib' for example
+genrule(
+    name = "prepare-dirs-versioned-run",
+    srcs = [":librocksdb-mac"],
+    cmd = "mkdir -p $(@D) && cp $(location :rocksdb) $(@D)/librocksdb.7.10.dylib",
+    outs = ["lib/librocksdb.7.10.dylib"]
+)
+
+cc_import(
+    name = "rocksdb-lib-mac",
+    shared_library = ":prepare-dirs-compile-mac",
 )
 
 rust_binary(
-    name = "typedb-binary",
+    name = "typedb-binary-mac",
     srcs = ["main.rs"],
-    deps = [":typedb"],
-    data = [":prepare-dirs"]
+    deps = ["//rust/storage:typedb", ":rocksdb-lib-mac"],
+    data = [":prepare-dirs-versioned-run"]
+)
+
+checkstyle_test(
+    name = "checkstyle",
+    include = glob([
+        "*",
+        "**/*",
+    ]),
+    exclude = ["LICENSE", "README.md"],
+    license_type = "apache-header",
 )

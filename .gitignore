@@ -35,10 +35,15 @@ bazel-*
 .project
 .classpath
 
-# Compiled
+# Compiled files #
 dist/
 out/
+target/
 *.class
+
+# Cargo files #
+Cargo.toml
+Cargo.lock
 
 # Package
 *.jarg
