@@ -35,7 +35,7 @@ filegroup(
 genrule(
     name = "prepare-dirs-compile-mac",
     srcs = [":librocksdb-mac"],
-    cmd = "mkdir -p $(@D) && cp $(location :rocksdb) $(@D)/librocksdb.dylib",
+    cmd = "mkdir -p $(@D) && cp $(location :librocksdb-mac) $(@D)/librocksdb.dylib",
     outs = ["lib/librocksdb.dylib"]
 )
 
@@ -43,7 +43,7 @@ genrule(
 genrule(
     name = "prepare-dirs-versioned-run",
     srcs = [":librocksdb-mac"],
-    cmd = "mkdir -p $(@D) && cp $(location :rocksdb) $(@D)/librocksdb.7.10.dylib",
+    cmd = "mkdir -p $(@D) && cp $(location :librocksdb-mac) $(@D)/librocksdb.7.10.dylib",
     outs = ["lib/librocksdb.7.10.dylib"]
 )
 
