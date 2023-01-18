@@ -19,13 +19,19 @@
 load("@rules_rust//rust:defs.bzl", "rust_library")
 load("@vaticle_dependencies//tool/checkstyle:rules.bzl", "checkstyle_test")
 
+filegroup(
+    name = "libspeedb-mac",
+    srcs = ["libspeedb.dylib"],
+    visibility = ["//visibility:public"],
+)
+
 rust_library(
     name = "typedb",
     srcs = [
         "lib.rs",
     ],
     deps = [
-        "@vaticle_dependencies//library/crates:rocksdb"
+        "@crates//:rocksdb",
     ],
     visibility = ["//visibility:public"],
 )

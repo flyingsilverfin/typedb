@@ -16,28 +16,22 @@
 #
 
 
-load("@rules_rust//rust:defs.bzl", "rust_binary")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_shared_library")
 load("@vaticle_dependencies//tool/checkstyle:rules.bzl", "checkstyle_test")
 
-
-filegroup(
-    name = "librocksdb-mac",
-    srcs = [":librocksdb.7.10.dylib"],
-    visibility = ["//visibility:public"],
+genrule(
+    name = "copy-dynamic-libraries-for-compile",
+    srcs = ["//rust/storage:libspeedb-mac"],
+    cmd = "mkdir -p $(@D) && ln -s `realpath $(location //rust/storage:libspeedb-mac)` $(@D)/librocksdb.dylib",
+    outs = ["librocksdb.dylib"]
 )
 
-filegroup(
-    name = "librocksdb-linux",
-    srcs = ["libspeedb.so.2.2.0"],
-    visibility = ["//visibility:public"],
+genrule(
+    name = "copy-libspeedb",
+    srcs = ["//rust/storage:libspeedb-mac"],
+    cmd = "mkdir -p $(@D) && cp $(location //rust/storage:libspeedb-mac) $(@D)/libspeedb.dylib",
+    outs = ["libspeedb.dylib"]
 )
-
-#genrule(
-#    name = "prepare-dirs-compile-mac",
-#    srcs = [":librocksdb-mac"],
-#    cmd = "mkdir -p $(@D) && cp $(location :librocksdb-mac) $(@D)/librocksdb.dylib",
-#    outs = ["lib/librocksdb.dylib"]
-#)
 #
 ## this will put the DYLIB in the output lib/ directory. However, this wont be in the search path on Mac automatically, we may have to use 'DYLD_LIBRARY_PATH=lib' for example
 #genrule(
@@ -48,15 +42,17 @@ filegroup(
 #)
 
 cc_import(
-    name = "rocksdb-lib-mac",
-    shared_library = ":librocksdb-mac",
+    name = "speedb-lib-mac",
+    shared_library = ":copy-dynamic-libraries-for-compile",
+    visibility = ["//visibility:public"],
 )
 
 rust_binary(
     name = "typedb-binary-mac",
     srcs = ["main.rs"],
-    deps = ["//rust/storage:typedb", ":rocksdb-lib-mac"],
-#    data = [":prepare-dirs-versioned-run"]
+    deps = ["//rust/storage:typedb", ":speedb-lib-mac"], # , ":copy-linker-dynamic-library"],
+#    data = [":copy-libspeedb"]
+#    compile_data = [":copy-dynamic-libraries-for-compile"], #":copy-runtime-dynamic-library"]
 )
 
 checkstyle_test(
