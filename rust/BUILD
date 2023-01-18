@@ -32,31 +32,31 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
-genrule(
-    name = "prepare-dirs-compile-mac",
-    srcs = [":librocksdb-mac"],
-    cmd = "mkdir -p $(@D) && cp $(location :librocksdb-mac) $(@D)/librocksdb.dylib",
-    outs = ["lib/librocksdb.dylib"]
-)
-
-# this will put the DYLIB in the output lib/ directory. However, this wont be in the search path on Mac automatically, we may have to use 'DYLD_LIBRARY_PATH=lib' for example
-genrule(
-    name = "prepare-dirs-versioned-run",
-    srcs = [":librocksdb-mac"],
-    cmd = "mkdir -p $(@D) && cp $(location :librocksdb-mac) $(@D)/librocksdb.7.10.dylib",
-    outs = ["lib/librocksdb.7.10.dylib"]
-)
+#genrule(
+#    name = "prepare-dirs-compile-mac",
+#    srcs = [":librocksdb-mac"],
+#    cmd = "mkdir -p $(@D) && cp $(location :librocksdb-mac) $(@D)/librocksdb.dylib",
+#    outs = ["lib/librocksdb.dylib"]
+#)
+#
+## this will put the DYLIB in the output lib/ directory. However, this wont be in the search path on Mac automatically, we may have to use 'DYLD_LIBRARY_PATH=lib' for example
+#genrule(
+#    name = "prepare-dirs-versioned-run",
+#    srcs = [":librocksdb-mac"],
+#    cmd = "mkdir -p $(@D) && cp $(location :librocksdb-mac) $(@D)/librocksdb.7.10.dylib",
+#    outs = ["lib/librocksdb.7.10.dylib"]
+#)
 
 cc_import(
     name = "rocksdb-lib-mac",
-    shared_library = ":prepare-dirs-compile-mac",
+    shared_library = ":librocksdb-mac",
 )
 
 rust_binary(
     name = "typedb-binary-mac",
     srcs = ["main.rs"],
     deps = ["//rust/storage:typedb", ":rocksdb-lib-mac"],
-    data = [":prepare-dirs-versioned-run"]
+#    data = [":prepare-dirs-versioned-run"]
 )
 
 checkstyle_test(
