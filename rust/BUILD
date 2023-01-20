@@ -33,7 +33,7 @@ genrule(
     outs = ["libspeedb.dylib"]
 )
 #
-## this will put the DYLIB in the output lib/ directory. However, this wont be in the search path on Mac automatically, we may have to use 'DYLD_LIBRARY_PATH=lib' for example
+
 #genrule(
 #    name = "prepare-dirs-versioned-run",
 #    srcs = [":librocksdb-mac"],
@@ -51,7 +51,10 @@ rust_binary(
     name = "typedb-binary-mac",
     srcs = ["main.rs"],
     deps = ["//rust/storage:typedb", ":speedb-lib-mac"], # , ":copy-linker-dynamic-library"],
-#    data = [":copy-libspeedb"]
+    rustc_flags = [
+        "-C", "link-arg=-Wl,-rpath,$$ORIGIN"
+    ],
+    data = [":copy-libspeedb"]
 #    compile_data = [":copy-dynamic-libraries-for-compile"], #":copy-runtime-dynamic-library"]
 )
 
