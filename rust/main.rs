@@ -17,7 +17,7 @@
  */
 
 
-use typedb;
+extern crate typedb;
 
 fn main() {
     println!("Hi!");

@@ -15,16 +15,24 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-load("@vaticle_dependencies//distribution/artifact:rules.bzl", "native_artifact_files")
-load("@vaticle_dependencies//distribution:deployment.bzl", "deployment")
-load("@vaticle_bazel_distribution//artifact:rules.bzl", "artifact_file")
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
-def vaticle_typedb_console_artifact():
-    native_artifact_files(
-        name = "vaticle_typedb_console_artifact",
-        group_name = "vaticle_typedb_console",
-        artifact_name = "typedb-console-{platform}-{version}.{ext}",
-        tag_source = deployment["artifact.release"],
-        commit_source = deployment["artifact.snapshot"],
-        tag = "2.16.1",
+def librocksdb_mac_arm64():
+    http_archive(
+        name = "librocksdb_mac_arm64",
+        urls = ["https://repo.vaticle.com/repository/dll/com.facebook/7.9.2/librocksdb-mac-arm64-7.9.2.zip"],
+        sha256 = "f80da6612beab644a06c9cab65ff36948a7b1c1be4542c7e73667b131fa5b2e2",
+        build_file_content = """
+filegroup(
+    name = "lib-files",
+    srcs = glob(["librocksdb*"]),
+    visibility = ["//visibility:public"]
+)
+
+cc_import(
+    name = "librocksdb-mac-arm64",
+    shared_library = ":librocksdb.dylib",
+    visibility = ["//visibility:public"]
+)
+        """
     )

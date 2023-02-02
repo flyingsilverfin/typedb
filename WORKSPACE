@@ -158,6 +158,8 @@ vaticle_typedb_behaviour()
 
 load("//dependencies/vaticle:artifacts.bzl", "vaticle_typedb_console_artifact")
 vaticle_typedb_console_artifact()
+load("//dependencies/vaticle:dll.bzl", "librocksdb_mac_arm64")
+librocksdb_mac_arm64()
 
 # Load maven artifacts
 load("@vaticle_typedb_common//dependencies/maven:artifacts.bzl", vaticle_typedb_common_artifacts = "artifacts")

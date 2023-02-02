@@ -16,14 +16,9 @@
 #
 
 
-load("@rules_rust//rust:defs.bzl", "rust_library")
+load("@rules_rust//rust:defs.bzl", "rust_static_library", "rust_library", "rust_shared_library")
+load("@vaticle_dependencies//distribution:deployment.bzl", "deployment")
 load("@vaticle_dependencies//tool/checkstyle:rules.bzl", "checkstyle_test")
-
-filegroup(
-    name = "libspeedb-mac",
-    srcs = ["libspeedb.dylib"],
-    visibility = ["//visibility:public"],
-)
 
 rust_library(
     name = "typedb",
@@ -32,6 +27,13 @@ rust_library(
     ],
     deps = [
         "@crates//:rocksdb",
+        "@librocksdb_mac_arm64//:librocksdb-mac-arm64",
+    ],
+    data = [
+        "@librocksdb_mac_arm64//:lib-files",
+    ],
+    compile_data = [
+        "@librocksdb_mac_arm64//:lib-files",
     ],
     visibility = ["//visibility:public"],
 )
