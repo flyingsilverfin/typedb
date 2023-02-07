@@ -20,6 +20,18 @@ load("@rules_rust//rust:defs.bzl", "rust_static_library", "rust_library", "rust_
 load("@vaticle_dependencies//distribution:deployment.bzl", "deployment")
 load("@vaticle_dependencies//tool/checkstyle:rules.bzl", "checkstyle_test")
 
+
+filegroup(
+    name = "librocksdb-mac-arm64-dylib",
+    srcs = [":librocksdb.dylib"],
+)
+
+cc_import(
+    name = "librocksdb-mac-arm64",
+    shared_library = ":librocksdb.dylib",
+    visibility = ["//visibility:public"]
+)
+
 rust_library(
     name = "typedb",
     srcs = [
@@ -27,13 +39,7 @@ rust_library(
     ],
     deps = [
         "@crates//:rocksdb",
-        "@librocksdb_mac_arm64//:librocksdb-mac-arm64",
-    ],
-    data = [
-        "@librocksdb_mac_arm64//:lib-files",
-    ],
-    compile_data = [
-        "@librocksdb_mac_arm64//:lib-files",
+        "@crates//:librocksdb-sys"
     ],
     visibility = ["//visibility:public"],
 )

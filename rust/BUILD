@@ -19,43 +19,28 @@
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_shared_library", "rust_static_library")
 load("@vaticle_dependencies//tool/checkstyle:rules.bzl", "checkstyle_test")
 
-#genrule(
-#    name = "copy-dynamic-libraries-for-compile",
-#    srcs = ["//rust/storage:libspeedb-mac"],
-#    cmd = "mkdir -p $(@D) && ln -s `realpath $(location //rust/storage:libspeedb-mac)` $(@D)/librocksdb.dylib",
-#    outs = ["librocksdb.dylib"]
-#)
-
-#genrule(
-#    name = "copy-libspeedb",
-#    srcs = ["//rust/storage:libspeedb-mac"],
-#    cmd = "mkdir -p $(@D) && cp $(location //rust/storage:libspeedb-mac) $(@D)/libspeedb.dylib",
-#    outs = ["libspeedb.dylib"]
-#)
+genrule(
+    name = "copy-dynamic-libraries-for-compile",
+    srcs = ["//rust/storage:librocksdb-mac-arm64"],
+    cmd = "mkdir -p $(@D) && ln -s `realpath $(location //rust/storage:librocksdb-mac-arm64)` $(@D)/librocksdb.dylib",
+    outs = ["librocksdb.dylib"]
+)
 #
-
 #genrule(
-#    name = "prepare-dirs-versioned-run",
-#    srcs = [":librocksdb-mac"],
-#    cmd = "mkdir -p $(@D) && cp $(location :librocksdb-mac) $(@D)/librocksdb.7.10.dylib",
-#    outs = ["lib/librocksdb.7.10.dylib"]
-#)
-
-#cc_import(
-#    name = "speedb-lib-mac",
-#    shared_library = ":copy-dynamic-libraries-for-compile",
-#    visibility = ["//visibility:public"],
+#    name = "copy-librocksdb",
+#    srcs = ["//rust/storage:librocksdb-mac-arm64"],
+#    cmd = "mkdir -p $(@D) && cp $(location //rust/storage:librocksdb-mac-arm64) $(@D)/librocksdb.dylib",
+#    outs = ["librocksdb.dylib"]
 #)
 
 rust_binary(
     name = "typedb-binary-mac",
     srcs = ["main.rs"],
-    deps = ["//rust/storage:typedb"],#, ":speedb-lib-mac"], # , ":copy-linker-dynamic-library"],
+    deps = ["//rust/storage:typedb"],#, "//rust/storage:librocksdb-mac-arm64"],
     rustc_flags = [
-        "-C", "link-arg=-Wl,-rpath,$$ORIGIN"
+#        "-C", "link-arg=-Wl,-rpath,$$ORIGIN"
     ],
-#    data = [":copy-libspeedb"]
-#    compile_data = [":copy-dynamic-libraries-for-compile"], #":copy-runtime-dynamic-library"]
+#    data = [":copy-librocksdb"]
 )
 
 checkstyle_test(
