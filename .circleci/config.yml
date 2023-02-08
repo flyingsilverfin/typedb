@@ -47,6 +47,7 @@ jobs:
       shell: cmd.exe
     working_directory: ~/typedb
     steps:
+      - add_ssh_keys
       - checkout
       - run: .circleci\windows\prepare.bat
       - run: .circleci\windows\build-typedb.bat
