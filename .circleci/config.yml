@@ -41,6 +41,25 @@ commands:
           no_output_timeout: 120m
 
 jobs:
+  build-windows-zip:
+    executor:
+      name: win/default
+      shell: cmd.exe
+    working_directory: ~/typedb
+    steps:
+      - checkout
+      - run: .circleci\windows\prepare.bat
+      - run: .circleci\windows\build-typedb.bat
+  build-mac-zip:
+    macos:
+      xcode: "13.4.1"
+    working_directory: ~/typedb
+    steps:
+      - checkout
+      - install-bazel-mac
+      - run-bazel:
+          command: bazel build //rust:typedb-binary-mac
+
   test-assembly-mac-zip:
     macos:
       xcode: "13.4.1"
@@ -65,6 +84,8 @@ jobs:
 workflows:
   typedb:
     jobs:
+      - build-windows-zip
+      - build-mac-zip
       - test-assembly-mac-zip:
           filters:
             branches:

@@ -21,3 +21,8 @@ build --incompatible_strict_action_env --java_language_version=11 --javacopt='--
 run --incompatible_strict_action_env
 test --incompatible_strict_action_env --test_env=PATH
 
+build --bes_results_url=https://app.buildbuddy.io/invocation/
+build --bes_backend=grpcs://remote.buildbuddy.io
+build --remote_cache=grpcs://remote.buildbuddy.io
+build --remote_timeout=3600
+build --remote_header=x-buildbuddy-api-key=KprgQqzmYvVLRZiFlO7x
