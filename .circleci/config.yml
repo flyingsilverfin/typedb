@@ -47,12 +47,12 @@ jobs:
       shell: cmd.exe
     working_directory: ~/typedb
     steps:
-      # allow windows long-paths
+      - checkout
+      # allow windows long paths
       - run: reg import .circleci\windows\long-paths.reg
       - run: curl -L https://github.com/vovkos/llvm-package-windows/releases/download/clang-11.1.0/clang-11.1.0-windows-amd64-msvc15-msvcrt.7z --output clang-built.7z
       - run: 7z x clang-built.7z
       - run: set PATH=%PATH%;%cd%\clang-11.1.0-windows-amd64-msvc15-msvcrt\bin
-      - checkout
       - run: .circleci\windows\prepare.bat
       - run: .circleci\windows\build-typedb.bat
   build-mac-zip:
