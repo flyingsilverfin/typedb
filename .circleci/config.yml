@@ -45,6 +45,7 @@ jobs:
     executor:
       name: win/default
       shell: cmd.exe
+      size: xlarge
     working_directory: ~/typedb
     steps:
       - checkout
