@@ -55,6 +55,7 @@ jobs:
 #      - run: 7z x clang-built.7z
 #      - run: set PATH=%PATH%;%cd%\clang-11.1.0-windows-amd64-msvc15-msvcrt\bin
       - run: choco install -y llvm
+      - run: refreshenv
       - run: .circleci\windows\prepare.bat
       - run: .circleci\windows\build-typedb.bat
   build-mac-zip:
