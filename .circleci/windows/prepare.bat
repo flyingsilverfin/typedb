@@ -17,7 +17,7 @@ REM along with this program.  If not, see <https://www.gnu.org/licenses/>.
 REM
 
 REM uninstall Java 12 installed by CircleCI
-choco uninstall openjdk --limit-output --yes --no-progress
+@REM choco uninstall openjdk --limit-output --yes --no-progress
 
 REM install dependencies needed for build
 choco install .circleci\windows\dependencies.config  --limit-output --yes --no-progress
