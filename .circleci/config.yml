@@ -54,6 +54,7 @@ jobs:
 #      - run: curl -L https://github.com/vovkos/llvm-package-windows/releases/download/clang-11.1.0/clang-11.1.0-windows-amd64-msvc15-msvcrt.7z --output clang-built.7z
 #      - run: 7z x clang-built.7z
 #      - run: set PATH=%PATH%;%cd%\clang-11.1.0-windows-amd64-msvc15-msvcrt\bin
+      - run: fsutil 8dot3name set 0
       - run: choco install -y llvm
       - run: refreshenv
       - run: .circleci\windows\prepare.bat
