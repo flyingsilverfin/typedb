@@ -320,3 +320,29 @@ platform(
         "@bazel_tools//tools/cpp:clang-cl",
     ],
 )
+
+
+cc_toolchain_suite(
+    name = "mingw_suite",
+    toolchains = {
+        "mingw": ":mingw_toolchain",
+    },
+)
+
+filegroup(name = "empty")
+
+cc_toolchain(
+    name = "kmingw_toolchain",
+    toolchain_identifier = "mingw-toolchain",
+    toolchain_config = ":mingw_toolchain_config",
+    all_files = ":empty",
+    compiler_files = ":empty",
+    dwp_files = ":empty",
+    linker_files = ":empty",
+    objcopy_files = ":empty",
+    strip_files = ":empty",
+    supports_param_files = 0,
+)
+
+load(":cc_toolchain_mingw.bzl", "cc_toolchain_config")
+cc_toolchain_config(name = "mingw_toolchain_config")
