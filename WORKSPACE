@@ -196,6 +196,16 @@ maven(
 load("@vaticle_bazel_distribution//common:rules.bzl", "workspace_refs")
 workspace_refs(name = "vaticle_typedb_workspace_refs")
 
+
+
+register_execution_platforms(
+    ":"
+)
+
+register_toolchains(
+    ":windows_mingw_x86_64_toolchain",
+)
+
 #register_execution_platforms(
 #    ":x64_windows-clang-cl"
 #)
