@@ -53,7 +53,6 @@ def _impl(ctx):
     ]
 
 
-
     features = [ # NEW
         feature(
             name = "default_linker_flags",
@@ -85,19 +84,19 @@ def _impl(ctx):
         ctx = ctx,
         features = features, # NEW
         cxx_builtin_include_directories = [ # NEW
-        "/usr/x86_64-w64-mingw32/include",
-        "/usr/lib/gcc/x86_64-w64-mingw32/9.3-win32/include/c++",
-        "/usr/share/mingw-w64/include",
-        "/usr/lib/gcc/x86_64-w64-mingw32/9.3-win32/include",
-        "/usr/lib/gcc/x86_64-w64-mingw32/9.3-win32/include-fixed",
-        "/usr/include",
+            "/usr/x86_64-w64-mingw32/include",
+            "/usr/lib/gcc/x86_64-w64-mingw32/10-win32/include/c++",
+            "/usr/share/mingw-w64/include",
+            "/usr/lib/gcc/x86_64-w64-mingw32/10-win32/include",
+            "/usr/lib/gcc/x86_64-w64-mingw32/10-win32/include-fixed",
+            "/usr/include",
         ],
         toolchain_identifier = "mingw-toolchain",
         host_system_name = "local",
-        target_system_name = "local",
+        target_system_name = "windows",
         target_cpu = "x86_64",
         target_libc = "unknown",
-        compiler = "86_64-w64-mingw32-gcc",
+        compiler = "x86_64-w64-mingw32-gcc",
         abi_version = "unknown",
         abi_libc_version = "unknown",
         tool_paths = tool_paths,

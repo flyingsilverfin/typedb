@@ -332,7 +332,7 @@ cc_toolchain_suite(
 filegroup(name = "empty")
 
 cc_toolchain(
-    name = "kmingw_toolchain",
+    name = "mingw_toolchain",
     toolchain_identifier = "mingw-toolchain",
     toolchain_config = ":mingw_toolchain_config",
     all_files = ":empty",
