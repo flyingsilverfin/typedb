@@ -72,18 +72,11 @@ def _impl(ctx):
         ),
     ]
 
-    artifact_name_patterns = [
-        artifact_name_pattern(
-            category_name = "executable",
-            prefix = "",
-            extension = ".exe",
-        ),
-    ]
-
     return cc_common.create_cc_toolchain_config_info(
         ctx = ctx,
-        features = features, # NEW
-        cxx_builtin_include_directories = [ # NEW
+        features = features,  # NEW
+        cxx_builtin_include_directories = [
+            # NEW
             "/usr/x86_64-w64-mingw32/include",
             "/usr/lib/gcc/x86_64-w64-mingw32/10-win32/include/c++",
             "/usr/share/mingw-w64/include",
@@ -91,16 +84,22 @@ def _impl(ctx):
             "/usr/lib/gcc/x86_64-w64-mingw32/10-win32/include-fixed",
             "/usr/include",
         ],
-        toolchain_identifier = "mingw-toolchain",
-        host_system_name = "local",
-        target_system_name = "windows",
+        toolchain_identifier = "windows_mingw_x86_64-toolchain",
+        host_system_name = "unknown",
+        target_system_name = "unknown",
         target_cpu = "x86_64",
         target_libc = "unknown",
         compiler = "x86_64-w64-mingw32-gcc",
         abi_version = "unknown",
         abi_libc_version = "unknown",
         tool_paths = tool_paths,
-        artifact_name_patterns=artifact_name_patterns
+        artifact_name_patterns = [
+            artifact_name_pattern(
+                category_name = "executable",
+                prefix = "",
+                extension = ".exe",
+            ),
+        ],
     )
 
 cc_toolchain_config = rule(
