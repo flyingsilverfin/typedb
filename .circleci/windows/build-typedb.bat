@@ -1,7 +1,7 @@
 CALL refreshenv
 
 REM prepare the Cargo files
-bazel run @vaticle_dependencies//ide/rust:sync
+bazel run @vaticle_dependencies//tool/cargo:sync
 
 REM build typedb-all-windows archive
 cd rust
