@@ -38,10 +38,10 @@ rust_register_toolchains(
     include_rustc_srcs = True,
     edition="2021",
     extra_target_triples = [
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin",
-        "x86_64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
+#        "aarch64-apple-darwin",
+#        "x86_64-apple-darwin",
+#        "x86_64-pc-windows-msvc",
+#        "x86_64-unknown-linux-gnu",
     ]
 )
 
@@ -171,6 +171,7 @@ load("//dependencies/vaticle:dll.bzl", "librocksdb_mac_arm64")
 librocksdb_mac_arm64()
 
 # Load maven artifacts
+load("@vaticle_bazel_distribution//maven:deps.bzl", vaticle_bazel_distribution_artifacts = "maven_artifacts")
 load("@vaticle_typedb_common//dependencies/maven:artifacts.bzl", vaticle_typedb_common_artifacts = "artifacts")
 load("@vaticle_typeql//dependencies/maven:artifacts.bzl", vaticle_typeql_artifacts = "artifacts")
 load("@vaticle_typedb_protocol//dependencies/maven:artifacts.bzl", vaticle_typedb_protocol_artifacts = "artifacts")
@@ -182,6 +183,7 @@ load("//dependencies/maven:artifacts.bzl", vaticle_typedb_artifacts = "artifacts
 ############################
 load("@vaticle_dependencies//library/maven:rules.bzl", "maven")
 maven(
+    vaticle_bazel_distribution_artifacts +
     vaticle_typedb_common_artifacts  +
     vaticle_dependencies_tool_maven_artifacts +
     vaticle_factory_tracing_artifacts +
@@ -197,10 +199,9 @@ load("@vaticle_bazel_distribution//common:rules.bzl", "workspace_refs")
 workspace_refs(name = "vaticle_typedb_workspace_refs")
 
 
-register_toolchains(
-    ":windows_mingw_x86_64_toolchain",
-)
-
+#register_toolchains(
+#    ":windows_mingw_x86_64_toolchain",
+#)
 #register_execution_platforms(
 #    ":x64_windows-clang-cl"
 #)

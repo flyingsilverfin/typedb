@@ -276,7 +276,7 @@ filegroup(
         "@vaticle_dependencies//tool/checkstyle:test-coverage",
         "@vaticle_dependencies//tool/sonarcloud:code-analysis",
         "@vaticle_dependencies//tool/unuseddeps:unused-deps",
-        "@vaticle_dependencies//ide/rust:sync"
+        "@vaticle_dependencies//tool/cargo:sync"
     ],
 )
 
