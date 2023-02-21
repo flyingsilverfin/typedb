@@ -39,7 +39,6 @@ rust_library(
     ],
     deps = [
         "@crates//:rocksdb",
-        "@crates//:librocksdb-sys"
     ],
     visibility = ["//visibility:public"],
 )
@@ -48,8 +47,7 @@ checkstyle_test(
     name = "checkstyle",
     include = glob([
         "*",
-        "**/*",
     ]),
     exclude = ["LICENSE", "README.md"],
-    license_type = "apache-header",
+    license_type = "agpl-header",
 )

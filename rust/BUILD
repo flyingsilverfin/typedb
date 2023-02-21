@@ -34,7 +34,7 @@ load("@vaticle_dependencies//tool/checkstyle:rules.bzl", "checkstyle_test")
 #)
 
 rust_binary(
-    name = "typedb-binary-mac",
+    name = "typedb-server-binary",
     srcs = ["main.rs"],
     deps = ["//rust/storage:typedb"],#, "//rust/storage:librocksdb-mac-arm64"],
     rustc_flags = [
@@ -43,12 +43,21 @@ rust_binary(
 #    data = [":copy-librocksdb"]
 )
 
+#genrule(
+#    name = "typedb-server-binary-windows-x86_64",
+#    srcs = [],
+#    cmd_bat = """
+#    cargo build
+#    """,
+#    outs = ["typedb-server-windows-x86_64.exe"]
+#)
+
+
 checkstyle_test(
     name = "checkstyle",
     include = glob([
         "*",
-        "**/*",
     ]),
     exclude = ["LICENSE", "README.md"],
-    license_type = "apache-header",
+    license_type = "agpl-header",
 )
