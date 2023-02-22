@@ -1,20 +1,13 @@
 CALL refreshenv
 
-REM prepare the Cargo files
-mkdir .cargo
-cd .cargo
-(
-    echo "[net]"
-    echo "git-fetch-with-cli = true"
-) > config.toml
-cd ..
+REM Use platform's git instead of built-in.
+REM Equivalent to setting `net.git-fetch-with-cli = true` for crate_repositories defined in @vaticle_dependencies
+set CARGO_NET_GIT_FETCH_WITH_CLI=true
 
+REM Prepare cargo manifests
 bazel run @vaticle_dependencies//tool/cargo:sync
 
-REM build typedb-all-windows archive
 cd rust
-
-
 cargo build
 
 
