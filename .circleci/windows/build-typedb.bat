@@ -10,6 +10,5 @@ bazel run @vaticle_dependencies//tool/cargo:sync
 cd rust
 cargo build --release
 
-
 :error
 IF %errorlevel% NEQ 0 EXIT /b %errorlevel%

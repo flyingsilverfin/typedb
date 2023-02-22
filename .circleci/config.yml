@@ -49,7 +49,6 @@ jobs:
     working_directory: ~/typedb
     steps:
       - checkout
-      - run: choco install -y
       - run: refreshenv
       - run: .circleci\windows\prepare.bat
       - run: .circleci\windows\build-typedb.bat
