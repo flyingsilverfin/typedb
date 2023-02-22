@@ -60,7 +60,9 @@ jobs:
       - checkout
       - install-bazel-mac
       - run-bazel:
-          command: bazel build //rust:typedb-binary-mac
+          command: bazel build //rust:typedb-server-binary --platforms=@vaticle_dependencies//util/platform:mac_x86_64
+      - run-bazel:
+          command: bazel build //rust:typedb-server-binary --platforms=@vaticle_dependencies//util/platform:mac_arm64
 
   test-assembly-mac-zip:
     macos:
