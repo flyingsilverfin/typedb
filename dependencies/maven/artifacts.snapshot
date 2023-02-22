@@ -89,6 +89,7 @@
 @maven//:net_java_dev_jna_jna_5_5_0
 @maven//:net_java_dev_jna_jna_platform_5_5_0
 @maven//:org_antlr_antlr4_runtime_4_8
+@maven//:org_apache_commons_commons_compress_1_21
 @maven//:org_apache_httpcomponents_httpclient_4_5_11
 @maven//:org_apache_httpcomponents_httpcore_4_4_13
 @maven//:org_apiguardian_apiguardian_api_1_1_0
