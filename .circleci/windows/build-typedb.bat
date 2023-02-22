@@ -8,7 +8,7 @@ REM Prepare cargo manifests
 bazel run @vaticle_dependencies//tool/cargo:sync
 
 cd rust
-cargo build
+cargo build --release
 
 
 :error
