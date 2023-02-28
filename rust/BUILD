@@ -18,6 +18,8 @@
 
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_shared_library", "rust_static_library")
 load("@vaticle_dependencies//tool/checkstyle:rules.bzl", "checkstyle_test")
+load("@rules_pkg//:pkg.bzl", "pkg_tar")
+load("//rust:platform_values.bzl", "package_variables_info")
 
 #genrule(
 #    name = "copy-dynamic-libraries-for-compile",
@@ -33,24 +35,54 @@ load("@vaticle_dependencies//tool/checkstyle:rules.bzl", "checkstyle_test")
 #    outs = ["librocksdb.dylib"]
 #)
 
+
+package_variables_info(
+    name = "pkg_vars",
+    target_os = select({
+        "@vaticle_dependencies//util/platform:is_mac": "mac",
+        "@vaticle_dependencies//util/platform:is_linux": "linux",
+        "@vaticle_dependencies//util/platform:is_windows": "windows",
+    }),
+    target_cpu = select({
+        "@vaticle_dependencies//util/platform:is_arm64": "arm64",
+        "@vaticle_dependencies//util/platform:is_x86_64": "x86_64",
+    })
+)
+
 rust_binary(
     name = "typedb-server-binary",
     srcs = ["main.rs"],
-    deps = ["//rust/storage:typedb"],#, "//rust/storage:librocksdb-mac-arm64"],
-    rustc_flags = [
-#        "-C", "link-arg=-Wl,-rpath,$$ORIGIN"
-    ],
-#    data = [":copy-librocksdb"]
+    deps = ["//rust/storage:typedb"],
+    target_compatible_with = select({
+        "@platforms//os:osx": [],
+        "@platforms//os:linux": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
 )
 
-#genrule(
-#    name = "typedb-server-binary-windows-x86_64",
-#    srcs = [],
-#    cmd_bat = """
-#    cargo build
-#    """,
-#    outs = ["typedb-server-windows-x86_64.exe"]
-#)
+pkg_tar(
+    name = "typedb-server-tar",
+    srcs = [":typedb-server-binary"],
+    extension = ".tar.gz",
+    package_file_name = "typedb-server-{target_os}-{target_cpu}-{version}.tar.gz",
+    package_variables = ":pkg_vars"
+)
+
+
+genrule(
+    name = "typedb-server-binary-windows-x86_64",
+    srcs = glob(["**/*.rs", "**/**/Cargo.toml", "storage/*"]),
+    cmd = "pwd; \
+    tree; \
+    cd rust; \
+    cargo build --release; \
+    ",
+    outs = ["target/release/typedb-server-windows-x86_64.exe"],
+    target_compatible_with = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
 
 
 checkstyle_test(

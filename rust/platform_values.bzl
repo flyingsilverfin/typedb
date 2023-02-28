@@ -15,27 +15,20 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
+load("@rules_pkg//:providers.bzl", "PackageVariablesInfo")
 
-load("@rules_rust//rust:defs.bzl", "rust_static_library", "rust_library", "rust_shared_library")
-load("@vaticle_dependencies//distribution:deployment.bzl", "deployment")
-load("@vaticle_dependencies//tool/checkstyle:rules.bzl", "checkstyle_test")
+def _package_variables_info(ctx):
+    values = {
+        "target_os": ctx.attr.target_os,
+        "target_cpu": ctx.attr.target_cpu,
+        "version": ctx.var.get('version', '0.0.0')
+    }
+    return PackageVariablesInfo(values = values)
 
-rust_library(
-    name = "typedb",
-    srcs = [
-        "lib.rs",
-    ],
-    deps = [
-        "@crates//:rocksdb",
-    ],
-    visibility = ["//visibility:public"],
-)
-
-checkstyle_test(
-    name = "checkstyle",
-    include = glob([
-        "*",
-    ]),
-    exclude = ["LICENSE", "README.md"],
-    license_type = "agpl-header",
+package_variables_info = rule(
+    implementation = _package_variables_info,
+    attrs = {
+        "target_os": attr.string(mandatory = True),
+        "target_cpu": attr.string(mandatory = True)
+    }
 )
