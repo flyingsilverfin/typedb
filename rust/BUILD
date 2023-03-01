@@ -18,22 +18,8 @@
 
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_shared_library", "rust_static_library")
 load("@vaticle_dependencies//tool/checkstyle:rules.bzl", "checkstyle_test")
-load("@rules_pkg//:pkg.bzl", "pkg_tar")
+load("@rules_pkg//:pkg.bzl", "pkg_tar", "pkg_zip")
 load("//rust:platform_values.bzl", "package_variables_info")
-
-#genrule(
-#    name = "copy-dynamic-libraries-for-compile",
-#    srcs = ["//rust/storage:librocksdb-mac-arm64"],
-#    cmd = "mkdir -p $(@D) && ln -s `realpath $(location //rust/storage:librocksdb-mac-arm64)` $(@D)/librocksdb.dylib",
-#    outs = ["librocksdb.dylib"]
-#)
-#
-#genrule(
-#    name = "copy-librocksdb",
-#    srcs = ["//rust/storage:librocksdb-mac-arm64"],
-#    cmd = "mkdir -p $(@D) && cp $(location //rust/storage:librocksdb-mac-arm64) $(@D)/librocksdb.dylib",
-#    outs = ["librocksdb.dylib"]
-#)
 
 
 package_variables_info(
@@ -68,9 +54,18 @@ pkg_tar(
     package_variables = ":pkg_vars"
 )
 
+pkg_zip(
+    name = "typedb-server-zip",
+    srcs = [":typedb-server-binary"],
+    package_file_name = "typedb-server-{target_os}-{target_cpu}-{version}.zip",
+    package_variables = ":pkg_vars"
+)
+
+# TODO - best way to generate the windows binary
+
 
 genrule(
-    name = "typedb-server-binary-windows-x86_64",
+    name = "typedb-server-binary-windows",
     srcs = glob(["**/*.rs", "**/**/Cargo.toml", "storage/*"]),
     cmd = "pwd; \
     tree; \
