@@ -35,11 +35,12 @@ rust_binary(
 )
 
 create_empty_dir(
-    name = "data"
+    name = "data-dir",
+    dir = "data"
 )
 
 pkg_files = {
-    ":data": "server/data",
+    ":data-dir": "server/data",
     ":typedb-server-binary": "server/bin/typedb",
     "//server:config": "server/conf/config.yml",
     "//server/resources:logo": "server/resources/typedb-ascii.txt",

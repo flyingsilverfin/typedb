@@ -17,11 +17,11 @@
 
 load("@rules_pkg//:providers.bzl", "PackageVariablesInfo")
 
-def create_empty_dir(name):
+def create_empty_dir(name, dir):
     native.genrule(
         name = name,
-        cmd = "mkdir $(@D)/" + name,
-        outs = [name]
+        cmd = "mkdir $(@D)/" + dir,
+        outs = [dir]
     )
 
 def _package_variables_info(ctx):
@@ -39,3 +39,4 @@ package_variables_info = rule(
         "target_cpu": attr.string(mandatory = True)
     }
 )
+

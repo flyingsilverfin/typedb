@@ -17,9 +17,13 @@ REM
 
 CALL refreshenv
 
+set DIR=%cd%
+
 REM Use platform's git instead of built-in.
 REM Equivalent to setting `net.git-fetch-with-cli = true` for crate_repositories defined in @vaticle_dependencies
 set CARGO_NET_GIT_FETCH_WITH_CLI=true
+
+cd %BUILD_WORKSPACE_DIRECTORY%
 
 REM Prepare cargo manifests
 bazel run @vaticle_dependencies//tool/cargo:sync
@@ -27,8 +31,6 @@ bazel run @vaticle_dependencies//tool/cargo:sync
 cd rust
 cargo build --release
 
-mv target/release/typedb-binary.exe .
-bazel build //:assemble-windows-zip
+mv target/release/typedb-server-binary.exe %DIR%
 
-:error
-IF %errorlevel% NEQ 0 EXIT /b %errorlevel%
+cd %DIR%
