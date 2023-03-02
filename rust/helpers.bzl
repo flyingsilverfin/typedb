@@ -17,6 +17,13 @@
 
 load("@rules_pkg//:providers.bzl", "PackageVariablesInfo")
 
+def create_empty_dir(name):
+    native.genrule(
+        name = name,
+        cmd = "mkdir $(@D)/" + name,
+        outs = [name]
+    )
+
 def _package_variables_info(ctx):
     values = {
         "target_os": ctx.attr.target_os,

@@ -18,22 +18,10 @@
 
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_shared_library", "rust_static_library")
 load("@vaticle_dependencies//tool/checkstyle:rules.bzl", "checkstyle_test")
+load("@vaticle_bazel_distribution//common/tgz2zip:rules.bzl", "tgz2zip")
 load("@rules_pkg//:pkg.bzl", "pkg_tar", "pkg_zip")
-load("//rust:platform_values.bzl", "package_variables_info")
+load("//rust:helpers.bzl", "package_variables_info", "create_empty_dir")
 
-
-package_variables_info(
-    name = "pkg_vars",
-    target_os = select({
-        "@vaticle_dependencies//util/platform:is_mac": "mac",
-        "@vaticle_dependencies//util/platform:is_linux": "linux",
-        "@vaticle_dependencies//util/platform:is_windows": "windows",
-    }),
-    target_cpu = select({
-        "@vaticle_dependencies//util/platform:is_arm64": "arm64",
-        "@vaticle_dependencies//util/platform:is_x86_64": "x86_64",
-    })
-)
 
 rust_binary(
     name = "typedb-server-binary",
@@ -46,23 +34,51 @@ rust_binary(
     }),
 )
 
-pkg_tar(
-    name = "typedb-server-tar",
-    srcs = [":typedb-server-binary"],
-    extension = ".tar.gz",
-    package_file_name = "typedb-server-{target_os}-{target_cpu}-{version}.tar.gz",
-    package_variables = ":pkg_vars"
+create_empty_dir(
+    name = "data"
 )
 
-pkg_zip(
-    name = "typedb-server-zip",
-    srcs = [":typedb-server-binary"],
-    package_file_name = "typedb-server-{target_os}-{target_cpu}-{version}.zip",
-    package_variables = ":pkg_vars"
+pkg_files = {
+    ":data": "server/data",
+    ":typedb-server-binary": "server/bin/typedb",
+    "//server:config": "server/conf/config.yml",
+    "//server/resources:logo": "server/resources/typedb-ascii.txt",
+    "//:LICENSE": "LICENSE",
+}
+
+pkg_file_permissions = {
+    "server/conf/config.yml" : "0755",
+    "server/data" : "0755",
+}
+
+package_variables_info(
+    name = "pkg_vars",
+    target_os = select({
+        "@vaticle_dependencies//util/platform:is_mac": "mac",
+        "@vaticle_dependencies//util/platform:is_linux": "linux",
+        "@vaticle_dependencies//util/platform:is_windows": "windows",
+    }),
+    target_cpu = select({
+        "@vaticle_dependencies//util/platform:is_arm64": "arm64",
+        "@vaticle_dependencies//util/platform:is_x86_64": "x86_64",
+    }),
+)
+
+pkg_tar(
+    name = "typedb-server-native-targz",
+    deps = [
+        "@vaticle_typedb_common//binary:assemble-bash-targz",
+    ],
+    files = pkg_files,
+    modes = pkg_file_permissions,
+    extension = "tar.gz",
+    package_file_name = "typedb-server-{target_os}-{target_cpu}-{version}.tar.gz",
+    package_dir = "typedb-server-{target_os}-{target_cpu}",
+    package_variables = ":pkg_vars",
+    strip_prefix = ".", # Preserve directory structures
 )
 
 # TODO - best way to generate the windows binary
-
 
 genrule(
     name = "typedb-server-binary-windows",
