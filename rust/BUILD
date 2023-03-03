@@ -79,23 +79,17 @@ pkg_tar(
     }),
 )
 
-# TODO - best way to generate the windows binary
-
 sh_binary(
-    name = "typedb-server-windows-native",
-    srcs = [":build-typedb-windows.bat"],
-    deps = [],
+    name = "build-typedb-cargo.bat",
+    srcs = [":build-typedb-windows-cargo.bat"],
 )
 
 genrule(
     name = "typedb-server-binary-windows",
-    srcs = glob(["**/*.rs", "**/**/Cargo.toml", "storage/*"]),
-    cmd = "pwd; \
-    tree; \
-    cd rust; \
-    cargo build --release; \
-    ",
-    outs = ["target/release/typedb-server-windows-x86_64.exe"],
+    cmd_bat = ".\(location :build-typedb-windows-cargo.bat) $@",
+    outs = ["typedb-server-windows-x86_64.exe"],
+    tools = [":build-typedb-windows-cargo.bat"],
+    executable = True,
     target_compatible_with = select({
         "@platforms//os:windows": [],
         "//conditions:default": ["@platforms//:incompatible"],
