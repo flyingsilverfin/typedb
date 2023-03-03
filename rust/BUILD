@@ -27,11 +27,6 @@ rust_binary(
     name = "typedb-server-binary",
     srcs = ["main.rs"],
     deps = ["//rust/storage:typedb"],
-    target_compatible_with = select({
-        "@platforms//os:osx": [],
-        "@platforms//os:linux": [],
-        "//conditions:default": ["@platforms//:incompatible"],
-    }),
 )
 
 create_empty_dir(
@@ -77,6 +72,11 @@ pkg_tar(
     package_dir = "typedb-server-{target_os}-{target_cpu}",
     package_variables = ":pkg_vars",
     strip_prefix = ".", # Preserve directory structures
+    target_compatible_with = select({
+        "@platforms//os:osx": [],
+        "@platforms//os:linux": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
 )
 
 # TODO - best way to generate the windows binary
