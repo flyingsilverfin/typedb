@@ -81,6 +81,12 @@ pkg_tar(
 
 # TODO - best way to generate the windows binary
 
+sh_binary(
+    name = "typedb-server-windows-native",
+    srcs = [":build-typedb-windows.bat"],
+    deps = [],
+)
+
 genrule(
     name = "typedb-server-binary-windows",
     srcs = glob(["**/*.rs", "**/**/Cargo.toml", "storage/*"]),

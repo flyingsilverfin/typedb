@@ -52,6 +52,7 @@ jobs:
       - run: refreshenv
       - run: .circleci\windows\prepare.bat
       - run: .circleci\windows\build-typedb.bat
+      - run: bazel run //rust:build-typedb-windows-native
   build-mac-zip:
     macos:
       xcode: "13.4.1"

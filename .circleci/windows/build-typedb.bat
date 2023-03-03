@@ -27,8 +27,7 @@ bazel run @vaticle_dependencies//tool/cargo:sync
 cd rust
 cargo build --release
 
-mv target/release/typedb-binary.exe .
-bazel build //:assemble-windows-zip
+mv target/release/typedb-server-binary.exe .
 
 :error
 IF %errorlevel% NEQ 0 EXIT /b %errorlevel%
