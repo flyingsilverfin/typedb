@@ -17,6 +17,9 @@ REM
 
 CALL refreshenv
 
+echo %cd%
+echo %1
+
 set DIR=%cd%
 set OUTPUT=%1
 

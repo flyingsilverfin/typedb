@@ -86,7 +86,7 @@ sh_binary(
 
 genrule(
     name = "typedb-server-binary-windows",
-    cmd_bat = ".\(location :build-typedb-windows-cargo.bat) $@",
+    cmd_bat = ".\\$(location :build-typedb-windows-cargo.bat) $@",
     outs = ["typedb-server-windows-x86_64.exe"],
     tools = [":build-typedb-windows-cargo.bat"],
     executable = True,
