@@ -18,6 +18,8 @@ REM
 set DIR=%cd%
 set OUTPUT=%1
 
+set CARGO_NET_GIT_FETCH_WITH_CLI=true
+
 cd %BUILD_WORKSPACE_DIRECTORY%
 
 REM Prepare cargo manifests
