@@ -52,6 +52,7 @@ jobs:
       - run: refreshenv
       - run: .circleci\windows\prepare.bat
       - run: refreshenv
+      # NEITHER OF THESE SEEM TO WORK HERE BUT IN CMD SSH IT WORKS??
       # Bazel's native git binary doesn't place nice with cargo, so use windows git binary
       - run: setx CARGO_NET_GIT_FETCH_WITH_CLI true
       - run: set CARGO_NET_GIT_FETCH_WITH_CLI=true
