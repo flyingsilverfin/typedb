@@ -15,11 +15,6 @@ REM You should have received a copy of the GNU Affero General Public License
 REM along with this program.  If not, see <https://www.gnu.org/licenses/>.
 REM
 
-CALL refreshenv
-
-echo %cd%
-echo %1
-
 set DIR=%cd%
 set OUTPUT=%1
 
@@ -35,6 +30,4 @@ bazel run @vaticle_dependencies//tool/cargo:sync
 cd rust
 cargo build --release
 
-mv target\release\typedb-server-binary.exe %DIR%\%OUTPUT%
-
-cd %DIR%
+move target\release\typedb-server-binary.exe %DIR%\%OUTPUT%
