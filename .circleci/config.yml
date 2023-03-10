@@ -53,7 +53,9 @@ jobs:
       - run: .circleci\windows\prepare.bat
       - run: refreshenv
       # Bazel's native git binary doesn't place nice with cargo, so use windows git binary
-      - run: setx CARGO_NET_GIT_FETCH_WITH_CLI true # We have to expose OS path (or bazel/cargo won't be found), ProgramData (or MSVC won't be found)
+      - run: setx CARGO_NET_GIT_FETCH_WITH_CLI true
+      - run: set CARGO_NET_GIT_FETCH_WITH_CLI=true
+      # We have to expose OS path (or bazel/cargo won't be found), ProgramData (or MSVC won't be found)
       - run: bazel run //rust:typedb-server-binary-windows --action_env=path="%PATH%" --action_env=ProgramData=%ProgramData% --action_env=BUILD_WORKSPACE_DIRECTORY=%cd%
   build-mac-zip:
     macos:
