@@ -21,4 +21,4 @@ set CARGO_NET_GIT_FETCH_WITH_CLI=true
 
 cd %BUILD_WORKSPACE_DIRECTORY%\rust
 CALL cargo build --release
-move target\release\typedb-server-binary.exe %DIR%\%OUTPUT%
+move target\release\typedb-server-binary-native.exe %DIR%\%OUTPUT%

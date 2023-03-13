@@ -23,9 +23,9 @@ load("@rules_pkg//:pkg.bzl", "pkg_tar", "pkg_zip")
 load("//rust:helpers.bzl", "package_variables_info", "create_empty_dir")
 
 
-# If we set the platform compatibility here, we cannot generate Cargo files from it using the Cargo sync tool
+# This rule really only works on mac or linux, however we cannot restrict with platforms or we can't generate Cargo.toml
 rust_binary(
-    name = "typedb-server-binary-unix",
+    name = "typedb-server-binary-native",
     srcs = ["main.rs"],
     deps = ["//rust/storage:typedb"],
 )
