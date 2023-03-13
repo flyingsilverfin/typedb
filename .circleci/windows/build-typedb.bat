@@ -22,7 +22,8 @@ bazel run @vaticle_dependencies//tool/cargo:sync
 bazel run //rust:typedb-server-binary-windows --action_env=path="%PATH%" --action_env=ProgramData=%ProgramData% --action_env=BUILD_WORKSPACE_DIRECTORY=%cd% --action_env=CARGO_NET_GIT_FETCH_WITH_CLI=true
 
 echo "Building windows targz"
-bazel build //rust:typedb-server-native-windows-targz
+set /p VERSION=<VERSION
+bazel build //rust:typedb-server-native-windows-targz --action_env=path="%PATH%" --action_env=ProgramData=%ProgramData% --action_env=BUILD_WORKSPACE_DIRECTORY=%cd% --action_env=CARGO_NET_GIT_FETCH_WITH_CLI=true --define version=%VERSION%
 
 :error
 IF %errorlevel% NEQ 0 EXIT /b %errorlevel%
