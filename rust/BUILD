@@ -61,7 +61,7 @@ package_variables_info(
 )
 
 pkg_tar(
-    name = "typedb-server-native-targz",
+    name = "typedb-server-native-unix-targz",
     deps = [
         "@vaticle_typedb_common//binary:assemble-bash-targz",
     ],
@@ -79,17 +79,30 @@ pkg_tar(
     }),
 )
 
-sh_binary(
-    name = "build-typedb-cargo.bat",
-    srcs = [":build-typedb-windows-cargo.bat"],
-)
-
 genrule(
     name = "typedb-server-binary-windows",
     cmd_bat = ".\\$(location :build-typedb-windows-cargo.bat) $@",
     outs = ["typedb-server-windows-x86_64.exe"],
     tools = [":build-typedb-windows-cargo.bat"],
     executable = True,
+    target_compatible_with = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
+
+pkg_tar(
+    name = "typedb-server-native-windows-targz",
+    deps = [
+        "@vaticle_typedb_common//binary:assemble-bat-targz",
+    ],
+    files = pkg_files,
+    modes = pkg_file_permissions,
+    extension = "tar.gz",
+    package_file_name = "typedb-server-{target_os}-{target_cpu}-{version}.tar.gz",
+    package_dir = "typedb-server-{target_os}-{target_cpu}",
+    package_variables = ":pkg_vars",
+    strip_prefix = ".", # Preserve directory structures
     target_compatible_with = select({
         "@platforms//os:windows": [],
         "//conditions:default": ["@platforms//:incompatible"],

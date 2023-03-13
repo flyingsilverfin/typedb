@@ -26,12 +26,12 @@ cd %BUILD_WORKSPACE_DIRECTORY%
 echo "RUNNING SYNC TOOL" >> log.txt
 @REM
 @REM REM Prepare cargo manifests
-CALL bazel run @vaticle_dependencies//tool/cargo:sync
+CALL bazel run @vaticle_dependencies//tool/cargo:sync >> log.txt
 
 cd rust
 
 echo "RUNNING CARGO BUILD" >> log.txt
-CALL cargo build --release
+CALL cargo build --release >> log.txt
 
 echo "MOVING BINARY" >> log.txt
 move target\release\typedb-server-binary.exe %DIR%\%OUTPUT%
