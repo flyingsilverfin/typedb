@@ -49,15 +49,14 @@ jobs:
     working_directory: ~/typedb
     steps:
       - checkout
-      - run: refreshenv
       - run: .circleci\windows\prepare.bat
-      - run: refreshenv
       # NEITHER OF THESE SEEM TO WORK HERE BUT IN CMD SSH IT WORKS??
       # Bazel's native git binary doesn't place nice with cargo, so use windows git binary
-      - run: setx CARGO_NET_GIT_FETCH_WITH_CLI true
-      - run: set CARGO_NET_GIT_FETCH_WITH_CLI=true
       # We have to expose OS path (or bazel/cargo won't be found), ProgramData (or MSVC won't be found)
-      - run: bazel run //rust:typedb-server-binary-windows --action_env=path="%PATH%" --action_env=ProgramData=%ProgramData% --action_env=BUILD_WORKSPACE_DIRECTORY=%cd% --action_env=CARGO_NET_GIT_FETCH_WITH_CLI=true
+      - run: |
+          refreshenv
+          set CARGO_NET_GIT_FETCH_WITH_CLI=true
+          bazel run //rust:typedb-server-binary-windows --action_env=path="%PATH%" --action_env=ProgramData=%ProgramData% --action_env=BUILD_WORKSPACE_DIRECTORY=%cd% --action_env=CARGO_NET_GIT_FETCH_WITH_CLI=true
   build-mac-zip:
     macos:
       xcode: "13.4.1"
