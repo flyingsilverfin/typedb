@@ -18,14 +18,15 @@ REM
 set DIR=%cd%
 set OUTPUT=%1
 
+CALL setx CARGO_NET_GIT_FETCH_WITH_CLI true
 set CARGO_NET_GIT_FETCH_WITH_CLI=true
 
 cd %BUILD_WORKSPACE_DIRECTORY%
 
-@REM echo "RUNNING SYNC TOOL" >> log.txt
+echo "RUNNING SYNC TOOL" >> log.txt
 @REM
 @REM REM Prepare cargo manifests
-@REM bazel run @vaticle_dependencies//tool/cargo:sync
+CALL bazel run @vaticle_dependencies//tool/cargo:sync
 
 cd rust
 
