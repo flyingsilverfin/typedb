@@ -31,7 +31,7 @@ CALL bazel run @vaticle_dependencies//tool/cargo:sync
 cd rust
 
 echo "RUNNING CARGO BUILD" >> log.txt
-cargo build --release
+CALL cargo build --release
 
 echo "MOVING BINARY" >> log.txt
 move target\release\typedb-server-binary.exe %DIR%\%OUTPUT%
