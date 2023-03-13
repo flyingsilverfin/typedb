@@ -17,6 +17,8 @@ REM
 
 CALL refreshenv
 
+CALL setx CARGO_NET_GIT_FETCH_WITH_CLI true
+set CARGO_NET_GIT_FETCH_WITH_CLI=true
 CALL bazel run @vaticle_dependencies//tool/cargo:sync
 CALL bazel run //rust:typedb-server-binary-windows --action_env=path="%PATH%" --action_env=ProgramData=%ProgramData% --action_env=BUILD_WORKSPACE_DIRECTORY=%cd% --action_env=CARGO_NET_GIT_FETCH_WITH_CLI=true
 
