@@ -22,12 +22,17 @@ set CARGO_NET_GIT_FETCH_WITH_CLI=true
 
 cd %BUILD_WORKSPACE_DIRECTORY%
 
+echo "RUNNING SYNC TOOL"
+
 REM Prepare cargo manifests
 bazel run @vaticle_dependencies//tool/cargo:sync
 
 cd rust
+
+echo "RUNNING CARGO BUILD"
 cargo build --release
 
+echo "MOVING BINARY"
 move target\release\typedb-server-binary.exe %DIR%\%OUTPUT%
 
 cd %DIR%
