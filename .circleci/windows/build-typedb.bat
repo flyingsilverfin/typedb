@@ -17,7 +17,7 @@ REM
 
 CALL refreshenv
 
-bazel run //rust:typedb-server-binary-windows --action_env=path="%PATH%" --action_env=ProgramData=%ProgramData% --action_env=BUILD_WORKSPACE_DIRECTORY=%cd% --action_env=CARGO_NET_GIT_FETCH_WITH_CLI=true
+CALL bazel run //rust:typedb-server-binary-windows --action_env=path="%PATH%" --action_env=ProgramData=%ProgramData% --action_env=BUILD_WORKSPACE_DIRECTORY=%cd% --action_env=CARGO_NET_GIT_FETCH_WITH_CLI=true
 
 :error
 IF %errorlevel% NEQ 0 EXIT /b %errorlevel%
