@@ -23,20 +23,35 @@ load("@rules_pkg//:pkg.bzl", "pkg_tar", "pkg_zip")
 load("//rust:helpers.bzl", "package_variables_info", "create_empty_dir")
 
 
+# If we set the platform compatibility here, we cannot generate Cargo files from it using the Cargo sync tool
 rust_binary(
-    name = "typedb-server-binary",
+    name = "typedb-server-binary-unix",
     srcs = ["main.rs"],
     deps = ["//rust/storage:typedb"],
 )
 
-create_empty_dir(
-    name = "data-dir",
-    dir = "data"
+genrule(
+    name = "typedb-server-binary-windows",
+    cmd_bat = ".\\$(location :build-typedb-windows-cargo.bat) $@",
+    outs = ["typedb-server-windows-x86_64.exe"],
+    tools = [":build-typedb-windows-cargo.bat"],
+    executable = True,
+    target_compatible_with = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
 )
+
+pkg_files_binary_unix = {
+    ":typedb-server-binary-unix": "server/bin/typedb",
+}
+
+pkg_files_binary_windows = {
+    ":typedb-server-binary-windows": "server/bin/typedb",
+}
 
 pkg_files = {
     ":data-dir": "server/data",
-    ":typedb-server-binary": "server/bin/typedb",
     "//server:config": "server/conf/config.yml",
     "//server/resources:logo": "server/resources/typedb-ascii.txt",
     "//:LICENSE": "LICENSE",
@@ -46,6 +61,11 @@ pkg_file_permissions = {
     "server/conf/config.yml" : "0755",
     "server/data" : "0755",
 }
+
+create_empty_dir(
+    name = "data-dir",
+    dir = "data"
+)
 
 package_variables_info(
     name = "pkg_vars",
@@ -65,7 +85,7 @@ pkg_tar(
     deps = [
         "@vaticle_typedb_common//binary:assemble-bash-targz",
     ],
-    files = pkg_files,
+    files = pkg_files | pkg_files_binary_unix,
     modes = pkg_file_permissions,
     extension = "tar.gz",
     package_file_name = "typedb-server-{target_os}-{target_cpu}-{version}.tar.gz",
@@ -79,24 +99,13 @@ pkg_tar(
     }),
 )
 
-genrule(
-    name = "typedb-server-binary-windows",
-    cmd_bat = ".\\$(location :build-typedb-windows-cargo.bat) $@",
-    outs = ["typedb-server-windows-x86_64.exe"],
-    tools = [":build-typedb-windows-cargo.bat"],
-    executable = True,
-    target_compatible_with = select({
-        "@platforms//os:windows": [],
-        "//conditions:default": ["@platforms//:incompatible"],
-    }),
-)
 
 pkg_tar(
     name = "typedb-server-native-windows-targz",
     deps = [
         "@vaticle_typedb_common//binary:assemble-bat-targz",
     ],
-    files = pkg_files,
+    files = pkg_files | pkg_files_binary_windows,
     modes = pkg_file_permissions,
     extension = "tar.gz",
     package_file_name = "typedb-server-{target_os}-{target_cpu}-{version}.tar.gz",
@@ -108,7 +117,6 @@ pkg_tar(
         "//conditions:default": ["@platforms//:incompatible"],
     }),
 )
-
 
 checkstyle_test(
     name = "checkstyle",
