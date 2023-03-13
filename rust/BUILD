@@ -42,15 +42,16 @@ genrule(
     }),
 )
 
-pkg_files_binary_unix = {
+pkg_files_unix = {
     ":typedb-server-binary-unix": "server/bin/typedb",
+    ":data-dir": "server/data",
+    "//server:config": "server/conf/config.yml",
+    "//server/resources:logo": "server/resources/typedb-ascii.txt",
+    "//:LICENSE": "LICENSE",
 }
 
-pkg_files_binary_windows = {
+pkg_files_windows = {
     ":typedb-server-binary-windows": "server/bin/typedb",
-}
-
-pkg_files = {
     ":data-dir": "server/data",
     "//server:config": "server/conf/config.yml",
     "//server/resources:logo": "server/resources/typedb-ascii.txt",
@@ -85,7 +86,7 @@ pkg_tar(
     deps = [
         "@vaticle_typedb_common//binary:assemble-bash-targz",
     ],
-    files = pkg_files | pkg_files_binary_unix,
+    files = pkg_files_unix,
     modes = pkg_file_permissions,
     extension = "tar.gz",
     package_file_name = "typedb-server-{target_os}-{target_cpu}-{version}.tar.gz",
@@ -105,7 +106,7 @@ pkg_tar(
     deps = [
         "@vaticle_typedb_common//binary:assemble-bat-targz",
     ],
-    files = pkg_files | pkg_files_binary_windows,
+    files = pkg_files_windows,
     modes = pkg_file_permissions,
     extension = "tar.gz",
     package_file_name = "typedb-server-{target_os}-{target_cpu}-{version}.tar.gz",
