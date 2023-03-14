@@ -16,18 +16,17 @@
 #
 
 
-load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_shared_library", "rust_static_library")
+load("@rules_rust//rust:defs.bzl", "rust_binary")
 load("@vaticle_dependencies//tool/checkstyle:rules.bzl", "checkstyle_test")
-load("@vaticle_bazel_distribution//common/tgz2zip:rules.bzl", "tgz2zip")
-load("@rules_pkg//:pkg.bzl", "pkg_tar", "pkg_zip")
-load("//rust:helpers.bzl", "package_variables_info", "create_empty_dir")
+load("@rules_pkg//:pkg.bzl", "pkg_tar")
+load("//rust:packaging.bzl", "package_variables_info", "create_empty_dir")
 
 
-# This rule really only works on mac or linux, however we cannot restrict with platforms or we can't generate Cargo.toml
+# NOTE: This will fail to compile transitive RocksDB sources on Windows, due to the 255-char path-length limitation
 rust_binary(
     name = "typedb-server-binary-native",
     srcs = ["main.rs"],
-    deps = ["//rust/storage:typedb"],
+    deps = ["//rust/storage:storage"],
 )
 
 genrule(
@@ -43,7 +42,7 @@ genrule(
 )
 
 pkg_files_unix = {
-    ":typedb-server-binary-unix": "server/bin/typedb",
+    ":typedb-server-binary-native": "server/bin/typedb",
     ":data-dir": "server/data",
     "//server:config": "server/conf/config.yml",
     "//server/resources:logo": "server/resources/typedb-ascii.txt",
@@ -99,7 +98,6 @@ pkg_tar(
         "//conditions:default": ["@platforms//:incompatible"],
     }),
 )
-
 
 pkg_tar(
     name = "typedb-server-native-windows-targz",

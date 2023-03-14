@@ -17,13 +17,16 @@ REM
 
 CALL refreshenv
 
-set CARGO_NET_GIT_FETCH_WITH_CLI=true
+REM First generate all Cargo.toml files
 bazel run @vaticle_dependencies//tool/cargo:sync
-bazel run //rust:typedb-server-binary-windows --action_env=path="%PATH%" --action_env=ProgramData=%ProgramData% --action_env=BUILD_WORKSPACE_DIRECTORY=%cd% --action_env=CARGO_NET_GIT_FETCH_WITH_CLI=true
 
-echo "Building windows targz"
+REM We set some environment variables when building using Bazel to invoke Cargo builds
+REM   PATH is required in order to find the 'cargo' executable
+REM   ProgramData is required in order to find the right MSVC compiler
+REM   BUILD_WORKSPACE_DIRECTORY is set explicitly since Bazel may not set it on Windows
+REM   CARGO_NET_GIT_FETCH_WITH_CLI is lets Cargo use the Windows 'git' executable instead of Bazels'
 set /p VERSION=<VERSION
-bazel build //rust:typedb-server-native-windows-targz --action_env=path="%PATH%" --action_env=ProgramData=%ProgramData% --action_env=BUILD_WORKSPACE_DIRECTORY=%cd% --action_env=CARGO_NET_GIT_FETCH_WITH_CLI=true --define version=%VERSION%
+bazel build --define version=%VERSION% //rust:typedb-server-native-windows-targz --action_env=PATH="%PATH%" --action_env=ProgramData=%ProgramData% --action_env=BUILD_WORKSPACE_DIRECTORY=%cd% --action_env=CARGO_NET_GIT_FETCH_WITH_CLI=true
 
 :error
 IF %errorlevel% NEQ 0 EXIT /b %errorlevel%

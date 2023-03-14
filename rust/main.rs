@@ -17,9 +17,9 @@
  */
 
 
-extern crate typedb;
+extern crate storage;
 
 fn main() {
     println!("Hi!");
-    typedb::hello();
+    storage::hello();
 }

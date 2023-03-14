@@ -15,10 +15,11 @@ REM You should have received a copy of the GNU Affero General Public License
 REM along with this program.  If not, see <https://www.gnu.org/licenses/>.
 REM
 
+REM WARN: this script requires having generated Cargo.toml files beforehand
+
 set DIR=%cd%
-set OUTPUT=%1
 set CARGO_NET_GIT_FETCH_WITH_CLI=true
 
 cd %BUILD_WORKSPACE_DIRECTORY%\rust
 CALL cargo build --release
-move target\release\typedb-server-binary-native.exe %DIR%\%OUTPUT%
+move target\release\typedb-server-binary-native.exe %DIR%\%1

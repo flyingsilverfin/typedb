@@ -16,12 +16,11 @@
 #
 
 
-load("@rules_rust//rust:defs.bzl", "rust_static_library", "rust_library", "rust_shared_library")
-load("@vaticle_dependencies//distribution:deployment.bzl", "deployment")
+load("@rules_rust//rust:defs.bzl", "rust_library")
 load("@vaticle_dependencies//tool/checkstyle:rules.bzl", "checkstyle_test")
 
 rust_library(
-    name = "typedb",
+    name = "storage",
     srcs = [
         "lib.rs",
     ],
