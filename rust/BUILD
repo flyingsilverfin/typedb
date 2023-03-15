@@ -28,6 +28,7 @@ rust_binary(
     srcs = ["main.rs"],
     deps = [
         "//rust/storage:storage",
+        "//rust/traversal:traversal",
     ],
 )
 
