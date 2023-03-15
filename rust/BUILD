@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2022 Vaticle
+# Copyright (C) 2023 Vaticle
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as
@@ -26,14 +26,16 @@ load("//rust:packaging.bzl", "package_variables_info", "create_empty_dir")
 rust_binary(
     name = "typedb-server-binary-native",
     srcs = ["main.rs"],
-    deps = ["//rust/storage:storage"],
+    deps = [
+        "//rust/storage:storage",
+    ],
 )
 
 genrule(
     name = "typedb-server-binary-windows",
-    cmd_bat = ".\\$(location :build-typedb-windows-cargo.bat) $@",
+    cmd_bat = ".\\$(location :build-typedb-windows.bat) $@",
     outs = ["typedb-server-windows-x86_64.exe"],
-    tools = [":build-typedb-windows-cargo.bat"],
+    tools = [":build-typedb-windows.bat"],
     executable = True,
     target_compatible_with = select({
         "@platforms//os:windows": [],
