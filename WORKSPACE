@@ -50,6 +50,14 @@ fetch_crates()
 load("@crates//:defs.bzl", "crate_repositories")
 crate_repositories()
 
+load(
+    "@vaticle_dependencies//library/ortools/cc:deps.bzl",
+    "google_or_tools_linux", "google_or_tools_mac", "google_or_tools_windows"
+)
+google_or_tools_linux()
+google_or_tools_mac()
+google_or_tools_windows()
+
 # Load //builder/java
 load("@vaticle_dependencies//builder/java:deps.bzl", java_deps = "deps")
 java_deps()
