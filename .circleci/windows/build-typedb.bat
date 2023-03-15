@@ -18,6 +18,7 @@ REM
 CALL refreshenv
 
 REM First generate all Cargo.toml files
+set CARGO_NET_GIT_FETCH_WITH_CLI=true
 bazel run @vaticle_dependencies//tool/cargo:sync
 
 REM We set some environment variables when building using Bazel to invoke Cargo builds
