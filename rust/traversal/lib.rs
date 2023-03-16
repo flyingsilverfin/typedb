@@ -34,7 +34,7 @@ pub fn optimise() {
         x, y integers");
     println!();
 
-    let mut solver = ortools::ffi::new_mpsolver();
+    let mut solver = ortools::ffi::new_mpsolver_scip();
 
     let_cxx_string!(x = "x");
     let_cxx_string!(y = "y");

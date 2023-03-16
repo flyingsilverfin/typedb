@@ -50,13 +50,10 @@ fetch_crates()
 load("@crates//:defs.bzl", "crate_repositories")
 crate_repositories()
 
-load(
-    "@vaticle_dependencies//library/ortools/cc:deps.bzl",
-    "google_or_tools_linux", "google_or_tools_mac", "google_or_tools_windows"
-)
-google_or_tools_linux()
-google_or_tools_mac()
-google_or_tools_windows()
+load("@vaticle_dependencies//library/ortools/cc:deps.bzl", "google_or_tools")
+google_or_tools()
+load("@com_google_protobuf//:protobuf_deps.bzl", google_or_tools_protobuf_deps = "protobuf_deps")
+google_or_tools_protobuf_deps()
 
 # Load //builder/java
 load("@vaticle_dependencies//builder/java:deps.bzl", java_deps = "deps")
