@@ -50,7 +50,6 @@ jobs:
     steps:
       - checkout
       - run: git config --system core.longpaths true
-      - run: reg import .circleci\windows\long-paths.reg
       - run: .circleci\windows\prepare.bat
       # NEITHER OF THESE SEEM TO WORK HERE BUT IN CMD SSH IT WORKS??
       # Bazel's native git binary doesn't place nice with cargo, so use windows git binary

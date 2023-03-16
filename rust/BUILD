@@ -46,7 +46,6 @@ genrule(
 
 pkg_files_unix = {
     ":typedb-server-binary-native": "server/bin/typedb",
-    "@or_tools_linux//:lib" : "server/lib/libortools",
     ":data-dir": "server/data",
     "//server:config": "server/conf/config.yml",
     "//server/resources:logo": "server/resources/typedb-ascii.txt",
