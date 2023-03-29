@@ -22,38 +22,22 @@ load("@rules_pkg//:pkg.bzl", "pkg_tar")
 load("//rust:packaging.bzl", "package_variables_info", "create_empty_dir")
 
 
-# NOTE: This will fail to compile transitive RocksDB sources on Windows, due to the 255-char path-length limitation
 rust_binary(
-    name = "typedb-server-binary-native",
+    name = "typedb-server-binary-unix",
     srcs = ["main.rs"],
     deps = [
         "//rust/storage:storage",
         "//rust/traversal:traversal",
     ],
-)
-
-genrule(
-    name = "typedb-server-binary-windows",
-    cmd_bat = ".\\$(location :build-typedb-windows.bat) $@",
-    outs = ["typedb-server-windows-x86_64.exe"],
-    tools = [":build-typedb-windows.bat"],
-    executable = True,
     target_compatible_with = select({
-        "@platforms//os:windows": [],
+        "@platforms//os:osx": [],
+        "@platforms//os:linux": [],
         "//conditions:default": ["@platforms//:incompatible"],
     }),
 )
 
 pkg_files_unix = {
-    ":typedb-server-binary-native": "server/bin/typedb",
-    ":data-dir": "server/data",
-    "//server:config": "server/conf/config.yml",
-    "//server/resources:logo": "server/resources/typedb-ascii.txt",
-    "//:LICENSE": "LICENSE",
-}
-
-pkg_files_windows = {
-    ":typedb-server-binary-windows": "server/bin/typedb",
+    ":typedb-server-binary-unix": "server/bin/typedb",
     ":data-dir": "server/data",
     "//server:config": "server/conf/config.yml",
     "//server/resources:logo": "server/resources/typedb-ascii.txt",
@@ -75,7 +59,6 @@ package_variables_info(
     target_os = select({
         "@vaticle_dependencies//util/platform:is_mac": "mac",
         "@vaticle_dependencies//util/platform:is_linux": "linux",
-        "@vaticle_dependencies//util/platform:is_windows": "windows",
     }),
     target_cpu = select({
         "@vaticle_dependencies//util/platform:is_arm64": "arm64",
@@ -95,29 +78,6 @@ pkg_tar(
     package_dir = "typedb-server-{target_os}-{target_cpu}",
     package_variables = ":pkg_vars",
     strip_prefix = ".", # Preserve directory structures
-    target_compatible_with = select({
-        "@platforms//os:osx": [],
-        "@platforms//os:linux": [],
-        "//conditions:default": ["@platforms//:incompatible"],
-    }),
-)
-
-pkg_tar(
-    name = "typedb-server-native-windows-targz",
-    deps = [
-        "@vaticle_typedb_common//binary:assemble-bat-targz",
-    ],
-    files = pkg_files_windows,
-    modes = pkg_file_permissions,
-    extension = "tar.gz",
-    package_file_name = "typedb-server-{target_os}-{target_cpu}-{version}.tar.gz",
-    package_dir = "typedb-server-{target_os}-{target_cpu}",
-    package_variables = ":pkg_vars",
-    strip_prefix = ".", # Preserve directory structures
-    target_compatible_with = select({
-        "@platforms//os:windows": [],
-        "//conditions:default": ["@platforms//:incompatible"],
-    }),
 )
 
 checkstyle_test(

@@ -16,16 +16,7 @@
 #
 
 version: 2.1
-orbs:
-  win: circleci/windows@5.0.0
 commands:
-  install-bazel-linux:
-    steps:
-      - run: curl -OL https://raw.githubusercontent.com/vaticle/dependencies/master/tool/bazelinstall/linux.sh
-      - run: bash ./linux.sh && rm ./linux.sh
-      - run: curl -OL https://raw.githubusercontent.com/vaticle/dependencies/master/tool/bazelinstall/rbe.sh
-      - run: bash ./rbe.sh && rm ./rbe.sh
-
   install-bazel-mac:
     steps:
       - run: curl -OL https://raw.githubusercontent.com/vaticle/dependencies/master/tool/bazelinstall/mac.sh
@@ -41,20 +32,6 @@ commands:
           no_output_timeout: 120m
 
 jobs:
-  build-windows-zip:
-    executor:
-      name: win/default
-      shell: cmd.exe
-      size: xlarge
-    working_directory: ~/typedb
-    steps:
-      - checkout
-      - run: git config --system core.longpaths true
-      - run: .circleci\windows\prepare.bat
-      # NEITHER OF THESE SEEM TO WORK HERE BUT IN CMD SSH IT WORKS??
-      # Bazel's native git binary doesn't place nice with cargo, so use windows git binary
-      # We have to expose OS path (or bazel/cargo won't be found), ProgramData (or MSVC won't be found)
-      - run: .circleci\windows\build-typedb.bat
   build-mac-zip:
     macos:
       xcode: "13.4.1"
@@ -77,32 +54,14 @@ jobs:
       - run-bazel:
           command: bazel test //test/assembly:assembly --test_output=errors
 
-  test-assembly-windows-zip:
-    executor:
-      name: win/default
-      shell: cmd.exe
-    working_directory: ~/typedb
-    steps:
-      - checkout
-      - run: .circleci\windows\prepare.bat
-      - run: .circleci\windows\test-assembly.bat
-
 
 workflows:
   typedb:
     jobs:
-      - build-windows-zip
-#      - build-mac-zip
-#      - test-assembly-mac-zip:
-#          filters:
-#            branches:
-#              only:
-#                - master
-#                - development
-#      - test-assembly-windows-zip:
-#          filters:
-#            branches:
-#              only:
-#                - master
-#                - development
-
+      - build-mac-zip
+      - test-assembly-mac-zip:
+          filters:
+            branches:
+              only:
+                - master
+                - development
