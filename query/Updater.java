@@ -77,7 +77,7 @@ public class Updater {
             Matcher matcher = Matcher.create(reasoner, query.match().get(list(filter)));
             return new Updater(matcher, conceptMgr, deleteRegistry.things(), insertRegistry.things(), context);
         }
-    }
+
 
     public FunctionalIterator<ConceptMap> execute() {
         try (FactoryTracingThreadStatic.ThreadTrace ignored = traceOnThread(TRACE_PREFIX + "execute")) {
