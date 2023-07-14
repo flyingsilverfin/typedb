@@ -76,7 +76,7 @@ public class Materialiser {
         if (materialisable.owner().hasNonInferred(attribute)) return Optional.empty();
         else {
             materialisable.owner().setHas(attribute, INFERRED);
-            return Optional.of(new Materialisation.Has.Explicit(
+            return Optional.of(new Materialisation.Has.WithIsa(
                     materialisable.owner(), materialisable.attrType(), attribute)
             );
         }

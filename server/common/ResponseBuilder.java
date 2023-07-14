@@ -56,6 +56,7 @@ import java.util.regex.Pattern;
 
 import static com.google.protobuf.ByteString.copyFrom;
 import static com.vaticle.typedb.core.common.collection.ByteArray.encodeUUID;
+import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.ILLEGAL_STATE;
 import static com.vaticle.typedb.core.common.iterator.Iterators.iterate;
 import static com.vaticle.typedb.core.common.parameters.Concept.Existence.INFERRED;
 import static com.vaticle.typedb.core.server.common.ResponseBuilder.Answer.conceptMap;
@@ -852,7 +853,7 @@ public class ResponseBuilder {
             if (thing.isEntity()) return ConceptProto.Thing.newBuilder().setEntity(protoEntity(thing.asEntity())).build();
             if (thing.isRelation()) return ConceptProto.Thing.newBuilder().setRelation(protoRelation(thing.asRelation())).build();
             if (thing.isAttribute()) return ConceptProto.Thing.newBuilder().setAttribute(protoAttribute(thing.asAttribute())).build();
-            throw TypeDBException.of(ErrorMessage.Internal.ILLEGAL_STATE);
+            throw TypeDBException.of(ILLEGAL_STATE);
         }
 
         public static ConceptProto.Entity protoEntity(com.vaticle.typedb.core.concept.thing.Entity thing) {
@@ -971,8 +972,8 @@ public class ResponseBuilder {
 
         public static class Attribute {
 
-            public static ConceptProto.ConceptValue attributeValue(com.vaticle.typedb.core.concept.thing.Attribute attribute) {
-                ConceptProto.ConceptValue.Builder builder = ConceptProto.ConceptValue.newBuilder();
+            public static ConceptProto.Value attributeValue(com.vaticle.typedb.core.concept.thing.Attribute attribute) {
+                ConceptProto.Value.Builder builder = ConceptProto.Value.newBuilder();
                 // attributes don't need to set the value type
                 if (attribute.isString()) {
                     builder.setString(attribute.asString().getValue());
@@ -1003,10 +1004,15 @@ public class ResponseBuilder {
     public static class Value {
 
         public static ConceptProto.Value protoValue(com.vaticle.typedb.core.concept.value.Value<?> value) {
-            ConceptProto.Value.Builder protoValue = ConceptProto.Value.newBuilder()
-                    .setValueType(valueType(value))
-                    .setValue(value(value));
-            return protoValue.build();
+            ConceptProto.Value.Builder builder = ConceptProto.Value.newBuilder();
+            if (value.isString()) builder.setString(value.asString().value());
+            else if (value.isLong()) builder.setLong(value.asLong().value());
+            else if (value.isBoolean()) builder.setBoolean(value.asBoolean().value());
+            else if (value.isDateTime()) {
+                builder.setDateTime(value.asDateTime().value().toInstant(ZoneOffset.UTC).toEpochMilli());
+            } else if (value.isDouble()) builder.setDouble(value.asDouble().value());
+            else throw TypeDBException.of(ErrorMessage.Server.BAD_VALUE_TYPE);
+            return builder.build();
         }
 
         public static ConceptProto.ValueType valueType(com.vaticle.typedb.core.concept.value.Value<?> value) {
@@ -1016,18 +1022,6 @@ public class ResponseBuilder {
             else if (value.isDouble()) return ConceptProto.ValueType.DOUBLE;
             else if (value.isDateTime()) return ConceptProto.ValueType.DATETIME;
             else throw TypeDBException.of(ErrorMessage.Server.BAD_VALUE_TYPE);
-        }
-
-        public static ConceptProto.ConceptValue value(com.vaticle.typedb.core.concept.value.Value<?> value) {
-            ConceptProto.ConceptValue.Builder builder = ConceptProto.ConceptValue.newBuilder();
-            if (value.isString()) builder.setString(value.asString().value());
-            else if (value.isLong()) builder.setLong(value.asLong().value());
-            else if (value.isBoolean()) builder.setBoolean(value.asBoolean().value());
-            else if (value.isDateTime()) {
-                builder.setDateTime(value.asDateTime().value().toInstant(ZoneOffset.UTC).toEpochMilli());
-            } else if (value.isDouble()) builder.setDouble(value.asDouble().value());
-            else throw TypeDBException.of(ErrorMessage.Server.BAD_VALUE_TYPE);
-            return builder.build();
         }
     }
 

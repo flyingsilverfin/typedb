@@ -557,7 +557,7 @@ public class ThingGraph {
         }
         // thingsByIID no longer contains valid mapping from IID to TypeVertex
         for (ThingVertex.Write vertex : thingsByIID.values()) {
-            if (!vertex.isInferred()) vertex.commit();
+            if (vertex.existence() == STORED) vertex.commit();
         }
         attributesByIID.commit();
         statistics.commit();
