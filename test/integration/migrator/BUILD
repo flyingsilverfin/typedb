@@ -43,6 +43,8 @@ host_compatible_java_test(
     test_class = "com.vaticle.typedb.core.migrator.MigratorTest",
     deps = [
         # Internal dependencies
+        "//migrator:migrator-protocol",
+
         "//test/integration/util",
         "//server:version",
 

@@ -23,7 +23,7 @@ load("@vaticle_dependencies//distribution:deployment.bzl", "deployment")
 load("@vaticle_dependencies//builder/java:rules.bzl", "native_java_libraries")
 load("@rules_proto_grpc//java:defs.bzl", "java_grpc_library", "java_proto_library")
 
-package(default_visibility = ["//visibility:private",])
+package(default_visibility = ["//visibility:public"])
 
 proto_library(
     name = "migrator-protocol-protos",
@@ -70,7 +70,6 @@ native_java_libraries(
         "@maven//:io_github_speedb_io_speedbjni",
     ],
     tags = ["maven_coordinates=com.vaticle.typedb:typedb-core-migrator:{pom_version}"],
-    visibility = ["//visibility:public"],
 )
 
 checkstyle_test(

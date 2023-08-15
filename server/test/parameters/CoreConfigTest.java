@@ -51,7 +51,6 @@ public class CoreConfigTest {
         assertEquals(new InetSocketAddress("0.0.0.0", 1729), config.server().address());
         assertEquals(500 * Bytes.MB, config.storage().databaseCache().dataSize());
         assertEquals(500 * Bytes.MB, config.storage().databaseCache().indexSize());
-        assertFalse(config.vaticleFactory().enable());
         assertTrue(config.log().output().outputs().containsKey("stdout"));
         assertTrue(config.log().output().outputs().containsKey("file"));
         assertTrue(config.log().output().outputs().get("file").asFile().path().toString().endsWith("server/logs"));
@@ -72,7 +71,6 @@ public class CoreConfigTest {
         assertEquals(new InetSocketAddress("0.0.0.0", 1730), config.server().address());
         assertEquals(200 * Bytes.MB, config.storage().databaseCache().dataSize());
         assertEquals(700 * Bytes.MB, config.storage().databaseCache().indexSize());
-        assertFalse(config.vaticleFactory().enable());
         assertTrue(config.log().output().outputs().containsKey("stdout"));
         assertTrue(config.log().output().outputs().containsKey("file"));
         assertTrue(config.log().output().outputs().get("file").asFile().path().isAbsolute());
@@ -175,7 +173,6 @@ public class CoreConfigTest {
         );
         assertTrue(config.storage().dataDir().toString().endsWith("server/alt-data"));
         assertEquals(new InetSocketAddress("0.0.0.0", 1730), config.server().address());
-        assertFalse(config.vaticleFactory().enable());
         assertTrue(config.log().output().outputs().containsKey("stdout"));
         assertTrue(config.log().output().outputs().containsKey("file"));
         assertTrue(config.log().output().outputs().get("file").asFile().path().toString().endsWith("server/alt-logs"));
