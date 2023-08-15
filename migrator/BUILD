@@ -58,12 +58,6 @@ native_java_libraries(
         "@vaticle_typeql//java/common:common",
 
         # External dependencies from Maven
-        "@maven//:com_google_guava_guava",
-#        "@maven//:com_google_protobuf_protobuf_java",
-#        "@maven//:io_grpc_grpc_protobuf",
-#        "@maven//:io_grpc_grpc_api",
-#        "@maven//:io_grpc_grpc_stub",
-#        "@maven//:javax_annotation_javax_annotation_api", # gRPC needs this in order to compile in Java 11 and Java 14
         "@maven//:org_slf4j_slf4j_api",
     ],
     mac_deps = [

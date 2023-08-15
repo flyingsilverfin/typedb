@@ -169,7 +169,7 @@ maven(
     vaticle_typeql_artifacts +
     vaticle_typedb_artifacts +
     io_grpc_artifacts,
-#    override_targets = IO_GRPC_GRPC_JAVA_OVERRIDE_TARGETS,
+    override_targets = IO_GRPC_GRPC_JAVA_OVERRIDE_TARGETS,
     generate_compat_repositories = True
 )
 #
