@@ -21,33 +21,24 @@ load("@vaticle_bazel_distribution//artifact:rules.bzl", "deploy_artifact")
 load("@vaticle_dependencies//tool/checkstyle:rules.bzl", "checkstyle_test")
 load("@vaticle_dependencies//distribution:deployment.bzl", "deployment")
 load("@vaticle_dependencies//builder/java:rules.bzl", "native_java_libraries")
-load("@stackb_rules_proto//java:java_grpc_compile.bzl", "java_grpc_compile")
+load("@rules_proto_grpc//java:defs.bzl", "java_grpc_library", "java_proto_library")
 
 package(default_visibility = ["//visibility:private",])
 
 proto_library(
+    name = "migrator-protocol-protos",
+    srcs = ["migrator.proto", "database/data.proto"],
+)
+
+java_grpc_library(
     name = "migrator-protocol",
-    srcs = ["migrator.proto"],
-)
-
-proto_library(
-    name = "migrator-data",
-    srcs = ["database/data.proto"],
-)
-
-java_grpc_compile(
-    name = "migrator-protocol-src",
-    deps = ["migrator-protocol"],
-)
-
-java_grpc_compile(
-    name = "migrator-data-src",
-    deps = ["migrator-data"],
+    protos = [":migrator-protocol-protos"],
+    tags = ["maven_coordinates=com.vaticle.typedb:typedb-core-migrator-protocol:{pom_version}"],
 )
 
 native_java_libraries(
     name = "migrator",
-    srcs = [":migrator-protocol-src", ":migrator-data-src"] + glob(["*.java", "*/*.java", "*/*/*.java"]),
+    srcs = glob(["*.java", "*/*.java", "*/*/*.java"]),
     native_libraries_deps = [
         # Internal dependencies
         "//:typedb",
@@ -58,6 +49,8 @@ native_java_libraries(
         "//logic:logic",
     ],
     deps = [
+        ":migrator-protocol",
+
         # External dependencies from Vaticle
         "@vaticle_typedb_common//:common",
         "@vaticle_typeql//java:typeql-lang",
@@ -66,11 +59,11 @@ native_java_libraries(
 
         # External dependencies from Maven
         "@maven//:com_google_guava_guava",
-        "@maven//:com_google_protobuf_protobuf_java",
-        "@maven//:io_grpc_grpc_protobuf",
-        "@maven//:io_grpc_grpc_api",
-        "@maven//:io_grpc_grpc_stub",
-        "@maven//:javax_annotation_javax_annotation_api", # gRPC needs this in order to compile in Java 11 and Java 14
+#        "@maven//:com_google_protobuf_protobuf_java",
+#        "@maven//:io_grpc_grpc_protobuf",
+#        "@maven//:io_grpc_grpc_api",
+#        "@maven//:io_grpc_grpc_stub",
+#        "@maven//:javax_annotation_javax_annotation_api", # gRPC needs this in order to compile in Java 11 and Java 14
         "@maven//:org_slf4j_slf4j_api",
     ],
     mac_deps = [

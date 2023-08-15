@@ -18,7 +18,6 @@
 
 package com.vaticle.typedb.core.pattern;
 
-import com.vaticle.factory.tracing.client.FactoryTracingThreadStatic.ThreadTrace;
 import com.vaticle.typedb.core.common.exception.TypeDBException;
 import com.vaticle.typedb.core.pattern.variable.Variable;
 import com.vaticle.typedb.core.pattern.variable.VariableRegistry;
@@ -26,7 +25,6 @@ import com.vaticle.typeql.lang.pattern.variable.Reference;
 
 import java.util.Objects;
 
-import static com.vaticle.factory.tracing.client.FactoryTracingThreadStatic.traceOnThread;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Pattern.UNBOUNDED_NEGATION;
 import static com.vaticle.typedb.core.common.iterator.Iterators.iterate;
 import static com.vaticle.typeql.lang.common.TypeQLToken.Char.SPACE;
@@ -42,19 +40,19 @@ public class Negation implements Pattern, Cloneable {
     }
 
     public static Negation create(com.vaticle.typeql.lang.pattern.Negation<?> typeql, VariableRegistry bounds) {
-        try (ThreadTrace ignored = traceOnThread(TRACE_PREFIX + "create")) {
-            Disjunction disjunction = Disjunction.create(typeql.normalise().pattern(), bounds);
-            disjunction.conjunctions().forEach(conjunction -> {
-                if (iterate(conjunction.variables()).map(Variable::reference)
-                        .filter(Reference::isName).noneMatch(bounds::isBound)) {
-                    throw TypeDBException.of(UNBOUNDED_NEGATION);
-                }
-            });
-            return new Negation(disjunction);
-        }
+        Disjunction disjunction = Disjunction.create(typeql.normalise().pattern(), bounds);
+        disjunction.conjunctions().forEach(conjunction -> {
+            if (iterate(conjunction.variables()).map(Variable::reference)
+                    .filter(Reference::isName).noneMatch(bounds::isBound)) {
+                throw TypeDBException.of(UNBOUNDED_NEGATION);
+            }
+        });
+        return new Negation(disjunction);
     }
 
-    public Disjunction disjunction() { return disjunction; }
+    public Disjunction disjunction() {
+        return disjunction;
+    }
 
     @Override
     public Negation clone() {

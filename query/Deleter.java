@@ -17,7 +17,6 @@
 
 package com.vaticle.typedb.core.query;
 
-import com.vaticle.factory.tracing.client.FactoryTracingThreadStatic;
 import com.vaticle.typedb.common.collection.Either;
 import com.vaticle.typedb.core.common.exception.ErrorMessage;
 import com.vaticle.typedb.core.common.exception.TypeDBException;
@@ -44,7 +43,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import static com.vaticle.factory.tracing.client.FactoryTracingThreadStatic.traceOnThread;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.ThingWrite.DELETE_RELATION_CONSTRAINT_TOO_MANY;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.ThingWrite.ILLEGAL_ANONYMOUS_RELATION_IN_DELETE;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.ThingWrite.ILLEGAL_ANONYMOUS_VARIABLE_IN_DELETE;
@@ -74,22 +72,18 @@ public class Deleter {
     }
 
     public static Deleter create(Reasoner reasoner, TypeQLDelete query, Context.Query context) {
-        try (FactoryTracingThreadStatic.ThreadTrace ignored = traceOnThread(TRACE_PREFIX + "create")) {
-            VariableRegistry registry = VariableRegistry.createFromThings(query.variables(), false);
-            registry.variables().forEach(Deleter::validate);
+        VariableRegistry registry = VariableRegistry.createFromThings(query.variables(), false);
+        registry.variables().forEach(Deleter::validate);
 
-            assert query.match().namedVariablesUnbound().containsAll(query.namedVariablesUnbound());
-            Matcher matcher = Matcher.create(reasoner, query.match().get(query.namedVariablesUnbound()));
-            return new Deleter(matcher, registry.things(), context);
-        }
+        assert query.match().namedVariablesUnbound().containsAll(query.namedVariablesUnbound());
+        Matcher matcher = Matcher.create(reasoner, query.match().get(query.namedVariablesUnbound()));
+        return new Deleter(matcher, registry.things(), context);
     }
 
     public static void validate(Variable var) {
-        try (FactoryTracingThreadStatic.ThreadTrace ignored = traceOnThread(TRACE_PREFIX + "validate")) {
-            if (var.isType()) validate(var.asType());
-            else if (var.isValue()) validate(var.asValue());
-            else validate(var.asThing());
-        }
+        if (var.isType()) validate(var.asType());
+        else if (var.isValue()) validate(var.asValue());
+        else validate(var.asThing());
     }
 
     private static void validate(TypeVariable var) {
@@ -114,10 +108,8 @@ public class Deleter {
     }
 
     public void execute() {
-        try (FactoryTracingThreadStatic.ThreadTrace ignored = traceOnThread(TRACE_PREFIX + "execute")) {
-            List<? extends ConceptMap> matches = matcher.execute(context).toList();
-            matches.forEach(matched -> new Operation(matched, variables).executeInPlace());
-        }
+        List<? extends ConceptMap> matches = matcher.execute(context).toList();
+        matches.forEach(matched -> new Operation(matched, variables).executeInPlace());
     }
 
     static class Operation {
@@ -135,62 +127,52 @@ public class Deleter {
         }
 
         void executeInPlace() {
-            try (FactoryTracingThreadStatic.ThreadTrace ignored = traceOnThread(TRACE_PREFIX + "execute")) {
-                variables.forEach(this::delete);
-                variables.forEach(this::deleteIsa);
-            }
+            variables.forEach(this::delete);
+            variables.forEach(this::deleteIsa);
         }
 
         private void delete(ThingVariable var) {
-            try (FactoryTracingThreadStatic.ThreadTrace ignored = traceOnThread(TRACE_PREFIX + "delete")) {
-                validate(var);
-                Thing thing = matched.get(var.reference().asName()).asThing();
-                if (!var.has().isEmpty()) deleteHas(var, thing);
-                if (var.relation().isPresent()) deleteRelation(var, thing.asRelation());
-                detached.put(var, thing);
-            }
+            validate(var);
+            Thing thing = matched.get(var.reference().asName()).asThing();
+            if (!var.has().isEmpty()) deleteHas(var, thing);
+            if (var.relation().isPresent()) deleteRelation(var, thing.asRelation());
+            detached.put(var, thing);
         }
 
         private void deleteHas(ThingVariable var, Thing thing) {
-            try (FactoryTracingThreadStatic.ThreadTrace ignored = traceOnThread(TRACE_PREFIX + "delete_has")) {
-                for (HasConstraint hasConstraint : var.has()) {
-                    Reference.Name attRef = hasConstraint.attribute().reference().asName();
-                    Attribute att = matched.get(attRef).asAttribute();
-                    if (thing.getHas(att.getType()).anyMatch(a -> a.equals(att))) thing.unsetHas(att);
-                    else throw TypeDBException.of(INVALID_DELETE_HAS, var.reference(), attRef);
-                }
+            for (HasConstraint hasConstraint : var.has()) {
+                Reference.Name attRef = hasConstraint.attribute().reference().asName();
+                Attribute att = matched.get(attRef).asAttribute();
+                if (thing.getHas(att.getType()).anyMatch(a -> a.equals(att))) thing.unsetHas(att);
+                else throw TypeDBException.of(INVALID_DELETE_HAS, var.reference(), attRef);
             }
         }
 
         private void deleteRelation(ThingVariable var, Relation relation) {
-            try (FactoryTracingThreadStatic.ThreadTrace ignored = traceOnThread(TRACE_PREFIX + "delete_relation")) {
-                if (var.relation().isPresent()) {
-                    var.relation().get().players().forEach(rolePlayer -> {
-                        Thing player = matched.get(rolePlayer.player().reference().asName()).asThing();
-                        RoleType roleType = getRoleType(relation, player, rolePlayer);
-                        relation.removePlayer(roleType, player);
-                    });
-                } else {
-                    throw TypeDBException.of(DELETE_RELATION_CONSTRAINT_TOO_MANY, var.reference());
-                }
+            if (var.relation().isPresent()) {
+                var.relation().get().players().forEach(rolePlayer -> {
+                    Thing player = matched.get(rolePlayer.player().reference().asName()).asThing();
+                    RoleType roleType = getRoleType(relation, player, rolePlayer);
+                    relation.removePlayer(roleType, player);
+                });
+            } else {
+                throw TypeDBException.of(DELETE_RELATION_CONSTRAINT_TOO_MANY, var.reference());
             }
         }
 
         private void deleteIsa(ThingVariable var) {
-            try (FactoryTracingThreadStatic.ThreadTrace ignored = traceOnThread(TRACE_PREFIX + "delete_isa")) {
-                Thing thing = detached.get(var);
-                ThingType type = thing.getType();
-                if (var.isa().isPresent() && !thing.isDeleted()) {
-                    Label typeLabel = var.isa().get().type().label().get().properLabel();
-                    if (var.isa().get().isExplicit()) {
-                        if (type.getLabel().equals(typeLabel)) thing.delete();
-                        else throw TypeDBException.of(INVALID_DELETE_THING_DIRECT, var.reference(), typeLabel);
-                    } else {
-                        if (type.getSupertypesWithThing().anyMatch(t -> t.getLabel().equals(typeLabel))) thing.delete();
-                        else throw TypeDBException.of(INVALID_DELETE_THING, var.reference(), typeLabel);
-                    }
-                    matched.concepts().remove(var.id());
+            Thing thing = detached.get(var);
+            ThingType type = thing.getType();
+            if (var.isa().isPresent() && !thing.isDeleted()) {
+                Label typeLabel = var.isa().get().type().label().get().properLabel();
+                if (var.isa().get().isExplicit()) {
+                    if (type.getLabel().equals(typeLabel)) thing.delete();
+                    else throw TypeDBException.of(INVALID_DELETE_THING_DIRECT, var.reference(), typeLabel);
+                } else {
+                    if (type.getSupertypesWithThing().anyMatch(t -> t.getLabel().equals(typeLabel))) thing.delete();
+                    else throw TypeDBException.of(INVALID_DELETE_THING, var.reference(), typeLabel);
                 }
+                matched.concepts().remove(var.id());
             }
         }
     }

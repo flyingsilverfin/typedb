@@ -42,9 +42,3 @@ log:
       filter: com.vaticle.typedb.core
       level: info
       output: [ stdout, file ]
-
-vaticle-factory:
-  enable: false
-#  uri: "https://tracing.factory.vaticle.com:7979"
-#  username: $FACTORY_USERNAME
-#  token: $FACTORY_TOKEN

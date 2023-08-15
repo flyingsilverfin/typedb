@@ -24,9 +24,9 @@ workspace(name = "vaticle_typedb")
 load("//dependencies/vaticle:repositories.bzl", "vaticle_dependencies")
 vaticle_dependencies()
 
-# Load //builder/bazel for RBE
-load("@vaticle_dependencies//builder/bazel:deps.bzl", "bazel_toolchain")
-bazel_toolchain()
+# Load //builder/python
+load("@vaticle_dependencies//builder/python:deps.bzl", python_deps = "deps")
+python_deps()
 
 # Load //builder/java
 load("@vaticle_dependencies//builder/java:deps.bzl", java_deps = "deps")
@@ -50,15 +50,23 @@ load("@io_bazel_rules_kotlin//kotlin:core.bzl", "kt_register_toolchains")
 kt_register_toolchains()
 
 # Load //builder/grpc
-load("@vaticle_dependencies//builder/grpc:deps.bzl", grpc_deps = "deps")
-grpc_deps()
-load("@com_github_grpc_grpc//bazel:grpc_deps.bzl",
-com_github_grpc_grpc_deps = "grpc_deps")
-com_github_grpc_grpc_deps()
+load("@vaticle_dependencies//builder/grpc:deps.bzl", vaticle_grpc_deps = "deps")
+vaticle_grpc_deps()
 
-# Load //builder/python
-load("@vaticle_dependencies//builder/python:deps.bzl", python_deps = "deps")
-python_deps()
+load("@rules_proto_grpc//:repositories.bzl", "rules_proto_grpc_repos", "rules_proto_grpc_toolchains")
+rules_proto_grpc_toolchains()
+rules_proto_grpc_repos()
+
+load("@rules_proto//proto:repositories.bzl", "rules_proto_dependencies", "rules_proto_toolchains")
+rules_proto_dependencies()
+rules_proto_toolchains()
+
+load("@rules_proto_grpc//java:repositories.bzl", rules_proto_grpc_java_repos = "java_repos")
+rules_proto_grpc_java_repos()
+
+load("@io_grpc_grpc_java//:repositories.bzl", "IO_GRPC_GRPC_JAVA_ARTIFACTS", "IO_GRPC_GRPC_JAVA_OVERRIDE_TARGETS", "grpc_java_repositories")
+load("@vaticle_dependencies//library/maven:rules.bzl", "parse_unversioned")
+io_grpc_artifacts = [parse_unversioned(c) for c in IO_GRPC_GRPC_JAVA_ARTIFACTS]
 
 # Load //tool/common
 load("@vaticle_dependencies//tool/common:deps.bzl", "vaticle_dependencies_ci_pip",
@@ -136,11 +144,10 @@ container_pull(
 # We don't load Maven artifacts for @vaticle_typedb_common as they are only needed
 # if you depend on @vaticle_typedb_common//test/server
 load("//dependencies/vaticle:repositories.bzl",
-"vaticle_typedb_common","vaticle_typeql", "vaticle_typedb_protocol", "vaticle_factory_tracing", "vaticle_typedb_behaviour")
+"vaticle_typedb_common","vaticle_typeql", "vaticle_typedb_protocol", "vaticle_typedb_behaviour")
 vaticle_typedb_common()
 vaticle_typeql()
 vaticle_typedb_protocol()
-vaticle_factory_tracing()
 vaticle_typedb_behaviour()
 
 load("//dependencies/vaticle:artifacts.bzl", "vaticle_typedb_console_artifact")
@@ -150,7 +157,6 @@ vaticle_typedb_console_artifact()
 load("@vaticle_typedb_common//dependencies/maven:artifacts.bzl", vaticle_typedb_common_artifacts = "artifacts")
 load("@vaticle_typeql//dependencies/maven:artifacts.bzl", vaticle_typeql_artifacts = "artifacts")
 load("@vaticle_typedb_protocol//dependencies/maven:artifacts.bzl", vaticle_typedb_protocol_artifacts = "artifacts")
-load("@vaticle_factory_tracing//dependencies/maven:artifacts.bzl", vaticle_factory_tracing_artifacts = "artifacts")
 load("//dependencies/maven:artifacts.bzl", vaticle_typedb_artifacts = "artifacts")
 
 ############################
@@ -160,10 +166,16 @@ load("@vaticle_dependencies//library/maven:rules.bzl", "maven")
 maven(
     vaticle_typedb_common_artifacts  +
     vaticle_dependencies_tool_maven_artifacts +
-    vaticle_factory_tracing_artifacts +
     vaticle_typeql_artifacts +
-    vaticle_typedb_artifacts
+    vaticle_typedb_artifacts +
+    io_grpc_artifacts,
+#    override_targets = IO_GRPC_GRPC_JAVA_OVERRIDE_TARGETS,
+    generate_compat_repositories = True
 )
+#
+load("@maven//:compat.bzl", "compat_repositories")
+compat_repositories()
+grpc_java_repositories()
 
 ###############################################
 # Create @vaticle_typedb_workspace_refs #

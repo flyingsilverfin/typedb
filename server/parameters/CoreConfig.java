@@ -20,13 +20,10 @@ package com.vaticle.typedb.core.server.parameters;
 
 import com.vaticle.typedb.core.common.exception.TypeDBException;
 
-import javax.annotation.Nullable;
 import java.net.InetSocketAddress;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 import static com.vaticle.typedb.common.util.Objects.className;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.ILLEGAL_CAST;
@@ -38,13 +35,11 @@ public class CoreConfig {
     protected final Server server;
     protected final Storage storage;
     protected final Log log;
-    protected final VaticleFactory vaticleFactory;
 
-    protected CoreConfig(Server server, Storage storage, Log log, @Nullable VaticleFactory vaticleFactory) {
+    protected CoreConfig(Server server, Storage storage, Log log) {
         this.server = server;
         this.storage = storage;
         this.log = log;
-        this.vaticleFactory = vaticleFactory;
     }
 
     public Server server() {
@@ -57,10 +52,6 @@ public class CoreConfig {
 
     public Log log() {
         return log;
-    }
-
-    public VaticleFactory vaticleFactory() {
-        return vaticleFactory;
     }
 
     public static class Server {
@@ -170,7 +161,8 @@ public class CoreConfig {
 
                 public static class Stdout extends Type {
 
-                    Stdout() {}
+                    Stdout() {
+                    }
 
                     @Override
                     public boolean isStdout() {
@@ -350,40 +342,6 @@ public class CoreConfig {
                     return enable;
                 }
             }
-        }
-    }
-
-    /**
-     * Until the scope expands, we take this to only mean configuration of vaticle-factory tracing
-     */
-    public static class VaticleFactory {
-
-        private final boolean enable;
-        private final String uri;
-        private final String username;
-        private final String token;
-
-        VaticleFactory(boolean enable, @Nullable String uri, @Nullable String username, @Nullable String token) {
-            this.enable = enable;
-            this.uri = uri;
-            this.username = username;
-            this.token = token;
-        }
-
-        public boolean enable() {
-            return enable;
-        }
-
-        public Optional<String> uri() {
-            return Optional.ofNullable(uri);
-        }
-
-        public Optional<String> username() {
-            return Optional.ofNullable(username);
-        }
-
-        public Optional<String> token() {
-            return Optional.ofNullable(token);
         }
     }
 }

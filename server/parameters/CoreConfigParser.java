@@ -31,9 +31,9 @@ import java.util.Set;
 import static com.vaticle.typedb.common.collection.Collections.list;
 import static com.vaticle.typedb.common.collection.Collections.set;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Internal.ILLEGAL_STATE;
+import static com.vaticle.typedb.core.common.exception.ErrorMessage.Server.CONFIGS_UNRECOGNISED;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Server.CONFIG_SECTION_MUST_BE_MAP;
 import static com.vaticle.typedb.core.common.exception.ErrorMessage.Server.CONFIG_YAML_MUST_BE_MAP;
-import static com.vaticle.typedb.core.common.exception.ErrorMessage.Server.CONFIGS_UNRECOGNISED;
 import static com.vaticle.typedb.core.common.iterator.Iterators.iterate;
 import static com.vaticle.typedb.core.server.parameters.util.YAMLParser.KeyValue.Dynamic;
 import static com.vaticle.typedb.core.server.parameters.util.YAMLParser.KeyValue.Predefined;
@@ -52,23 +52,20 @@ public class CoreConfigParser extends YAMLParser.Value.Compound<CoreConfig> {
     private static final Predefined<CoreConfig.Server> server = predefined(Server.name, Server.description, new Server());
     private static final Predefined<CoreConfig.Storage> storage = predefined(Storage.name, Storage.description, new Storage());
     private static final Predefined<CoreConfig.Log> log = predefined(Log.name, Log.description, new Log());
-    protected static final Predefined<CoreConfig.VaticleFactory> vaticleFactory =
-            predefined(VaticleFactory.name, VaticleFactory.description, new VaticleFactory());
-    private static final Set<Predefined<?>> parsers = set(server, storage, log, vaticleFactory);
+    private static final Set<Predefined<?>> parsers = set(server, storage, log);
 
     @Override
     public CoreConfig parse(YAML yaml, String path) {
         if (yaml.isMap()) {
             validatePredefinedKeys(parsers, yaml.asMap().keys(), path);
             return new CoreConfig(server.parse(yaml.asMap(), path), storage.parse(yaml.asMap(), path),
-                    log.parse(yaml.asMap(), path), vaticleFactory.parse(yaml.asMap(), path)
-            );
+                    log.parse(yaml.asMap(), path));
         } else throw TypeDBException.of(CONFIG_YAML_MUST_BE_MAP, path);
     }
 
     @Override
     public List<com.vaticle.typedb.core.server.parameters.util.Help> helpList(String path) {
-        return list(server.help(path), storage.help(path), log.help(path), vaticleFactory.help(path));
+        return list(server.help(path), storage.help(path), log.help(path));
     }
 
     protected static Path configPathAbsolute(Path path) {
@@ -449,41 +446,6 @@ public class CoreConfigParser extends YAMLParser.Value.Compound<CoreConfig> {
                     return list(typeParser.help(path), output.help(path), enable.help(path));
                 }
             }
-        }
-    }
-
-    protected static class VaticleFactory extends Compound<CoreConfig.VaticleFactory> {
-
-        protected static final String name = "vaticle-factory";
-        protected static final String description = "Configure Vaticle Factory connection.";
-
-        private static final Predefined<Boolean> enable =
-                predefined("enable", "Enable Vaticle Factory tracing.", BOOLEAN);
-        private static final Predefined<String> uri =
-                predefined("uri", "URI of Vaticle Factory server.", STRING);
-        private static final Predefined<String> username =
-                predefined("username", "Username for Vaticle Factory server.", STRING);
-        private static final Predefined<String> token =
-                predefined("token", "Authentication token for Vaticle Factory server.", STRING);
-        private static final Set<Predefined<?>> parsers = set(enable, uri, username, token);
-
-        @Override
-        public CoreConfig.VaticleFactory parse(YAML yaml, String path) {
-            if (yaml.isMap()) {
-                boolean trace = enable.parse(yaml.asMap(), path);
-                validatePredefinedKeys(parsers, yaml.asMap().keys(), path);
-                if (trace) {
-                    return new CoreConfig.VaticleFactory(true, uri.parse(yaml.asMap(), path),
-                            username.parse(yaml.asMap(), path), token.parse(yaml.asMap(), path));
-                } else {
-                    return new CoreConfig.VaticleFactory(false, null, null, null);
-                }
-            } else throw TypeDBException.of(CONFIG_SECTION_MUST_BE_MAP, path);
-        }
-
-        @Override
-        public List<com.vaticle.typedb.core.server.parameters.util.Help> helpList(String path) {
-            return list(enable.help(path), uri.help(path), username.help(path), token.help(path));
         }
     }
 
