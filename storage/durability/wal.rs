@@ -163,7 +163,7 @@ impl Files {
         )?;
 
         self.writer.write_all(&buf)?;
-        self.writer.flush()?;
+        // self.writer.flush()?;
 
         self.files.last_mut().unwrap().len = self.writer.stream_position()?;
         Ok(())
