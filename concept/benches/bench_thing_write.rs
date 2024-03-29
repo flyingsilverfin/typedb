@@ -22,6 +22,7 @@ use std::fs::File;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
+use std::thread;
 use std::time::Duration;
 
 use criterion::{Criterion, criterion_group, criterion_main};
@@ -112,7 +113,25 @@ fn criterion_benchmark(mut c: &mut Criterion) {
     let mut group = c.benchmark_group("test writes");
     group
         .bench_function("thing_write", |b| {
-            b.iter(|| write_entity_attributes(&storage, &type_vertex_generator, &thing_vertex_generator, schema_cache.clone()));
+            b.iter(|| {
+                thread::scope(|s| {
+                    s.spawn(|| {
+                        write_entity_attributes(&storage, &type_vertex_generator, &thing_vertex_generator, schema_cache.clone())
+                    });
+                    s.spawn(|| {
+                        write_entity_attributes(&storage, &type_vertex_generator, &thing_vertex_generator, schema_cache.clone())
+                    });
+                    s.spawn(|| {
+                        write_entity_attributes(&storage, &type_vertex_generator, &thing_vertex_generator, schema_cache.clone())
+                    });
+                    s.spawn(|| {
+                        write_entity_attributes(&storage, &type_vertex_generator, &thing_vertex_generator, schema_cache.clone())
+                    });
+                    s.spawn(|| {
+                        write_entity_attributes(&storage, &type_vertex_generator, &thing_vertex_generator, schema_cache.clone())
+                    });
+                });
+            });
         });
 }
 
