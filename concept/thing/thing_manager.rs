@@ -8,7 +8,7 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use bytes::{byte_array::ByteArray, byte_reference::ByteReference, Bytes};
+use bytes::{byte_reference::ByteReference, Bytes};
 use encoding::{
     graph::{
         thing::{
@@ -20,9 +20,10 @@ use encoding::{
         Typed,
     },
     Keyable,
-    layout::prefix::{Prefix, PrefixID},
+    layout::prefix::Prefix,
     value::{decode_value_u64, encode_value_u64, long::Long, string::StringBytes, value_type::ValueType},
 };
+use encoding::graph::thing::property::HAS_ORDER_PROPERTY_FACTORY;
 use encoding::graph::thing::vertex_attribute::AsAttributeID;
 use resource::constants::snapshot::BUFFER_KEY_INLINE;
 use storage::{
@@ -172,6 +173,7 @@ impl<Snapshot: ReadableSnapshot> ThingManager<Snapshot> {
     }
 
     fn encode_expected_attribute(&self, attribute_type: AttributeType<'static>, value: Value<'_>) -> AttributeVertex<'_> {
+        // TODO: what if there is no value type yet, or is an abstract type?
         let value_type = attribute_type.get_value_type(self.type_manager()).unwrap().unwrap();
         debug_assert_eq!(value.value_type(), value_type);
         let attribute_id = match value {
@@ -179,7 +181,7 @@ impl<Snapshot: ReadableSnapshot> ThingManager<Snapshot> {
                 todo!()
             }
             Value::Long(long) => {
-                self.vertex_generator.compute_attribute_id_long(Long::build(long)).as_attribute_id()
+                self.vertex_generator.create_attribute_id_long(Long::build(long)).as_attribute_id()
             }
             Value::Double(double) => {
                 todo!()
@@ -187,7 +189,7 @@ impl<Snapshot: ReadableSnapshot> ThingManager<Snapshot> {
             Value::String(string) => {
                 let string_bytes = StringBytes::<256>::build_ref(string.as_ref().as_ref());
                 self.vertex_generator
-                    .compute_attribute_id_string(attribute_type.vertex().type_id_(), string_bytes, self.snapshot.as_ref())
+                    .create_attribute_id_string(attribute_type.vertex().type_id_(), string_bytes, self.snapshot.as_ref())
                     .as_attribute_id()
             }
         };
@@ -208,14 +210,47 @@ impl<Snapshot: ReadableSnapshot> ThingManager<Snapshot> {
         &'this self,
         owner: impl ObjectAPI<'a>,
         attribute_type: AttributeType<'static>,
-    ) -> HasAttributeIterator<'this, { ThingEdgeHas::LENGTH_PREFIX_FROM_OBJECT_TO_TYPE }> {
+    ) -> Result<HasAttributeIterator<'this, { ThingEdgeHas::LENGTH_PREFIX_FROM_OBJECT_TO_TYPE }>, ConceptReadError> {
+        let value_type = match attribute_type.get_value_type(self.type_manager())? {
+            None => {
+                todo!("Handle missing value type - for abstract attributes. Or assume this will never happen")
+            }
+            Some(value_type) => { value_type }
+        };
         let prefix = ThingEdgeHas::prefix_from_object_to_type(
-            owner.into_vertex(), attribute_type.get_value_type(self.type_manager()).unwrap().unwrap(),
+            owner.into_vertex(), value_type.unwrap().unwrap(),
             attribute_type.into_vertex(),
         );
         HasAttributeIterator::new(self.snapshot.iterate_range(
             KeyRange::new_within(prefix, ThingEdgeHas::FIXED_WIDTH_ENCODING)
         ))
+    }
+
+    pub(crate) fn get_has_type_ordered<'this, 'a>(
+        &'this self,
+        owner: impl ObjectAPI<'a>,
+        attribute_type: AttributeType<'static>,
+    ) -> Result<Vec<Attribute<'static>>, ConceptReadError> {
+        let key = HAS_ORDER_PROPERTY_FACTORY.build(owner.into_vertex(), attribute_type.into_vertex());
+        let value_type = match attribute_type.get_value_type(self.type_manager())? {
+            None => {
+                todo!("Handle missing value type - for abstract attributes. Or assume this will never happen")
+            }
+            Some(value_type) => { value_type }
+        };
+        let encoding_length = self.vertex_generator.value_type_encoding_length(value_type);
+        let mut attributes = Vec::new();
+        self.snapshot.get_mapped(key.as_storage_key().as_reference(), |bytes| {
+            let chunks = bytes.bytes().chunks_exact(encoding_length);
+            for chunk in chunks {
+                let attribute_id = ThingVertexGenerator::deserialise_attribute_id(value_type, chunk);
+                attributes.push(Attribute::new(AttributeVertex::build(
+                    value_type, attribute_type.type_id_(), attribute_id,
+                )));
+            }
+        })
+            .map_err(|err| ConceptReadError::SnapshotGet { source: err })?;
+        Ok(attributes)
     }
 
     pub(crate) fn get_owners<'this, 'a>(
@@ -272,7 +307,7 @@ impl<Snapshot: ReadableSnapshot> ThingManager<Snapshot> {
     ) -> IndexedPlayersIterator<'_, { ThingEdgeRelationIndex::LENGTH_PREFIX_FROM }> {
         let prefix = ThingEdgeRelationIndex::prefix_from(from.vertex());
         IndexedPlayersIterator::new(self.snapshot.iterate_range(KeyRange::new_within(
-            prefix, ThingEdgeRelationIndex::FIXED_WIDTH_ENCODING
+            prefix, ThingEdgeRelationIndex::FIXED_WIDTH_ENCODING,
         )))
     }
 
@@ -317,7 +352,7 @@ impl<'txn, Snapshot: WritableSnapshot> ThingManager<Snapshot> {
                 .snapshot
                 .iterate_writes_range(KeyRange::new_within(
                     ThingEdgeRolePlayer::prefix().into_byte_array_or_ref(),
-                    ThingEdgeRolePlayer::FIXED_WIDTH_ENCODING
+                    ThingEdgeRolePlayer::FIXED_WIDTH_ENCODING,
                 ))
                 .filter(|(_, write)| matches!(write, Write::Delete))
             {
@@ -337,7 +372,7 @@ impl<'txn, Snapshot: WritableSnapshot> ThingManager<Snapshot> {
             .snapshot
             .iterate_writes_range(KeyRange::new_within(
                 ThingEdgeHas::prefix().into_byte_array_or_ref(),
-                ThingEdgeHas::FIXED_WIDTH_ENCODING
+                ThingEdgeHas::FIXED_WIDTH_ENCODING,
             ))
             .filter(|(_, write)| matches!(write, Write::Delete))
         {
@@ -521,7 +556,7 @@ impl<'txn, Snapshot: WritableSnapshot> ThingManager<Snapshot> {
             .put_val(role_player_reverse.as_storage_key().into_owned_array(), encode_value_u64(reverse_count));
 
         // must lock to fail concurrent transactions updating the same counters
-        self.snapshot.exclusive_lock_add(role_player.into_storage_key());
+        self.snapshot.exclusive_lock_add(role_player.into_storage_key().into_owned_array().into_byte_array());
         count
     }
 
@@ -568,7 +603,7 @@ impl<'txn, Snapshot: WritableSnapshot> ThingManager<Snapshot> {
         }
 
         // must lock to fail concurrent transactions updating the same counters
-        self.snapshot.exclusive_lock_add(role_player.into_storage_key());
+        self.snapshot.exclusive_lock_add(role_player.into_storage_key().into_owned_array().into_byte_array());
         count
     }
 

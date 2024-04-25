@@ -18,7 +18,7 @@ use storage::key_range::KeyRange;
 use storage::key_value::StorageKey;
 use storage::snapshot::{ReadableSnapshot, WritableSnapshot};
 
-use crate::{AsBytes, graph::{
+use crate::{AsBytes, EncodingKeyspace, graph::{
     thing::{
         vertex_attribute::{AttributeID, AttributeID17, AttributeID8, AttributeVertex},
         vertex_object::{ObjectID, ObjectVertex},
@@ -90,7 +90,7 @@ impl ThingVertexGenerator {
         for type_id in entity_types {
             let mut max_object_id = ObjectVertex::build_entity(TypeID::build(type_id), ObjectID::build(u64::MAX)).into_bytes().into_array();
             bytes::util::increment(max_object_id.bytes_mut()).unwrap();
-            let next_storage_key: StorageKey<{ObjectVertex::LENGTH}> = StorageKey::new_ref(ObjectVertex::KEYSPACE, ByteReference::new(max_object_id.bytes()));
+            let next_storage_key: StorageKey<{ ObjectVertex::LENGTH }> = StorageKey::new_ref(ObjectVertex::KEYSPACE, ByteReference::new(max_object_id.bytes()));
             if let Some(prev_vertex) = storage.get_prev_raw(next_storage_key.as_reference(), Self::extract_object_id) {
                 if prev_vertex.prefix() == Prefix::VertexEntity && prev_vertex.type_id_() == TypeID::build(type_id) {
                     entity_ids[type_id as usize].store(prev_vertex.object_id().as_u64() + 1, Ordering::Relaxed);
@@ -100,7 +100,7 @@ impl ThingVertexGenerator {
         for type_id in relation_types {
             let mut max_object_id = ObjectVertex::build_relation(TypeID::build(type_id), ObjectID::build(u64::MAX)).into_bytes().into_array();
             bytes::util::increment(max_object_id.bytes_mut()).unwrap();
-            let next_storage_key: StorageKey<{ObjectVertex::LENGTH}> = StorageKey::new_ref(ObjectVertex::KEYSPACE, ByteReference::new(max_object_id.bytes()));
+            let next_storage_key: StorageKey<{ ObjectVertex::LENGTH }> = StorageKey::new_ref(ObjectVertex::KEYSPACE, ByteReference::new(max_object_id.bytes()));
             if let Some(prev_vertex) = storage.get_prev_raw(next_storage_key.as_reference(), Self::extract_object_id) {
                 if prev_vertex.prefix() == Prefix::VertexRelation && prev_vertex.type_id_() == TypeID::build(type_id) {
                     relation_ids[type_id as usize].store(prev_vertex.object_id().as_u64() + 1, Ordering::Relaxed);
@@ -133,6 +133,20 @@ impl ThingVertexGenerator {
         vertex
     }
 
+    pub fn value_type_encoding_length(value_type: ValueType) -> usize {
+        match value_type {
+            ValueType::Boolean => todo!(),
+            ValueType::Long => <LongAttributeID as AsAttributeID>::AttributeIDType::LENGTH,
+            ValueType::Double => todo!(),
+            ValueType::String => <StringAttributeID as AsAttributeID>::AttributeIDType::LENGTH,
+        }
+    }
+
+    pub fn deserialise_attribute_id(value_type: ValueType, bytes: &[u8]) -> AttributeID {
+        debug_assert_eq!(bytes.len(), Self::value_type_encoding_length(value_type));
+        AttributeID::new(bytes)
+    }
+
     pub fn create_attribute_long<Snapshot>(
         &self,
         type_id: TypeID,
@@ -141,13 +155,13 @@ impl ThingVertexGenerator {
     ) -> AttributeVertex<'static>
         where Snapshot: WritableSnapshot
     {
-        let long_attribute_id = self.compute_attribute_id_long(value);
+        let long_attribute_id = self.create_attribute_id_long(value);
         let vertex = AttributeVertex::build(ValueType::Long, type_id, long_attribute_id.as_attribute_id());
         snapshot.put(vertex.as_storage_key().into_owned_array());
         vertex
     }
 
-    pub fn compute_attribute_id_long(&self, value: Long) -> LongAttributeID {
+    pub fn create_attribute_id_long(&self, value: Long) -> LongAttributeID {
         LongAttributeID::build(value)
     }
 
@@ -169,25 +183,28 @@ impl ThingVertexGenerator {
     ) -> AttributeVertex<'static>
         where Snapshot: WritableSnapshot
     {
-        let string_attribute_id = self.compute_attribute_id_string(type_id, value.clone_as_ref(), snapshot);
+        let string_attribute_id = self.create_attribute_id_string(type_id, value.clone_as_ref(), snapshot);
         let vertex = AttributeVertex::build(ValueType::String, type_id, string_attribute_id.as_attribute_id());
         snapshot.put_val(vertex.as_storage_key().into_owned_array(), ByteArray::from(value.bytes()));
         vertex
     }
 
-    pub fn compute_attribute_id_string<const INLINE_LENGTH: usize, Snapshot>(
+    pub fn create_attribute_id_string<const INLINE_LENGTH: usize, Snapshot>(
         &self,
         type_id: TypeID,
         string: StringBytes<'_, INLINE_LENGTH>,
         snapshot: &Snapshot,
     ) -> StringAttributeID
-        where Snapshot: ReadableSnapshot
+        where Snapshot: WritableSnapshot
     {
         if string.length() <= StringAttributeID::ENCODING_INLINE_CAPACITY {
             StringAttributeID::build_inline_id(string)
         } else {
-            StringAttributeID::build_hashed_id(type_id, string, snapshot, &self.large_value_hasher)
-            // TODO: mark snapshot BYTES without the tail set as an exclusive key so concurrent txn will fail to commit
+            let id = StringAttributeID::build_hashed_id(type_id, string, snapshot, &self.large_value_hasher);
+            let hash = id.get_hash_prefix_hash();
+            let lock = ByteArray::copy_concat([&type_id.bytes(), &hash]);
+            snapshot.exclusive_lock_add(lock);
+            id
         }
     }
 }
@@ -248,6 +265,10 @@ impl StringAttributeID {
     pub const ENCODING_STRING_HASH_LENGTH: usize = 8;
     const ENCODING_STRING_HASH_RANGE: Range<usize> = Self::ENCODING_STRING_PREFIX_RANGE.end
         ..Self::ENCODING_STRING_PREFIX_RANGE.end + Self::ENCODING_STRING_HASH_LENGTH;
+    const ENCODING_STRING_PREFIX_HASH_LENGTH: usize = Self::ENCODING_STRING_PREFIX_LENGTH + Self::ENCODING_STRING_HASH_LENGTH;
+    const ENCODING_STRING_PREFIX_HASH_RANGE: Range<usize> = Self::ENCODING_STRING_PREFIX_RANGE.start
+        ..Self::ENCODING_STRING_PREFIX_RANGE.start + Self::ENCODING_STRING_PREFIX_HASH_LENGTH;
+
     const ENCODING_STRING_TAIL_BYTE_INDEX: usize = Self::ENCODING_STRING_HASH_RANGE.end;
     const ENCODING_STRING_TAIL_MASK: u8 = 0b10000000;
 
@@ -272,6 +293,11 @@ impl StringAttributeID {
         bytes[Self::ENCODING_STRING_TAIL_BYTE_INDEX] = length;
     }
 
+    ///
+    /// Build a hashed string ID, including picking the tail disambiguator bits.
+    /// If a matching existing String with ID is found, return it.
+    /// Otherwise, create an ID using the next available tail ID.
+    ///
     fn build_hashed_id<const INLINE_LENGTH: usize, Snapshot>(
         type_id: TypeID,
         string: StringBytes<'_, INLINE_LENGTH>,
@@ -356,6 +382,11 @@ impl StringAttributeID {
     pub fn get_hash_hash(&self) -> [u8; Self::ENCODING_STRING_HASH_LENGTH] {
         debug_assert!(!self.is_inline());
         (&self.attribute_id.bytes()[Self::ENCODING_STRING_HASH_RANGE]).try_into().unwrap()
+    }
+
+    pub fn get_hash_prefix_hash(&self) -> [u8; Self::ENCODING_STRING_PREFIX_HASH_LENGTH] {
+        debug_assert!(!self.is_inline());
+        (&self.attribute_id.bytes()[Self::ENCODING_STRING_PREFIX_HASH_RANGE]).try_into().unwrap()
     }
 
     pub fn get_hash_disambiguator(&self) -> u8 {

@@ -78,7 +78,7 @@ impl<'a> Relation<'a> {
         &self,
         thing_manager: &'m ThingManager<impl ReadableSnapshot>,
         attribute_type: AttributeType<'static>
-    ) -> HasAttributeIterator<'m, { ThingEdgeHas::LENGTH_PREFIX_FROM_OBJECT_TO_TYPE }> {
+    ) -> Result<HasAttributeIterator<'m, { ThingEdgeHas::LENGTH_PREFIX_FROM_OBJECT_TO_TYPE }>, ConceptReadError> {
         thing_manager.get_has_type(self.as_reference(), attribute_type)
     }
 

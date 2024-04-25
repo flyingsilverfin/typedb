@@ -8,7 +8,7 @@ pub mod edge;
 pub mod vertex_attribute;
 pub mod vertex_generator;
 pub mod vertex_object;
-mod property;
+pub mod property;
 
 
 trait VertexID {

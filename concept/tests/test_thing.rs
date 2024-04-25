@@ -157,8 +157,8 @@ fn has() {
             .create_attribute(name_type.clone(), Value::String(Cow::Owned(String::from(name_value))))
             .unwrap();
 
-        person_1.set_has(&thing_manager, age_1);
-        person_1.set_has(&thing_manager, name_1);
+        person_1.set_has_unordered(&thing_manager, age_1);
+        person_1.set_has_unordered(&thing_manager, name_1);
 
         let retrieved_attributes_count = person_1.get_has(&thing_manager).count();
         assert_eq!(retrieved_attributes_count, 2);
@@ -229,10 +229,10 @@ fn attribute_cleanup_on_concurrent_detach() {
             Value::String(Cow::Owned(String::from(name_bob_value))),
         ).unwrap();
 
-        person_1.set_has(&thing_manager, age_1.as_reference());
-        person_1.set_has(&thing_manager, name_alice.as_reference());
-        person_2.set_has(&thing_manager, age_1);
-        person_2.set_has(&thing_manager, name_bob.as_reference());
+        person_1.set_has_unordered(&thing_manager, age_1.as_reference());
+        person_1.set_has_unordered(&thing_manager, name_alice.as_reference());
+        person_2.set_has_unordered(&thing_manager, age_1);
+        person_2.set_has_unordered(&thing_manager, name_bob.as_reference());
         let finalise_result = thing_manager.finalise();
         assert!(finalise_result.is_ok());
     }
@@ -265,7 +265,7 @@ fn attribute_cleanup_on_concurrent_detach() {
                 None
             }
         }).next().unwrap();
-        bob.delete_has_single(&thing_manager, age).unwrap();
+        bob.delete_has_unordered(&thing_manager, age).unwrap();
 
         let finalise_result = thing_manager.finalise();
         assert!(finalise_result.is_ok());
@@ -292,7 +292,7 @@ fn attribute_cleanup_on_concurrent_detach() {
                 None
             }
         }).next().unwrap();
-        alice.delete_has_single(&thing_manager, age).unwrap();
+        alice.delete_has_unordered(&thing_manager, age).unwrap();
 
         let finalise_result = thing_manager.finalise();
         assert!(finalise_result.is_ok());

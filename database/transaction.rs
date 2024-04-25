@@ -4,7 +4,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use concept::{thing::thing_manager::ThingManager, type_::type_manager::TypeManager};
 use concept::error::ConceptWriteError;
@@ -40,6 +40,43 @@ impl<D: DurabilityService> TransactionRead<D> {
         snapshot_owned.close_resources()
     }
 }
+
+struct Snapshot {}
+
+struct Manager {
+}
+
+impl Manager {
+    fn get_has(&self, snapshot: &Snapshot) {
+
+    }
+
+    fn set_has(&self, snapshot: &mut Snapshot) {
+
+    }
+}
+
+struct Tx {
+    snapshot: Snapshot,
+    manager: Manager<Snapshot>
+}
+
+struct QueryManager {
+    tx: RwLock<Tx>
+}
+
+impl QueryManager {
+    fn execute_insert_query(&self, query: ()) {
+        let guard = self.tx.write().unwrap();
+        let snapshot = &mut guard.snapshot;
+
+
+
+
+    }
+}
+
+
 
 pub struct TransactionWrite<D> {
     database: Arc<Database<D>>,

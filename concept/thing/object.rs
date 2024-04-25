@@ -49,7 +49,7 @@ impl<'a> Object<'a> {
 
     fn set_has(&self, thing_manager: &ThingManager<impl WritableSnapshot>, attribute: Attribute<'_>) {
         match self {
-            Object::Entity(entity) => entity.set_has(thing_manager, attribute),
+            Object::Entity(entity) => entity.set_has_unordered(thing_manager, attribute),
             Object::Relation(relation) => relation.set_has(thing_manager, attribute),
         }
     }

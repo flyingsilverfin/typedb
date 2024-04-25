@@ -59,8 +59,8 @@ fn write_entity_attributes(
 
         let age = thing_manager.create_attribute(age_type, Value::Long(random_long)).unwrap();
         let name = thing_manager.create_attribute(name_type, Value::String(Cow::Borrowed(&random_string))).unwrap();
-        person.set_has(&thing_manager, age);
-        person.set_has(&thing_manager, name);
+        person.set_has_unordered(&thing_manager, age);
+        person.set_has_unordered(&thing_manager, name);
     }
 
     let write_snapshot = Arc::try_unwrap(snapshot).ok().unwrap();
