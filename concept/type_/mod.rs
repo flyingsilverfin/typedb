@@ -32,7 +32,9 @@ pub mod relation_type;
 pub mod role_type;
 pub mod type_cache;
 pub mod type_manager;
-mod type_reader;
+mod type_decoder;
+mod type_encoder;
+mod type_provider;
 
 pub trait TypeAPI<'a>: ConceptAPI<'a> + Sized + Clone {
     fn vertex<'this>(&'this self) -> TypeVertex<'this>;
@@ -42,12 +44,10 @@ pub trait TypeAPI<'a>: ConceptAPI<'a> + Sized + Clone {
     fn is_abstract<Snapshot: ReadableSnapshot>(
         &self,
         snapshot: &Snapshot,
-        type_manager: &TypeManager<Snapshot>
+        type_manager: &TypeManager<Snapshot>,
     ) -> Result<bool, ConceptReadError>;
 
-    fn delete<Snapshot: WritableSnapshot>(
-        self, snapshot: &mut Snapshot, type_manager: &TypeManager<Snapshot>
-    ) -> Result<(), ConceptWriteError>;
+    fn delete<Snapshot: WritableSnapshot>(self, snapshot: &mut Snapshot) -> Result<(), ConceptWriteError>;
 }
 
 pub trait ObjectTypeAPI<'a>: TypeAPI<'a> {}
@@ -56,17 +56,11 @@ pub trait OwnerAPI<'a>: TypeAPI<'a> {
     fn set_owns<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
         attribute_type: AttributeType<'static>,
         ordering: Ordering,
     ) -> Owns<'static>;
 
-    fn delete_owns<Snapshot: WritableSnapshot>(
-        &self,
-        snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
-        attribute_type: AttributeType<'static>
-    );
+    fn delete_owns<Snapshot: WritableSnapshot>(&self, snapshot: &mut Snapshot, attribute_type: AttributeType<'static>);
 
     fn get_owns<'m, Snapshot: ReadableSnapshot>(
         &self,
@@ -95,16 +89,10 @@ pub trait PlayerAPI<'a>: TypeAPI<'a> {
     fn set_plays<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
         role_type: RoleType<'static>,
     ) -> Plays<'static>;
 
-    fn delete_plays<Snapshot: WritableSnapshot>(
-        &self,
-        snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
-        role_type: RoleType<'static>
-    );
+    fn delete_plays<Snapshot: WritableSnapshot>(&self, snapshot: &mut Snapshot, role_type: RoleType<'static>);
 
     fn get_plays<'m, Snapshot: ReadableSnapshot>(
         &self,

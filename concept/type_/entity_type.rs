@@ -13,6 +13,8 @@ use encoding::{
     Prefixed,
     value::label::Label,
 };
+use encoding::graph::type_::Kind;
+use encoding::graph::type_::vertex_generator::TypeVertexGenerator;
 use primitive::maybe_owns::MaybeOwns;
 use storage::{
     key_value::StorageKeyReference,
@@ -35,7 +37,8 @@ use crate::{
     },
 };
 use crate::error::ConceptWriteError;
-use crate::type_::Ordering;
+use crate::type_::{Ordering, type_decoder, type_encoder};
+use crate::type_::type_decoder::TypeDecoder;
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct EntityType<'a> {
@@ -78,10 +81,9 @@ impl<'a> TypeAPI<'a> for EntityType<'a> {
     fn delete<Snapshot: WritableSnapshot>(
         self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
     ) -> Result<(), ConceptWriteError> {
         // todo!("Validation");
-        type_manager.delete_entity_type(snapshot, self);
+        type_encoder::delete_entity_type(snapshot, self);
         Ok(())
     }
 }
@@ -89,6 +91,28 @@ impl<'a> TypeAPI<'a> for EntityType<'a> {
 impl<'a> ObjectTypeAPI<'a> for EntityType<'a> {}
 
 impl<'a> EntityType<'a> {
+
+    pub fn create_entity_type<Snapshot: WritableSnapshot>(
+        snapshot: &mut Snapshot,
+        vertex_generator: &TypeVertexGenerator,
+        label: &Label<'_>,
+        is_root: bool,
+    ) -> Result<EntityType<'static>, ConceptWriteError> {
+        // TODO: validate type doesn't exist already
+        let type_vertex = vertex_generator.create_entity_type(snapshot)
+            .map_err(|err| ConceptWriteError::Encoding { source: err })?;
+        let entity = EntityType::new(type_vertex);
+        type_encoder::set_label(snapshot, entity.clone(), label);
+        if !is_root {
+            type_encoder::set_supertype(
+                snapshot,
+                entity.clone(),
+                TypeDecoder::get_entity_type(snapshot, &Kind::Entity.root_label()).unwrap().unwrap(),
+            );
+        }
+        Ok(entity)
+    }
+
     pub fn is_root<Snapshot: ReadableSnapshot>(
         &self,
         snapshot: &Snapshot,
@@ -108,13 +132,12 @@ impl<'a> EntityType<'a> {
     pub fn set_label<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
         label: &Label<'_>,
     ) -> Result<(), ConceptWriteError> {
         if self.is_root(snapshot, type_manager)? {
             Err(ConceptWriteError::RootModification)
         } else {
-            Ok(type_manager.storage_set_label(snapshot, self.clone().into_owned(), label))
+            Ok(type_encoder::set_label(snapshot, self.clone().into_owned(), label))
         }
     }
 
@@ -129,10 +152,9 @@ impl<'a> EntityType<'a> {
     pub fn set_supertype<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
         supertype: EntityType<'static>,
     ) -> Result<(), ConceptWriteError> {
-        type_manager.storage_set_supertype(snapshot, self.clone().into_owned(), supertype);
+        type_encoder::(snapshot, self.clone().into_owned(), supertype);
         Ok(())
     }
 
@@ -171,12 +193,11 @@ impl<'a> EntityType<'a> {
     pub fn set_annotation<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
         annotation: EntityTypeAnnotation
     ) -> Result<(), ConceptWriteError> {
         match annotation {
             EntityTypeAnnotation::Abstract(_) => {
-                type_manager.storage_set_annotation_abstract(snapshot, self.clone().into_owned())
+                type_encoder::set_annotation_abstract(snapshot, self.clone().into_owned())
             }
         };
         Ok(())
@@ -185,12 +206,11 @@ impl<'a> EntityType<'a> {
     fn delete_annotation<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
         annotation: EntityTypeAnnotation
     ) {
         match annotation {
             EntityTypeAnnotation::Abstract(_) => {
-                type_manager.storage_delete_annotation_abstract(snapshot, self.clone().into_owned())
+                type_encoder::delete_annotation_abstract(snapshot, self.clone().into_owned())
             }
         }
     }
@@ -204,22 +224,20 @@ impl<'a> OwnerAPI<'a> for EntityType<'a> {
     fn set_owns<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
         attribute_type: AttributeType<'static>,
         ordering: Ordering,
     ) -> Owns<'static> {
-        type_manager.storage_set_owns(snapshot, self.clone().into_owned(), attribute_type.clone(), ordering);
+        type_encoder::set_owns(snapshot, self.clone().into_owned(), attribute_type.clone(), ordering);
         Owns::new(ObjectType::Entity(self.clone().into_owned()), attribute_type)
     }
 
     fn delete_owns<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
         attribute_type: AttributeType<'static>
     ) {
         // TODO: error if not owned?
-        type_manager.storage_delete_owns(snapshot, self.clone().into_owned(), attribute_type)
+        type_encoder::delete_owns(snapshot, self.clone().into_owned(), attribute_type)
     }
 
     fn get_owns<'m, Snapshot: ReadableSnapshot>(
@@ -245,22 +263,20 @@ impl<'a> PlayerAPI<'a> for EntityType<'a> {
     fn set_plays<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
         role_type: RoleType<'static>,
     ) -> Plays<'static> {
         // TODO: decide behaviour (ok or error) if already playing
-        type_manager.storage_set_plays(snapshot, self.clone().into_owned(), role_type.clone());
+        type_encoder::set_plays(snapshot, self.clone().into_owned(), role_type.clone());
         Plays::new(ObjectType::Entity(self.clone().into_owned()), role_type)
     }
 
     fn delete_plays<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
         role_type: RoleType<'static>
     ) {
         // TODO: error if not playing
-        type_manager.storage_delete_plays(snapshot, self.clone().into_owned(), role_type)
+        type_encoder::delete_plays(snapshot, self.clone().into_owned(), role_type)
     }
 
     fn get_plays<'m, Snapshot: ReadableSnapshot>(

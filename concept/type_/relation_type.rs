@@ -10,9 +10,11 @@ use bytes::Bytes;
 use encoding::{
     graph::type_::vertex::{new_vertex_relation_type, TypeVertex},
     layout::prefix::Prefix,
-    value::label::Label,
     Prefixed,
+    value::label::Label,
 };
+use encoding::graph::type_::Kind;
+use encoding::graph::type_::vertex_generator::TypeVertexGenerator;
 use primitive::maybe_owns::MaybeOwns;
 use storage::{
     key_value::StorageKeyReference,
@@ -21,22 +23,23 @@ use storage::{
 
 use crate::{
     concept_iterator,
+    ConceptAPI,
     error::ConceptReadError,
     type_::{
         annotation::{Annotation, AnnotationAbstract},
         attribute_type::AttributeType,
         object_type::ObjectType,
+        ObjectTypeAPI,
+        OwnerAPI,
         owns::Owns,
+        PlayerAPI,
         plays::Plays,
-        relates::Relates,
-        role_type::RoleType,
-        type_manager::TypeManager,
-        ObjectTypeAPI, OwnerAPI, PlayerAPI, TypeAPI,
+        relates::Relates, role_type::RoleType, type_manager::TypeManager, TypeAPI,
     },
-    ConceptAPI,
 };
 use crate::error::ConceptWriteError;
-use crate::type_::Ordering;
+use crate::type_::{Ordering, type_encoder};
+use crate::type_::type_decoder::TypeDecoder;
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct RelationType<'a> {
@@ -79,7 +82,6 @@ impl<'a> TypeAPI<'a> for RelationType<'a> {
     fn delete<Snapshot: WritableSnapshot>(
         self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>
     ) -> Result<(), ConceptWriteError> {
         todo!()
     }
@@ -88,14 +90,36 @@ impl<'a> TypeAPI<'a> for RelationType<'a> {
 impl<'a> ObjectTypeAPI<'a> for RelationType<'a> {}
 
 impl<'a> RelationType<'a> {
+    pub fn create_relation_type<Snapshot: WritableSnapshot>(
+        snapshot: &mut Snapshot,
+        vertex_generator: &TypeVertexGenerator,
+        label: &Label<'_>,
+        is_root: bool,
+    ) -> Result<RelationType<'static>, ConceptWriteError> {
+        // TODO: validate type doesn't exist already
+        let type_vertex = vertex_generator.create_relation_type(snapshot)
+            .map_err(|err| ConceptWriteError::Encoding { source: err })?;
+        let relation = RelationType::new(type_vertex);
+        type_encoder::set_label(snapshot, relation.clone(), label);
+        if !is_root {
+            type_encoder::set_supertype(
+                snapshot,
+                relation.clone(),
+                TypeDecoder::get_relation_type(snapshot, &Kind::Relation.root_label()).unwrap().unwrap(),
+            );
+        }
+        Ok(relation)
+    }
+
     pub fn is_root<Snapshot: ReadableSnapshot>(
         &self,
         snapshot: &Snapshot,
-        type_manager: &TypeManager<Snapshot>) -> Result<bool, ConceptReadError> {
+        type_manager: &TypeManager<Snapshot>,
+    ) -> Result<bool, ConceptReadError> {
         type_manager.get_relation_type_is_root(snapshot, self.clone().into_owned())
     }
 
-    pub fn get_label<'m,Snapshot: ReadableSnapshot>(
+    pub fn get_label<'m, Snapshot: ReadableSnapshot>(
         &self,
         snapshot: &Snapshot,
         type_manager: &'m TypeManager<Snapshot>,
@@ -106,13 +130,12 @@ impl<'a> RelationType<'a> {
     pub fn set_label<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
-        label: &Label<'_>
-    ) -> Result<(), ConceptWriteError>{
+        label: &Label<'_>,
+    ) -> Result<(), ConceptWriteError> {
         if self.is_root(snapshot, type_manager)? {
             Err(ConceptWriteError::RootModification)
         } else {
-            Ok(type_manager.storage_set_label(snapshot, self.clone().into_owned(), label))
+            Ok(type_encoder::set_label(snapshot, self.clone().into_owned(), label))
         }
     }
 
@@ -127,8 +150,9 @@ impl<'a> RelationType<'a> {
     pub fn set_supertype<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>, supertype: RelationType<'static>) -> Result<(), ConceptWriteError> {
-        type_manager.storage_set_supertype(snapshot, self.clone().into_owned(), supertype);
+        supertype: RelationType<'static>,
+    ) -> Result<(), ConceptWriteError> {
+        type_encoder::set_supertype(snapshot, self.clone().into_owned(), supertype);
         Ok(())
     }
 
@@ -167,12 +191,11 @@ impl<'a> RelationType<'a> {
     pub fn set_annotation<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
         annotation: RelationTypeAnnotation,
     ) -> Result<(), ConceptWriteError> {
         match annotation {
             RelationTypeAnnotation::Abstract(_) => {
-                type_manager.storage_set_annotation_abstract(snapshot, self.clone().into_owned())
+                type_encoder::set_annotation_abstract(snapshot, self.clone().into_owned())
             }
         };
         Ok(())
@@ -181,10 +204,11 @@ impl<'a> RelationType<'a> {
     fn delete_annotation<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>, annotation: RelationTypeAnnotation) {
+        annotation: RelationTypeAnnotation,
+    ) {
         match annotation {
             RelationTypeAnnotation::Abstract(_) => {
-                type_manager.storage_delete_annotation_abstract(snapshot, self.clone().into_owned())
+                type_encoder::delete_annotation_abstract(snapshot, self.clone().into_owned())
             }
         }
     }
@@ -202,21 +226,33 @@ impl<'a> RelationType<'a> {
     pub fn create_relates<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
+        vertex_generator: &TypeVertexGenerator,
         name: &str,
-        ordering: Ordering
+        ordering: Ordering,
     ) -> Result<RoleType<'static>, ConceptWriteError> {
         let label = Label::build_scoped(name, self.get_label(snapshot, type_manager).unwrap().name().as_str());
-        type_manager.create_role_type(snapshot, &label, self.clone().into_owned(), false, ordering)
+
+        // TODO: validate type doesn't exist already
+        let type_vertex = vertex_generator.create_role_type(snapshot)
+            .map_err(|err| ConceptWriteError::Encoding { source: err })?;
+        let role = RoleType::new(type_vertex);
+        type_encoder::set_label(snapshot, role.clone(), &label);
+        type_encoder::set_relates(snapshot, self.clone(), role.clone());
+        type_encoder::set_role_ordering(snapshot, role.clone(), ordering);
+        if label != Kind::Role.root_label() {
+            type_encoder::set_supertype(
+                snapshot, role.clone(), self.get_role_type(snapshot, &Kind::Role.root_label()).unwrap().unwrap(),
+            );
+        }
+        Ok(role)
     }
 
     fn delete_relates<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
-        role_type: RoleType<'static>
+        role_type: RoleType<'static>,
     ) {
-        type_manager.storage_delete_relates(snapshot, self.clone().into_owned(), role_type)
+        type_encoder::delete_relates(snapshot, self.clone().into_owned(), role_type)
     }
 
     pub(crate) fn get_relates<'m, Snapshot: ReadableSnapshot>(
@@ -254,22 +290,20 @@ impl<'a> OwnerAPI<'a> for RelationType<'a> {
     fn set_owns<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
         attribute_type: AttributeType<'static>,
         ordering: Ordering,
     ) -> Owns<'static> {
-        type_manager.storage_set_owns(snapshot, self.clone().into_owned(), attribute_type.clone(), ordering);
+        type_encoder::set_owns(snapshot, self.clone().into_owned(), attribute_type.clone(), ordering);
         Owns::new(ObjectType::Relation(self.clone().into_owned()), attribute_type)
     }
 
     fn delete_owns<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
-        attribute_type: AttributeType<'static>
+        attribute_type: AttributeType<'static>,
     ) {
         // TODO: error if not owned?
-        type_manager.storage_delete_owns(snapshot, self.clone().into_owned(), attribute_type)
+        type_encoder::delete_owns(snapshot, self.clone().into_owned(), attribute_type)
     }
 
     fn get_owns<'m, Snapshot: ReadableSnapshot>(
@@ -295,22 +329,20 @@ impl<'a> PlayerAPI<'a> for RelationType<'a> {
     fn set_plays<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
         role_type: RoleType<'static>,
     ) -> Plays<'static> {
         // TODO: decide behaviour (ok or error) if already playing
-        type_manager.storage_set_plays(snapshot, self.clone().into_owned(), role_type.clone());
+        type_encoder::set_plays(snapshot, self.clone().into_owned(), role_type.clone());
         Plays::new(ObjectType::Relation(self.clone().into_owned()), role_type)
     }
 
     fn delete_plays<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
-        role_type: RoleType<'static>
+        role_type: RoleType<'static>,
     ) {
         // TODO: error if not playing?
-        type_manager.storage_delete_plays(snapshot, self.clone().into_owned(), role_type)
+        type_encoder::delete_plays(snapshot, self.clone().into_owned(), role_type)
     }
 
     fn get_plays<'m, Snapshot: ReadableSnapshot>(

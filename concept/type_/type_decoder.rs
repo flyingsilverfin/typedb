@@ -31,10 +31,10 @@ use crate::type_::relates::Relates;
 use crate::type_::relation_type::RelationType;
 use crate::type_::role_type::RoleType;
 
-pub struct TypeReader { }
+pub struct TypeDecoder { }
 
 // TODO: The '_s is only here for the enforcement of pass-by-value of types. If we drop that, we can move it to the function signatures
-impl<'_s> TypeReader
+impl<'_s> TypeDecoder
     where '_s : 'static {
 
     pub(crate) fn get_labelled_type<'b, U: ReadableType<'_s, 'b>>(snapshot: &impl ReadableSnapshot, label: &Label<'_>) -> Result<Option<U::SelfRead>, ConceptReadError>
@@ -66,10 +66,10 @@ impl<'_s> TypeReader
         // WARN: supertypes currently do NOT include themselves
         // ^ To fix, Just start with `let mut supertype = Some(type_)`
         let mut supertypes = Vec::new();
-        let mut supervertex_opt = TypeReader::get_supertype_vertex(snapshot, subtype.clone().into_vertex())?;
+        let mut supervertex_opt = TypeDecoder::get_supertype_vertex(snapshot, subtype.clone().into_vertex())?;
         while let Some(supervertex) = supervertex_opt {
             supertypes.push(U::read_from(supervertex.clone().into_bytes()));
-            supervertex_opt = TypeReader::get_supertype_vertex(snapshot, supervertex.clone())?;
+            supervertex_opt = TypeDecoder::get_supertype_vertex(snapshot, supervertex.clone())?;
         }
         Ok(supertypes)
     }
@@ -92,11 +92,11 @@ impl<'_s> TypeReader
         // WARN: subtypes currently do NOT include themselves
         // ^ To fix, Just start with `let mut stack = vec!(subtype.clone());`
         let mut subtypes = Vec::new();
-        let mut stack = TypeReader::get_subtypes_vertex(snapshot, subtype.clone().into_vertex())?;
+        let mut stack = TypeDecoder::get_subtypes_vertex(snapshot, subtype.clone().into_vertex())?;
         while !stack.is_empty() {
             let subvertex = stack.pop().unwrap();
             subtypes.push(U::read_from(subvertex.clone().into_bytes()));
-            stack.append(&mut TypeReader::get_subtypes_vertex(snapshot, subvertex.clone())?); // TODO: Should we pass an accumulator instead?
+            stack.append(&mut TypeDecoder::get_subtypes_vertex(snapshot, subvertex.clone())?); // TODO: Should we pass an accumulator instead?
         }
         Ok(subtypes)
     }

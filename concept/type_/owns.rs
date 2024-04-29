@@ -11,7 +11,7 @@ use primitive::maybe_owns::MaybeOwns;
 use storage::snapshot::{ReadableSnapshot, WritableSnapshot};
 
 use crate::error::ConceptReadError;
-use crate::type_::{attribute_type::AttributeType, IntoCanonicalTypeEdge, object_type::ObjectType, Ordering, TypeAPI};
+use crate::type_::{attribute_type::AttributeType, IntoCanonicalTypeEdge, object_type::ObjectType, Ordering, type_encoder, TypeAPI};
 use crate::type_::annotation::{Annotation, AnnotationCardinality, AnnotationDistinct};
 use crate::type_::type_manager::TypeManager;
 
@@ -37,7 +37,7 @@ impl<'a> Owns<'a> {
     pub fn is_distinct<'this, Snapshot: ReadableSnapshot>(
         &self,
         snapshot: &Snapshot,
-        type_manager: &TypeManager<Snapshot>
+        type_manager: &TypeManager<Snapshot>,
     ) -> Result<bool, ConceptReadError> {
         let is_ordered = false; // TODO
         if is_ordered {
@@ -59,15 +59,14 @@ impl<'a> Owns<'a> {
     pub fn set_annotation<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>, annotation: OwnsAnnotation
+        annotation: OwnsAnnotation,
     ) {
         match annotation {
-            OwnsAnnotation::Distinct(_) => type_manager.storage_set_edge_annotation_distinct(
-                snapshot,
-                self.clone()
-            ),
+            OwnsAnnotation::Distinct(_) => {
+                type_encoder::set_edge_annotation_distinct(snapshot, self.clone())
+            }
             OwnsAnnotation::Cardinality(cardinality) => {
-                type_manager.storage_set_edge_annotation_cardinality(snapshot, self.clone(), cardinality)
+                type_encoder::set_edge_annotation_cardinality(snapshot, self.clone(), cardinality)
             }
         }
     }
@@ -75,13 +74,12 @@ impl<'a> Owns<'a> {
     pub fn delete_annotation<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
-        annotation: OwnsAnnotation
+        annotation: OwnsAnnotation,
     ) {
         match annotation {
-            OwnsAnnotation::Distinct(_) => type_manager.storage_delete_edge_annotation_distinct(snapshot, self.clone()),
+            OwnsAnnotation::Distinct(_) => type_encoder::delete_edge_annotation_distinct(snapshot, self.clone()),
             OwnsAnnotation::Cardinality(_) => {
-                type_manager.storage_delete_edge_annotation_cardinality(snapshot, self.clone())
+                type_encoder::delete_edge_annotation_cardinality(snapshot, self.clone())
             }
         }
     }
@@ -89,16 +87,15 @@ impl<'a> Owns<'a> {
     pub fn set_ordering<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
-        ordering: Ordering
+        ordering: Ordering,
     ) {
-        type_manager.storage_set_owns_ordering(snapshot, self.clone().into_type_edge(), ordering)
+        type_encoder::set_owns_ordering(snapshot, self.clone().into_type_edge(), ordering)
     }
 
     pub fn get_ordering<Snapshot: ReadableSnapshot>(
         &self,
         snapshot: &Snapshot,
-        type_manager: &TypeManager<Snapshot>
+        type_manager: &TypeManager<Snapshot>,
     ) -> Result<Ordering, ConceptReadError> {
         type_manager.get_owns_ordering(snapshot, self.clone().into_owned())
     }

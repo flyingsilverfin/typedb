@@ -12,6 +12,8 @@ use encoding::{
     Prefixed,
     value::{label::Label, value_type::ValueType},
 };
+use encoding::graph::type_::Kind;
+use encoding::graph::type_::vertex_generator::TypeVertexGenerator;
 use primitive::maybe_owns::MaybeOwns;
 use storage::snapshot::{ReadableSnapshot, WritableSnapshot};
 
@@ -26,6 +28,8 @@ use crate::{
     },
 };
 use crate::error::ConceptWriteError;
+use crate::type_::type_decoder::TypeDecoder;
+use crate::type_::type_encoder;
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct AttributeType<'a> {
@@ -66,13 +70,34 @@ impl<'a> TypeAPI<'a> for AttributeType<'a> {
     }
 
     fn delete<Snapshot: WritableSnapshot>(
-        self, snapshot: &mut Snapshot, type_manager: &TypeManager<Snapshot>,
+        self, snapshot: &mut Snapshot,
     ) -> Result<(), ConceptWriteError> {
         todo!()
     }
 }
 
 impl<'a> AttributeType<'a> {
+    pub fn create_attribute_type<Snapshot: WritableSnapshot>(
+        snapshot: &mut Snapshot,
+        vertex_generator: &TypeVertexGenerator,
+        label: &Label<'_>,
+        is_root: bool,
+    ) -> Result<AttributeType<'static>, ConceptWriteError> {
+        // TODO: validate type doesn't exist already
+        let type_vertex = vertex_generator.create_attribute_type(snapshot)
+            .map_err(|err| ConceptWriteError::Encoding { source: err })?;
+        let attribute_type = AttributeType::new(type_vertex);
+        type_encoder::set_label(snapshot, attribute_type.clone(), label);
+        if !is_root {
+            type_encoder::set_supertype(
+                snapshot,
+                attribute_type.clone(),
+                TypeDecoder::get_attribute_type(snapshot, &Kind::Attribute.root_label()).unwrap().unwrap(),
+            );
+        }
+        Ok(attribute_type)
+    }
+
     pub fn is_root<Snapshot: ReadableSnapshot>(
         &self,
         snapshot: &Snapshot,
@@ -84,10 +109,9 @@ impl<'a> AttributeType<'a> {
     pub fn set_value_type<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
         value_type: ValueType,
     ) {
-        type_manager.storage_set_value_type(snapshot, self.clone().into_owned(), value_type)
+        type_encoder::set_value_type(snapshot, self.clone().into_owned(), value_type)
     }
 
     pub fn get_value_type<Snapshot: ReadableSnapshot>(
@@ -109,13 +133,12 @@ impl<'a> AttributeType<'a> {
     pub fn set_label<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
         label: &Label<'_>,
     ) -> Result<(), ConceptWriteError> {
-        if self.is_root(snapshot, type_manager)? {
+        if self.is_root(TypeDecoder::new(snapshot))? {
             Err(ConceptWriteError::RootModification)
         } else {
-            Ok(type_manager.storage_set_label(snapshot, self.clone().into_owned(), label))
+            Ok(type_encoder::set_label(snapshot, self.clone().into_owned(), label))
         }
     }
 
@@ -130,10 +153,9 @@ impl<'a> AttributeType<'a> {
     pub fn set_supertype<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
         supertype: AttributeType<'static>,
     ) -> Result<(), ConceptWriteError> {
-        type_manager.storage_set_supertype(snapshot, self.clone().into_owned(), supertype);
+        type_encoder::set_supertype(snapshot, self.clone().into_owned(), supertype);
         Ok(())
     }
 
@@ -184,15 +206,14 @@ impl<'a> AttributeType<'a> {
     pub fn set_annotation<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
         annotation: AttributeTypeAnnotation,
     ) -> Result<(), ConceptWriteError> {
         match annotation {
             AttributeTypeAnnotation::Abstract(_) => {
-                type_manager.storage_set_annotation_abstract(snapshot, self.clone().into_owned())
+                type_encoder::set_annotation_abstract(snapshot, self.clone().into_owned())
             }
             AttributeTypeAnnotation::Independent(_) => {
-                type_manager.storage_set_annotation_independent(snapshot, self.clone().into_owned())
+                type_encoder::set_annotation_independent(snapshot, self.clone().into_owned())
             }
         };
         Ok(())
@@ -201,15 +222,14 @@ impl<'a> AttributeType<'a> {
     fn delete_annotation<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
         annotation: AttributeTypeAnnotation,
     ) {
         match annotation {
             AttributeTypeAnnotation::Abstract(_) => {
-                type_manager.storage_delete_annotation_abstract(snapshot, self.clone().into_owned())
+                type_encoder::delete_annotation_abstract(snapshot, self.clone().into_owned())
             }
             AttributeTypeAnnotation::Independent(_) => {
-                type_manager.storage_storage_annotation_independent(snapshot, self.clone().into_owned())
+                type_encoder::storage_storage_annotation_independent(snapshot, self.clone().into_owned())
             }
         }
     }

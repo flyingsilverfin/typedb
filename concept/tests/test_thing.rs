@@ -147,8 +147,8 @@ fn has() {
         name_type.set_value_type(&mut snapshot, &type_manager, ValueType::String);
 
         let person_type = type_manager.create_entity_type(&mut snapshot, &person_label, false).unwrap();
-        person_type.set_owns(&mut snapshot, &type_manager, age_type.clone(), Ordering::Unordered);
-        person_type.set_owns(&mut snapshot, &type_manager, name_type.clone(), Ordering::Unordered);
+        person_type.set_owns(&mut snapshot, age_type.clone(), Ordering::Unordered);
+        person_type.set_owns(&mut snapshot, name_type.clone(), Ordering::Unordered);
 
         let person_1 = thing_manager.create_entity(&mut snapshot, person_type.clone()).unwrap();
         let age_1 = thing_manager.create_attribute(&mut snapshot, age_type.clone(), Value::Long(age_value)).unwrap();
@@ -205,14 +205,14 @@ fn attribute_cleanup_on_concurrent_detach() {
         let thing_manager = ThingManager::new(thing_vertex_generator.clone(), type_manager.clone());
 
         let age_type = type_manager.create_attribute_type(&mut snapshot, &age_label, false).unwrap();
-        age_type.set_value_type(&mut snapshot, &type_manager, ValueType::Long);
+        age_type.set_value_type(&mut snapshot, ValueType::Long);
         let name_type = type_manager.create_attribute_type(&mut snapshot, &name_label, false).unwrap();
-        name_type.set_value_type(&mut snapshot, &type_manager, ValueType::String);
+        name_type.set_value_type(&mut snapshot, ValueType::String);
 
         let person_type = type_manager.create_entity_type(&mut snapshot, &person_label, false).unwrap();
-        let owns_age = person_type.set_owns(&mut snapshot, &type_manager, age_type.clone(), Ordering::Unordered);
+        let owns_age = person_type.set_owns(&mut snapshot, age_type.clone(), Ordering::Unordered);
         owns_age.set_annotation(&mut snapshot, &type_manager, OwnsAnnotation::Distinct(AnnotationDistinct::new()));
-        let _ = person_type.set_owns(&mut snapshot, &type_manager, name_type.clone(), Ordering::Unordered);
+        let _ = person_type.set_owns(&mut snapshot, name_type.clone(), Ordering::Unordered);
 
         let person_1 = thing_manager.create_entity(&mut snapshot, person_type.clone()).unwrap();
         let person_2 = thing_manager.create_entity(&mut snapshot, person_type.clone()).unwrap();
@@ -341,8 +341,8 @@ fn role_player_distinct() {
 
         let person_type = type_manager.create_entity_type(&mut snapshot, &person_label, false).unwrap();
         let company_type = type_manager.create_entity_type(&mut snapshot, &company_label, false).unwrap();
-        person_type.set_plays(&mut snapshot, &type_manager, employee_type.clone());
-        company_type.set_plays(&mut snapshot, &type_manager, employee_type.clone());
+        person_type.set_plays(&mut snapshot, employee_type.clone());
+        company_type.set_plays(&mut snapshot, employee_type.clone());
 
         let person_1 = thing_manager.create_entity(&mut snapshot, person_type.clone()).unwrap();
         let company_1 = thing_manager.create_entity(&mut snapshot, company_type.clone()).unwrap();
@@ -430,8 +430,8 @@ fn role_player_duplicates() {
 
         let resource_type = type_manager.create_entity_type(&mut snapshot, &resource_label, false).unwrap();
         let group_type = type_manager.create_entity_type(&mut snapshot, &group_label, false).unwrap();
-        resource_type.set_plays(&mut snapshot, &type_manager, entry_type.clone());
-        group_type.set_plays(&mut snapshot, &type_manager, owner_type.clone());
+        resource_type.set_plays(&mut snapshot, entry_type.clone());
+        group_type.set_plays(&mut snapshot, owner_type.clone());
 
         let group_1 = thing_manager.create_entity(&mut snapshot, group_type.clone()).unwrap();
         let resource_1 = thing_manager.create_entity(&mut snapshot, resource_type.clone()).unwrap();

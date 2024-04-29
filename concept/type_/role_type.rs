@@ -10,8 +10,8 @@ use bytes::Bytes;
 use encoding::{
     graph::type_::vertex::{new_vertex_role_type, TypeVertex},
     layout::prefix::Prefix,
-    value::label::Label,
     Prefixed,
+    value::label::Label,
 };
 use primitive::maybe_owns::MaybeOwns;
 use storage::{
@@ -21,6 +21,7 @@ use storage::{
 
 use crate::{
     concept_iterator,
+    ConceptAPI,
     error::ConceptReadError,
     type_::{
         annotation::{Annotation, AnnotationAbstract, AnnotationCardinality, AnnotationDistinct},
@@ -29,9 +30,9 @@ use crate::{
         type_manager::TypeManager,
         TypeAPI,
     },
-    ConceptAPI,
 };
 use crate::error::ConceptWriteError;
+use crate::type_::type_encoder;
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct RoleType<'a> {
@@ -68,7 +69,6 @@ impl<'a> TypeAPI<'a> for RoleType<'a> {
     fn delete<Snapshot: WritableSnapshot>(
         self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
     ) -> Result<(), ConceptWriteError> {
         todo!()
     }
@@ -93,11 +93,10 @@ impl<'a> RoleType<'a> {
     fn set_name<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        _type_manager: &TypeManager<Snapshot>,
         _name: &str,
     ) {
         // // TODO: setLabel should fail is setting label on Root type
-        // type_manager.set_storage_label(self.clone().into_owned(), label);
+        // type_writer::set_storage_label(self.clone().into_owned(), label);
 
         todo!()
     }
@@ -113,8 +112,9 @@ impl<'a> RoleType<'a> {
     pub fn set_supertype<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>, supertype: RoleType<'static>) -> Result<(), ConceptWriteError> {
-        type_manager.storage_set_supertype(snapshot, self.clone().into_owned(), supertype);
+        supertype: RoleType<'static>,
+    ) -> Result<(), ConceptWriteError> {
+        type_encoder::set_supertype(snapshot, self.clone().into_owned(), supertype);
         Ok(())
     }
 
@@ -168,18 +168,17 @@ impl<'a> RoleType<'a> {
     pub fn set_annotation<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
         annotation: RoleTypeAnnotation,
     ) -> Result<(), ConceptWriteError> {
         match annotation {
             RoleTypeAnnotation::Abstract(_) => {
-                type_manager.storage_set_annotation_abstract(snapshot, self.clone().into_owned())
+                type_encoder::set_annotation_abstract(snapshot, self.clone().into_owned())
             }
             RoleTypeAnnotation::Distinct(_) => {
-                type_manager.storage_set_annotation_distinct(snapshot, self.clone().into_owned())
+                type_encoder::set_annotation_distinct(snapshot, self.clone().into_owned())
             }
             RoleTypeAnnotation::Cardinality(cardinality) => {
-                type_manager.storage_set_annotation_cardinality(snapshot, self.clone().into_owned(), cardinality)
+                type_encoder::set_annotation_cardinality(snapshot, self.clone().into_owned(), cardinality)
             }
         };
         Ok(())
@@ -188,18 +187,17 @@ impl<'a> RoleType<'a> {
     fn delete_annotation<Snapshot: WritableSnapshot>(
         &self,
         snapshot: &mut Snapshot,
-        type_manager: &TypeManager<Snapshot>,
         annotation: RoleTypeAnnotation,
     ) {
         match annotation {
             RoleTypeAnnotation::Abstract(_) => {
-                type_manager.storage_delete_annotation_abstract(snapshot, self.clone().into_owned())
+                type_encoder::delete_annotation_abstract(snapshot, self.clone().into_owned())
             }
             RoleTypeAnnotation::Distinct(_) => {
-                type_manager.storage_delete_annotation_distinct(snapshot, self.clone().into_owned())
+                type_encoder::delete_annotation_distinct(snapshot, self.clone().into_owned())
             }
             RoleTypeAnnotation::Cardinality(_) => {
-                type_manager.storage_delete_annotation_cardinality(snapshot, self.clone().into_owned())
+                type_encoder::delete_annotation_cardinality(snapshot, self.clone().into_owned())
             }
         }
     }
