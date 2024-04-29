@@ -306,20 +306,22 @@ impl<D> MVCCStorage<D> {
     where
         D: DurabilityService,
     {
-        let commit_record = snapshot.into_commit_record();
+        let mut commit_record = snapshot.into_commit_record();
+        let open_sequence_number = commit_record.open_sequence_number();
 
         // 0. Assign whether the put operations need to be performed given storage contents at open
         //    sequence number
-        for buffer in commit_record.operations() {
-            let writes = buffer.writes().write().unwrap();
+        for buffer in commit_record.operations_mut().write_buffers_mut() {
+            let buffer_keyspace_id = buffer.keyspace_id;
+            let writes = buffer.writes_mut();
             let puts = writes.iter().filter_map(|(key, write)| match write {
                 Write::Put { value, reinsert } => Some((key, value, reinsert)),
                 _ => None,
             });
             for (key, value, reinsert) in puts {
-                let wrapped = StorageKeyReference::new_raw(buffer.keyspace_id, ByteReference::new(key.bytes()));
+                let wrapped = StorageKeyReference::new_raw(buffer_keyspace_id, ByteReference::new(key.bytes()));
                 let existing_stored: Option<Option<ByteArray<BUFFER_VALUE_INLINE>>> = self
-                    .get(wrapped, commit_record.open_sequence_number(), |reference| {
+                    .get(wrapped, open_sequence_number, |reference| {
                         // Only copy if the value is the same
                         (reference.bytes() == value.bytes()).then(|| ByteArray::from(reference))
                     })
@@ -402,7 +404,7 @@ impl<D> MVCCStorage<D> {
         let mut write_batches: [Option<WriteBatch>; KEYSPACE_MAXIMUM_COUNT] = core::array::from_fn(|_| None);
 
         for (index, buffer) in buffers.write_buffers().enumerate() {
-            let map = buffer.writes().read().unwrap();
+            let map = buffer.writes();
             if !map.is_empty() {
                 let mut write_batch = WriteBatch::default();
                 for (key, write) in &*map {
