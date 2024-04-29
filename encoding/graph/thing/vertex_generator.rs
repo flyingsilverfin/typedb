@@ -121,7 +121,7 @@ impl ThingVertexGenerator {
         vertex
     }
 
-    pub fn create_relation<Snapshot>(&self, type_id: TypeID, snapshot: &Snapshot) -> ObjectVertex<'static>
+    pub fn create_relation<Snapshot>(&self, type_id: TypeID, snapshot: &mut Snapshot) -> ObjectVertex<'static>
         where Snapshot: WritableSnapshot
     {
         let relation_id = self.relation_ids[type_id.as_u16() as usize].fetch_add(1, Ordering::Relaxed);
