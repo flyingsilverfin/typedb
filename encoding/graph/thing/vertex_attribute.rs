@@ -17,13 +17,13 @@ use storage::{
 };
 
 use crate::{
+    AsBytes,
+    EncodingKeyspace,
     graph::{type_::vertex::TypeID, Typed},
-    layout::prefix::{Prefix, PrefixID},
-    value::{
+    Keyable, layout::prefix::{Prefix, PrefixID}, Prefixed, value::{
         boolean_bytes::BooleanBytes, date_time_bytes::DateTimeBytes, double_bytes::DoubleBytes, long_bytes::LongBytes,
         string_bytes::StringBytes, value_type::ValueType, ValueEncodable,
     },
-    AsBytes, EncodingKeyspace, Keyable, Prefixed,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Ord, PartialOrd)]
@@ -78,7 +78,7 @@ impl<'a> AttributeVertex<'a> {
         storage_key.keyspace_id() == Self::KEYSPACE.id()
             && storage_key.bytes().len() > 0
             && (&storage_key.bytes()[Self::RANGE_PREFIX] >= &Prefix::ATTRIBUTE_MIN.prefix_id().bytes()
-                && &storage_key.bytes()[Self::RANGE_PREFIX] <= &Prefix::ATTRIBUTE_MAX.prefix_id().bytes())
+            && &storage_key.bytes()[Self::RANGE_PREFIX] <= &Prefix::ATTRIBUTE_MAX.prefix_id().bytes())
     }
 
     pub fn value_type_to_prefix_type(value_type: ValueType) -> Prefix {
@@ -207,7 +207,7 @@ impl AttributeID {
     }
 
     pub fn build_inline(value: impl ValueEncodable) -> Self {
-        debug_assert!(Self::is_inlineable(value.clone()));
+        assert!(Self::is_inlineable(value.clone()));
         match value.value_type() {
             ValueType::Boolean => Self::Boolean(BooleanAttributeID::build(value.encode_boolean())),
             ValueType::Long => Self::Long(LongAttributeID::build(value.encode_long())),
@@ -425,17 +425,19 @@ impl DateTimeAttributeID {
 ///     [16: string][1: 0b0[length]]
 ///
 ///   Case 2: string does not fit in 16 bytes:
-///     [8: prefix][8: hash][1: 0b1[disambiguator]]
+///     [6: prefix][10: hash][1: 0b1[disambiguator]]
 ///
 ///  4 byte hash: collision probability of 50% at 77k elements
 ///  5 byte hash: collision probability of 50% at 1.25m elements
 ///  6 byte hash: collision probability of 50% at 20m elements
 ///  7 byte hash: collision probability of 50% at 320m elements
-///  8 byte hash: collision probability of 50% at 5b elements
+///  8 byte hash: collision probability of 50% at 5b elements (1% at 600 million)
+///  9 byte hash: collision probability of 50% at 80b elements (1% at 10b)
+///  10 byte hash: collision probability of 50% at 1300b elements (1% at 150b)
 ///
-///  With an 8 byte prefix and 7 byte hash we can insert up to 100 million elements behind the same prefix
-///  before we have a 5% chance of collision. With 100 million entries with 100 bytes each, we can store 20GB of data in the same prefix.
-///  We also allow disambiguation in the tail byte of the ID, so we can tolerate up to 127 collsions, or approximately 2TB of data with above assumptions.
+///  With an 6 byte prefix and 10 byte hash we can insert up to 150 billion elements behind the same prefix
+///  before we have a 1% chance of collision.
+///  We also allow disambiguation in the tail byte of the ID, so we can tolerate up to 127 collision.
 ///
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct StringAttributeID {
@@ -446,9 +448,9 @@ impl StringAttributeID {
     const LENGTH: usize = AttributeIDLength::LONG_LENGTH;
 
     pub(crate) const ENCODING_INLINE_CAPACITY: usize = Self::LENGTH - 1;
-    const ENCODING_STRING_PREFIX_LENGTH: usize = 8;
+    const ENCODING_STRING_PREFIX_LENGTH: usize = 6;
     pub const ENCODING_STRING_PREFIX_RANGE: Range<usize> = 0..Self::ENCODING_STRING_PREFIX_LENGTH;
-    pub const ENCODING_STRING_HASH_LENGTH: usize = 8;
+    pub const ENCODING_STRING_HASH_LENGTH: usize = Self::ENCODING_INLINE_CAPACITY - Self::ENCODING_STRING_PREFIX_LENGTH;
     const ENCODING_STRING_HASH_RANGE: Range<usize> = Self::ENCODING_STRING_PREFIX_RANGE.end
         ..Self::ENCODING_STRING_PREFIX_RANGE.end + Self::ENCODING_STRING_HASH_LENGTH;
     const ENCODING_STRING_PREFIX_HASH_LENGTH: usize =
@@ -480,7 +482,7 @@ impl StringAttributeID {
     ///
     fn set_tail_inline_length(bytes: &mut [u8; Self::LENGTH], length: u8) {
         assert!(length & Self::ENCODING_STRING_TAIL_MASK == 0); // ie < 128, high bit not set
-                                                                // because the high bit is not set, we already conform to the required mask of high bit = 0
+        // because the high bit is not set, we already conform to the required mask of high bit = 0
         bytes[Self::ENCODING_STRING_TAIL_BYTE_INDEX] = length;
     }
 
@@ -493,10 +495,10 @@ impl StringAttributeID {
         type_id: TypeID,
         string: StringBytes<'_, INLINE_LENGTH>,
         snapshot: &Snapshot,
-        hasher: &impl Fn(&[u8]) -> u64,
+        hasher: &impl Fn(&[u8]) -> u128,
     ) -> Result<Self, Arc<SnapshotIteratorError>>
-    where
-        Snapshot: ReadableSnapshot,
+        where
+            Snapshot: ReadableSnapshot,
     {
         debug_assert!(!Self::is_inlineable(string.as_reference()));
         let mut id_bytes = Self::build_hashed_id_without_tail(string.as_reference(), hasher);
@@ -519,10 +521,10 @@ impl StringAttributeID {
         type_id: TypeID,
         string: StringBytes<'_, INLINE_LENGTH>,
         snapshot: &Snapshot,
-        hasher: &impl Fn(&[u8]) -> u64,
+        hasher: &impl Fn(&[u8]) -> u128,
     ) -> Result<Option<Self>, Arc<SnapshotIteratorError>>
-    where
-        Snapshot: ReadableSnapshot,
+        where
+            Snapshot: ReadableSnapshot,
     {
         debug_assert!(!Self::is_inlineable(string.as_reference()));
         let existing_or_tail = Self::find_hashed_id_or_next_tail(
@@ -539,7 +541,7 @@ impl StringAttributeID {
 
     fn build_hashed_id_without_tail<const INLINE_LENGTH: usize>(
         string: StringBytes<'_, INLINE_LENGTH>,
-        hasher: &impl Fn(&[u8]) -> u64,
+        hasher: &impl Fn(&[u8]) -> u128,
     ) -> [u8; Self::LENGTH] {
         let mut bytes = [0u8; Self::LENGTH];
         bytes[Self::ENCODING_STRING_PREFIX_RANGE]
@@ -556,8 +558,8 @@ impl StringAttributeID {
         id_without_tail: [u8; Self::LENGTH],
         snapshot: &Snapshot,
     ) -> Result<Either<Self, u8>, Arc<SnapshotIteratorError>>
-    where
-        Snapshot: ReadableSnapshot,
+        where
+            Snapshot: ReadableSnapshot,
     {
         debug_assert!(!Self::is_inlineable(string.as_reference()));
         let prefix_search = KeyRange::new_within(
@@ -584,9 +586,11 @@ impl StringAttributeID {
 
     fn apply_hash<const INLINE_LENGTH: usize>(
         string: StringBytes<'_, INLINE_LENGTH>,
-        hasher: &impl Fn(&[u8]) -> u64,
+        hasher: &impl Fn(&[u8]) -> u128,
     ) -> [u8; Self::ENCODING_STRING_HASH_LENGTH] {
-        hasher(string.bytes().bytes()).to_be_bytes()
+        let mut bytes = [0; Self::ENCODING_STRING_HASH_LENGTH];
+        bytes.copy_from_slice(&hasher(string.bytes().bytes()).to_be_bytes()[0..bytes.len()]);
+        bytes
     }
 
     ///
@@ -594,7 +598,7 @@ impl StringAttributeID {
     ///
     fn set_tail_hash_disambiguator(bytes: &mut [u8; Self::LENGTH], disambiguator: u8) {
         debug_assert!(disambiguator & Self::ENCODING_STRING_TAIL_MASK == 0); // ie. disambiguator < 128, not using high bit
-                                                                             // sets 0x1[disambiguator]
+        // sets 0x1[disambiguator]
         bytes[Self::ENCODING_STRING_TAIL_BYTE_INDEX] = disambiguator | Self::ENCODING_STRING_TAIL_MASK;
     }
 
@@ -602,7 +606,7 @@ impl StringAttributeID {
         self.bytes[Self::ENCODING_STRING_TAIL_BYTE_INDEX] & Self::ENCODING_STRING_TAIL_MASK == 0
     }
 
-    pub fn get_inline_string_bytes(&self) -> StringBytes<'static, 16> {
+    pub fn get_inline_string_bytes(&self) -> StringBytes<'static, { Self::ENCODING_INLINE_CAPACITY }> {
         debug_assert!(self.is_inline());
         let mut bytes = ByteArray::zeros(Self::LENGTH);
         let inline_string_length = self.get_inline_length();

@@ -7,12 +7,13 @@
 use std::borrow::Cow;
 
 use chrono::NaiveDateTime;
+
 use encoding::value::{
     boolean_bytes::BooleanBytes, date_time_bytes::DateTimeBytes, double_bytes::DoubleBytes, long_bytes::LongBytes,
-    string_bytes::StringBytes, value_type::ValueType, ValueEncodable,
+    string_bytes::StringBytes, ValueEncodable,
 };
-
-// TODO: how do we handle user-created compound structs?
+use encoding::value::struct_bytes::{StructBytes, StructValue};
+use encoding::value::value_type::StructDefinition;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value<'a> {
@@ -21,6 +22,7 @@ pub enum Value<'a> {
     Double(f64),
     DateTime(NaiveDateTime),
     String(Cow<'a, str>),
+    Struct(Cow<'a, StructValue>),
 }
 
 impl<'a> Value<'a> {
@@ -31,6 +33,7 @@ impl<'a> Value<'a> {
             Value::Double(double) => Value::Double(*double),
             Value::DateTime(date_time) => Value::DateTime(*date_time),
             Value::String(string) => Value::String(Cow::Borrowed(string.as_ref())),
+            Value::Struct(map) => Value::Struct(Cow::Borrowed(map.as_ref())),
         }
     }
 
@@ -71,16 +74,6 @@ impl<'a> Value<'a> {
 }
 
 impl<'a> ValueEncodable for Value<'a> {
-    fn value_type(&self) -> ValueType {
-        match self {
-            Value::Boolean(_) => ValueType::Boolean,
-            Value::Long(_) => ValueType::Long,
-            Value::Double(_) => ValueType::Double,
-            Value::DateTime(_) => ValueType::DateTime,
-            Value::String(_) => ValueType::String,
-        }
-    }
-
     fn encode_boolean(&self) -> BooleanBytes {
         match self {
             Self::Boolean(boolean) => BooleanBytes::build(*boolean),
@@ -109,10 +102,17 @@ impl<'a> ValueEncodable for Value<'a> {
         }
     }
 
-    fn encode_string<const INLINE_LENGTH: usize>(&self) -> StringBytes<'_, INLINE_LENGTH> {
+    fn encode_string(&self) -> StringBytes<'_, 64> {
         match self {
             Value::String(str) => StringBytes::build_ref(str),
             _ => panic!("Cannot encoded non-String as StringBytes"),
+        }
+    }
+
+    fn encode_struct(&self, definition: &StructDefinition) -> StructBytes<64> {
+        match self {
+            Value::Struct(struct_) => StructBytes::build(struct_.as_ref(), &definition),
+            _ => panic!("Cannot encoded non-Struct as StructBytes"),
         }
     }
 }

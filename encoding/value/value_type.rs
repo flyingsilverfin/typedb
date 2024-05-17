@@ -4,28 +4,34 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use crate::layout::infix::InfixID;
+use std::collections::HashMap;
 
-// A tiny struct will always be more efficient owning its own data and being Copy
+pub type ValueTypeIDUInt = u16;
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct ValueTypeID {
     bytes: [u8; ValueTypeID::LENGTH],
 }
 
 impl ValueTypeID {
-    const LENGTH: usize = 1;
+    pub(crate) const LENGTH: usize = std::mem::size_of::<ValueTypeIDUInt>();
 
     pub const fn new(bytes: [u8; ValueTypeID::LENGTH]) -> Self {
         ValueTypeID { bytes }
     }
 
-    pub fn bytes(&self) -> [u8; InfixID::LENGTH] {
+    pub fn build(id: ValueTypeIDUInt) -> Self {
+        debug_assert_eq!(std::mem::size_of_val(&id), ValueTypeID::LENGTH);
+        Self { bytes: id.to_be_bytes() }
+    }
+
+    pub fn bytes(&self) -> [u8; ValueTypeID::LENGTH] {
         self.bytes
     }
 }
 
 // TODO: how do we handle user-created compound structs?
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum ValueType {
     Boolean,
     Long,
@@ -37,13 +43,15 @@ pub enum ValueType {
     Duration, // Naming: 'interval'?
      */
     String,
+
+    Struct { id: ValueTypeID, definition: StructDefinition },
 }
 
 macro_rules! value_type_functions {
     ($(
         $name:ident => $bytes:tt
     ),+ $(,)?) => {
-        pub const fn value_type_id(&self) -> ValueTypeID {
+        pub fn value_type_id(&self) -> ValueTypeID {
             let bytes = match self {
                 $(
                     Self::$name => &$bytes,
@@ -64,11 +72,27 @@ macro_rules! value_type_functions {
 }
 
 impl ValueType {
-    value_type_functions!(
-        Boolean => [0],
-        Long => [1],
-        Double => [2],
-        String => [3],
-        DateTime => [4],
-    );
+    // value_type_functions!(
+    //     Boolean => [0],
+    //     Long => [1],
+    //     Double => [2],
+    //     String => [3],
+    //     DateTime => [4],
+    // );
 }
+
+/// Restrictions: maximum number fields is StructFieldNumber::MAX
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct StructDefinition {
+    name: String,
+    fields: Vec<StructFieldDefinition>,
+    field_names: HashMap<String, StructFieldNumber>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct StructFieldDefinition {
+    optional: bool,
+    value_type: ValueType,
+}
+
+pub(crate) type StructFieldNumber = u16;

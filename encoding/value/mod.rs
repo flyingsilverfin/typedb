@@ -4,8 +4,11 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+use std::fmt::Debug;
 use bytes::{byte_array::ByteArray, byte_reference::ByteReference};
 use resource::constants::snapshot::BUFFER_VALUE_INLINE;
+use crate::value::struct_bytes::StructBytes;
+use crate::value::value_type::StructDefinition;
 
 use self::{
     boolean_bytes::BooleanBytes, date_time_bytes::DateTimeBytes, double_bytes::DoubleBytes, long_bytes::LongBytes,
@@ -19,6 +22,9 @@ pub mod label;
 pub mod long_bytes;
 pub mod string_bytes;
 pub mod value_type;
+pub mod struct_bytes;
+mod struct_value;
+mod value_type_generator;
 
 pub fn encode_value_u64(count: u64) -> ByteArray<BUFFER_VALUE_INLINE> {
     // LE is normally platform-native
@@ -30,9 +36,7 @@ pub fn decode_value_u64(bytes: ByteReference<'_>) -> u64 {
     u64::from_le_bytes(bytes.bytes().try_into().unwrap())
 }
 
-pub trait ValueEncodable: Clone {
-    fn value_type(&self) -> ValueType;
-
+pub trait ValueEncodable: Debug {
     fn encode_boolean(&self) -> BooleanBytes;
 
     fn encode_long(&self) -> LongBytes;
@@ -41,5 +45,7 @@ pub trait ValueEncodable: Clone {
 
     fn encode_date_time(&self) -> DateTimeBytes;
 
-    fn encode_string<const INLINE_LENGTH: usize>(&self) -> StringBytes<INLINE_LENGTH>;
+    fn encode_string(&self) -> StringBytes<64>; // TODO: this can't have a const parameter if we want object safety
+
+    fn encode_struct(&self, definition: &StructDefinition) -> StructBytes<64>; // TODO: this can't have a const parameter if we want object safety
 }

@@ -35,6 +35,7 @@ use encoding::{
     value::{label::Label, value_type::ValueType},
     AsBytes, Keyable,
 };
+use encoding::value::value_type::StructDefinition;
 use primitive::maybe_owns::MaybeOwns;
 use resource::constants::snapshot::BUFFER_KEY_INLINE;
 use storage::{
@@ -664,6 +665,16 @@ impl<Snapshot: WritableSnapshot> TypeManager<Snapshot> {
             );
         }
         Ok(attribute_type)
+    }
+
+    pub fn create_struct_type(
+        &self,
+        snapshot: &mut Snapshot,
+        label: &Label<'_>,
+        definition: StructDefinition
+    ) {
+        let value_type_id = 0;
+
     }
 
     pub(crate) fn delete_entity_type(&self, snapshot: &mut Snapshot, entity_type: EntityType<'_>) {

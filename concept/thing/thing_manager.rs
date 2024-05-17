@@ -207,7 +207,7 @@ impl<Snapshot: ReadableSnapshot> ThingManager<Snapshot> {
                 } else {
                     match self.vertex_generator.find_attribute_id_string_noinline(
                         attribute_type.vertex().type_id_(),
-                        value.encode_string::<256>(),
+                        value.encode_string(),
                         snapshot,
                     ) {
                         Ok(Some(id)) => Attribute::new(AttributeVertex::new(Bytes::copy(&id.bytes()))),
