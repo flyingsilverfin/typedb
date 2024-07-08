@@ -60,7 +60,7 @@ impl PrefixID {
             Prefix::EdgeHasReverse => todo!(),
             Prefix::EdgeRolePlayer => todo!(),
             Prefix::EdgeRolePlayerReverse => todo!(),
-            Prefix::EdgeRelationIndex => todo!(),
+            Prefix::EdgeRolePlayerIndex => todo!(),
             Prefix::IndexValueToStruct => todo!(),
             Prefix::PropertyObjectVertex => todo!(),
             Prefix::_VertexAttributeLast => unreachable!("Marker enum variant should not be used."),
@@ -103,7 +103,7 @@ pub enum Prefix {
     EdgeHasReverse,
     EdgeRolePlayer,
     EdgeRolePlayerReverse,
-    EdgeRelationIndex,
+    EdgeRolePlayerIndex,
 
     DefinitionStruct,
     DefinitionFunction,
@@ -209,7 +209,7 @@ impl Prefix {
            EdgeHasReverse => [131], false;
            EdgeRolePlayer => [132], true;
            EdgeRolePlayerReverse => [133], true;
-           EdgeRelationIndex => [140], true;
+           EdgeRolePlayerIndex => [140], true;
 
            PropertyTypeVertex => [160], true;
            PropertyTypeEdge => [162], true;

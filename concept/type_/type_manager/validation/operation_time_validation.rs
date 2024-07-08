@@ -1041,9 +1041,8 @@ impl OperationTimeValidation {
         let all_owns: HashMap<AttributeType<'static>, Owns<'static>> =
             TypeReader::get_implemented_interfaces(snapshot, owner.clone())
                 .map_err(SchemaValidationError::ConceptRead)?;
-        let found_owns = all_owns
-            .iter()
-            .find(|(existing_owns_attribute_type, existing_owns)| **existing_owns_attribute_type == attribute_type);
+        let found_owns =
+            all_owns.iter().find(|(existing_owns_attribute_type, _)| **existing_owns_attribute_type == attribute_type);
 
         match found_owns {
             Some((_, owns)) => {
@@ -1053,7 +1052,7 @@ impl OperationTimeValidation {
                     let owns_owner = owns.owner();
                     Err(SchemaValidationError::CannotUnsetInheritedOwns(
                         get_label!(snapshot, attribute_type),
-                        get_label!(snapshot, owner),
+                        get_label!(snapshot, owns_owner),
                     ))
                 }
             }
@@ -1070,7 +1069,7 @@ impl OperationTimeValidation {
             TypeReader::get_implemented_interfaces(snapshot, player.clone())
                 .map_err(SchemaValidationError::ConceptRead)?;
         let found_plays =
-            all_plays.iter().find(|(existing_plays_role_type, existing_plays)| **existing_plays_role_type == role_type);
+            all_plays.iter().find(|(existing_plays_role_type, _)| **existing_plays_role_type == role_type);
 
         match found_plays {
             Some((_, plays)) => {
@@ -1101,7 +1100,7 @@ impl OperationTimeValidation {
         let found_annotation = annotations
             .iter()
             .map(|(existing_annotation, source)| (existing_annotation.clone().into().category(), source))
-            .find(|(existing_category, source)| existing_category.clone() == annotation_category);
+            .find(|(existing_category, _)| existing_category.clone() == annotation_category);
 
         match found_annotation {
             Some((_, owner)) => {
@@ -1132,7 +1131,7 @@ impl OperationTimeValidation {
         let found_annotation = annotations
             .iter()
             .map(|(existing_annotation, source)| (existing_annotation.clone().category(), source))
-            .find(|(existing_category, source)| existing_category.clone() == annotation_category);
+            .find(|(existing_category, _)| existing_category.clone() == annotation_category);
 
         match found_annotation {
             Some((_, owner)) => {

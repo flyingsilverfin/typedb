@@ -15,35 +15,25 @@ use storage::snapshot::ReadableSnapshot;
 
 use super::pattern_type_inference::infer_types_for_block;
 use crate::{
-    inference::pattern_type_inference::TypeInferenceGraph, pattern::constraint::Constraint, program::program::Program,
+    inference::{pattern_type_inference::TypeInferenceGraph, TypeInferenceError},
+    pattern::constraint::Constraint,
+    program::program::Program,
 };
 
-/*
-Design:
-1. Assign a static, deterministic ordering over the functions in the Program.
-2. Assign a static, deterministic ordering over the connected variables in each functional block's Pattern.
-3. Set the possible types for each variable to all types of its category initially (note: function input and output variables can be restricted to subtypes of labelled types initially!)
-4. For each variable in the ordering, go over each constraint and intersect types
-
-Output data structure:
-TypeAnnotations per FunctionalBlock
-
-Note: On function call boundaries, can assume the current set of schema types per input and output variable.
-      However, we should then recurse into the sub-function IRs and tighten their input/output types based on their type inference.
-
- */
-
-pub(crate) type VertexAnnotations = BTreeMap<Variable, BTreeSet<Type>>;
-
-pub fn infer_types(program: &Program, snapshot: &impl ReadableSnapshot, type_manager: &TypeManager) -> TypeAnnotations {
-    // let mut entry_type_annotations = TypeAnnotations::new(HashMap::new(), HashMap::new());
-    // let mut function_type_annotations: HashMap<DefinitionKey<'static>, TypeAnnotations> = HashMap::new();
-    // todo!()
-    // TODO: Extend to functions when we implement them
-    let root_tig = infer_types_for_block(snapshot, program.entry(), type_manager).unwrap();
-    TypeAnnotations::build(root_tig)
+pub fn infer_types(
+    program: &Program,
+    snapshot: &impl ReadableSnapshot,
+    type_manager: &TypeManager,
+) -> Result<TypeAnnotations, TypeInferenceError> {
+    if !program.functions().is_empty() {
+        // TODO: Extend to functions when we implement them
+        todo!()
+    }
+    let root_tig = infer_types_for_block(snapshot, program.entry(), type_manager)?;
+    Ok(TypeAnnotations::build(root_tig))
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub struct TypeAnnotations {
     variables: HashMap<Variable, Arc<HashSet<Type>>>,
     constraints: HashMap<Constraint<Variable>, ConstraintTypeAnnotations>,
@@ -57,10 +47,10 @@ impl TypeAnnotations {
         TypeAnnotations { variables, constraints }
     }
 
-    pub(crate) fn build(root_type_inference_graph: TypeInferenceGraph<'_>) -> Self {
+    pub(crate) fn build(inference_graph: TypeInferenceGraph<'_>) -> Self {
         let mut vertex_annotations = HashMap::new();
         let mut constraint_annotations = HashMap::new();
-        root_type_inference_graph.collect_type_annotations(&mut vertex_annotations, &mut constraint_annotations);
+        inference_graph.collect_type_annotations(&mut vertex_annotations, &mut constraint_annotations);
         Self::new(vertex_annotations, constraint_annotations)
     }
 
@@ -122,14 +112,6 @@ impl LeftRightAnnotations {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct LeftRightFilteredAnnotations {
-    // pub(crate) left_to_right: BTreeMap<Type, (BTreeSet<Type>, HashSet<Type>)>,
-    // pub(crate) right_to_left: BTreeMap<Type, (BTreeSet<Type>, HashSet<Type>)>,
-    // TODO: I think we'll need to be able to traverse from the Filter variable to the left and right. example: `match $role sub friendship:friend; $r ($role: $x);`
-    // filter_to_left
-    // filter_to_right
-
-    // TODO: krishnan: ^ I don't know if I miss something, but this makes more sense to me:
-    // Filtered edges are encoded as  (left,right,filter) and (right,left,filter).
     pub(crate) left_to_right: BTreeMap<Type, Vec<Type>>,
     pub(crate) filters_on_right: BTreeMap<Type, HashSet<Type>>, // The key is the type of the right variable
 

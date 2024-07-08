@@ -14,7 +14,7 @@ use encoding::{
     graph::type_::{
         edge::TypeEdgeEncoding,
         property::{TypeEdgePropertyEncoding, TypeVertexPropertyEncoding},
-        vertex::{PrefixedTypeVertexEncoding, TypeVertex, TypeVertexEncoding},
+        vertex::{TypeVertex, TypeVertexEncoding},
         Kind,
     },
     layout::infix::Infix,

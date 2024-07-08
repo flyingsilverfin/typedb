@@ -16,7 +16,6 @@ use crate::{
         object_type::ObjectType,
         relation_type::RelationType,
         role_type::RoleType,
-        InterfaceImplementation, TypeAPI,
     },
 };
 

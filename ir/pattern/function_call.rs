@@ -50,6 +50,10 @@ impl<ID: IrID> FunctionCall<ID> {
         &self.call_variable_mapping
     }
 
+    pub fn argument_ids(&self) -> impl Iterator<Item=ID> + '_ {
+        self.call_variable_mapping.keys().into_iter().cloned()
+    }
+
     pub(crate) fn returns(&self) -> &Vec<(VariableCategory, VariableOptionality)> {
         &self.returns
     }
