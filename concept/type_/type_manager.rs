@@ -948,6 +948,27 @@ impl TypeManager {
             Ok(MaybeOwns::Owned(annotations))
         }
     }
+
+
+    // Specialised APIs to simplify architectures
+
+    pub(crate) fn get_independent_attribute_types(
+        &self,
+        snapshot: &impl ReadableSnapshot,
+    ) -> Result<Arc<HashSet<AttributeType<'static>>>, ConceptReadError> {
+        if let Some(cache) = &self.type_cache {
+            Ok(cache.get_independent_attribute_types())
+        } else {
+            let root_type = self.get_attribute_type(snapshot, &AttributeType::ROOT_KIND.root_label())?.unwrap();
+            let mut independent = HashSet::new();
+            for type_ in self.get_attribute_type_subtypes_transitive(snapshot, root_type)?.into_iter() {
+                if type_.is_independent(snapshot, self)? {
+                    independent.insert(type_.clone());
+                }
+            }
+            Ok(Arc::new(independent))
+        }
+    }
 }
 
 // TODO: Remove this set of comments
