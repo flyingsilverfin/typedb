@@ -24,6 +24,26 @@ pub enum VariableValue<'a> {
     ValueList(Arc<[Value<'static>]>),
 }
 
+pub trait Referencable {
+    type SelfType<'b>;
+
+    fn as_reference(&self) -> Self::SelfType<'_>;
+}
+
+impl<'a> Referencable for VariableValue<'a> {
+    type SelfType<'b> = VariableValue<'b> where Self: 'b;
+    fn as_reference(&self) -> Self::SelfType<'_> {
+        match self {
+            VariableValue::Empty => VariableValue::EMPTY,
+            VariableValue::Type(type_) => VariableValue::Type(type_.clone()),
+            VariableValue::Thing(thing) => VariableValue::Thing(thing.as_reference()),
+            VariableValue::Value(value) => VariableValue::Value(value.as_reference()),
+            VariableValue::ThingList(list) => VariableValue::ThingList(list.clone()),
+            VariableValue::ValueList(list) => VariableValue::ValueList(list.clone()),
+        }
+    }
+}
+
 impl<'a> VariableValue<'a> {
 
     pub fn as_thing(&self) -> &Thing<'a> {

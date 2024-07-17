@@ -10,6 +10,7 @@ use std::collections::HashSet;
 pub use tracing::{error, info, trace, warn};
 
 use answer::{Thing, variable::Variable, variable_value::VariableValue};
+use answer::variable_value::Referencable;
 use concept::{
     error::ConceptReadError,
     thing::{entity::EntityIterator, has::Has, relation::RelationIterator, thing_manager::ThingManager},
@@ -240,34 +241,36 @@ impl InstructionIterator {
         }
     }
 
-    pub(crate) fn counting_skip_to_sorted<'a, T: Ord, Iterator, Mapper>(
-        iterator: &mut Peekable<Iterator>,
+    pub(crate) fn counting_skip_to_sorted<'a, T, Iterator, Mapper>(
+        iterator: &'a mut Peekable<Iterator>,
         mapper: Mapper,
         target: &'a VariableValue<'a>,
-    ) -> Result<Option<(Ordering, usize)>, ConceptReadError>
+    ) -> Result<(usize, Option<Ordering>), ConceptReadError>
         where
-            Mapper: Fn(&T) -> Result<VariableValue<'_>, ConceptReadError>,
-            Iterator: for<'b> LendingIterator<Item<'b>=T> + 'static,
+            T: for<'b> Referencable<SelfType<'b>=VariableValue<'b>>,
+            Mapper: for<'b> Fn(&'b <T as Referencable>::SelfType<'b>) -> VariableValue<'b>,
+            Iterator: for<'b> LendingIterator<Item<'b>=Result<<T as Referencable>::SelfType<'b>, ConceptReadError>> + 'static,
     {
         let mut count = 0;
         loop {
             let peek = iterator.peek();
             match peek {
-                None => return Ok(None),
+                None => return Ok((count, None)),
                 Some(value) => {
-                    let mapped = mapper(value)?;
+                    let t = value.as_ref().map_err(|err| err.clone())?;
+                    let mapped = mapper(t);
                     let cmp = mapped.partial_cmp(&target).unwrap();
                     match cmp {
                         Ordering::Less => {}
-                        Ordering::Equal => return Ok(Some((Ordering::Equal, count))),
-                        Ordering::Greater => return Ok(Some((Ordering::Greater, count))),
+                        Ordering::Equal => return Ok((count, Some(Ordering::Equal))),
+                        Ordering::Greater => return Ok((count, Some(Ordering::Greater))),
                     }
                 }
             }
             // match peek {
             //     None => return Ok(None),
-            //     Some(Ok(peek_value)) => {
-            //         let mapped = mapper(peek_value);
+            //     Some(value) => {
+            //         let mapped = mapper(value)?;
             //         let cmp = mapped.partial_cmp(&target).unwrap();
             //         match cmp {
             //             Ordering::Less => {}
@@ -275,7 +278,6 @@ impl InstructionIterator {
             //             Ordering::Greater => return Ok(Some((Ordering::Greater, count))),
             //         }
             //     }
-            //     Some(Err(err)) => return Err(err.clone()),
             // }
             let _ = iterator.next();
             // TODO: incorporate edge count
@@ -286,43 +288,50 @@ impl InstructionIterator {
     pub(crate) fn counting_skip_to_sorted_value(
         &mut self,
         value: &VariableValue<'_>,
-    ) -> Result<Option<(Ordering, usize)>, ConceptReadError> {
+    ) -> Result<(usize, Option<Ordering>), ConceptReadError> {
         debug_assert!(self.is_sorted());
         match self {
             InstructionIterator::IsaEntitySortedThing(iter, _, _, _) => Self::counting_skip_to_sorted(
                 iter,
-                |res| res.map(|entity| VariableValue::Thing(entity.as_reference().into())),
+                // |res| res.map(|entity| VariableValue::Thing(entity.as_reference().into())),
+                |entity| VariableValue::Thing(entity.as_reference().into()),
                 value,
             ),
             InstructionIterator::IsaRelationSortedThing(iter, _, _, _) => Self::counting_skip_to_sorted(
                 iter,
-                |res| res.map(|relation| VariableValue::Thing(relation.as_reference().into())),
+                // |res| res.map(|relation| VariableValue::Thing(relation.as_reference().into())),
+                |relation| VariableValue::Thing(relation.as_reference().into()),
                 value,
             ),
             InstructionIterator::IsaAttributeSortedThing(iter, _, _, _) => Self::counting_skip_to_sorted(
                 iter,
-                |res| res.map(|attribute| VariableValue::Thing(attribute.as_reference().into())),
+                // |res| res.map(|attribute| VariableValue::Thing(attribute.as_reference().into())),
+                |attribute| VariableValue::Thing(attribute.as_reference().into()),
                 value,
             ),
             InstructionIterator::HasUnboundedSortedOwner(iter, _, _, _) => Self::counting_skip_to_sorted(
                 iter,
-                |res| res.map(|has| VariableValue::Thing(has.0.owner().into())),
+                // |res| res.map(|has| VariableValue::Thing(has.0.owner().into())),
+                |has| VariableValue::Thing(has.0.owner().into()),
                 value,
             ),
             InstructionIterator::HasUnboundedSortedAttributeMerged(iter, _, _, _) => Self::counting_skip_to_sorted(
                 iter,
-                |res| res.map(|has| VariableValue::Thing(has.0.attribute().into())),
+                // |res| res.map(|has| VariableValue::Thing(has.0.attribute().into())),
+                |has| VariableValue::Thing(has.0.attribute().into()),
                 value,
             ),
             InstructionIterator::HasUnboundedSortedAttributeSingle(iter, _, _, _) => Self::counting_skip_to_sorted(
                 iter,
-                |res| res.map(|has| VariableValue::Thing(has.0.attribute().into())),
+                // |res| res.map(|has| VariableValue::Thing(has.0.attribute().into())),
+                |has| VariableValue::Thing(has.0.attribute().into()),
                 value,
             ),
             InstructionIterator::HasBoundedSortedAttribute(iter, _, _, _) => {
                 Self::counting_skip_to_sorted(
                     iter,
-                    |res| res.map(|has| VariableValue::Thing(has.0.attribute().clone().into())),
+                    // |res| res.map(|has| VariableValue::Thing(has.0.attribute().clone().into())),
+                    |has| VariableValue::Thing(has.0.attribute().clone().into()),
                     value,
                 )
             }
@@ -403,21 +412,23 @@ impl InstructionIterator {
             }
             (VariableMode::UnboundSelect, VariableMode::UnboundCount) => {
                 let target = answer_row.get(has.owner()).next_possible();
-                let (_, count) = Self::counting_skip_to_sorted(
+                let (count, _) = Self::counting_skip_to_sorted(
                     iterator,
-                    |res| res.map(|(has, _)| VariableValue::Thing(has.owner().into())),
+                    // |res| res.map(|(has, _)| VariableValue::Thing(has.owner().into())),
+                    |(has, _)| VariableValue::Thing(has.owner().into()),
                     &target,
-                )?.unwrap();
+                )?;
                 Ok(count)
             }
             (VariableMode::UnboundSelect, VariableMode::UnboundCheck) => {
                 let target = answer_row.get(has.owner()).next_possible();
                 // TODO: replace with seek()
-                let (_, count) = Self::counting_skip_to_sorted(
+                let (count, _) = Self::counting_skip_to_sorted(
                     iterator,
-                    |res| res.map(|(has, _)| VariableValue::Thing(has.owner().into())),
+                    // | res| res.map(|(has, _)| VariableValue::Thing(has.owner().into())),
+                    |(has, _)| VariableValue::Thing(has.owner().into()),
                     &target,
-                )?.unwrap();
+                )?;
                 Ok(1)
             }
             (VariableMode::UnboundCount, VariableMode::UnboundSelect) => {
@@ -435,9 +446,10 @@ impl InstructionIterator {
                 // TODO: replace with seek()
                 while Self::counting_skip_to_sorted(
                     iterator,
-                    |res| res.map(|(has, _)| VariableValue::Thing(has.owner().into())),
+                    // |res| res.map(|(has, _)| VariableValue::Thing(has.owner().into())),
+                    |(has, _)| VariableValue::Thing(has.owner().into()),
                     &target,
-                )?.is_some() {
+                )?.1.is_some() {
                     count += 1;
                     // TODO: incorporate has count
                     let (has, count) = iterator.peek().unwrap().as_ref().unwrap();

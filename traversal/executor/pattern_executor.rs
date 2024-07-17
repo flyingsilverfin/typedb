@@ -470,17 +470,17 @@ impl SortedJoinExecutor {
                         // TODO: use seek()
                         let current_max = &mut containing_max[max_index].peek_sorted_value().unwrap().unwrap();
                         let iter_i = &mut containing_i[i_index];
-                        let skip_result = iter_i.counting_skip_to_sorted_value(current_max)?;
+                        let (_, skip_result) = iter_i.counting_skip_to_sorted_value(current_max)?;
                         match skip_result {
                             None => {
                                 failed = true;
                                 break;
                             }
-                            Some((Ordering::Less, _)) => {
+                            Some(Ordering::Less) => {
                                 unreachable!("Skip to should always be empty or equal/greater than the target")
                             }
-                            Some((Ordering::Equal, _)) => {}
-                            Some((Ordering::Greater, _)) => {
+                            Some(Ordering::Equal ) => {}
+                            Some(Ordering::Greater) => {
                                 current_max_index = i;
                                 retry = true;
                             }
@@ -631,8 +631,8 @@ impl CartesianIterator {
                     None => self.reopen_iterator(snapshot, thing_manager, &iterator_executors[index])?,
                     Some(mut iter) => {
                         // TODO: use seek()
-                        let skip_result = iter.counting_skip_to_sorted_value(intersection)?;
-                        debug_assert!(skip_result.is_some() && skip_result.unwrap().0.is_eq());
+                        let (_, skip_result) = iter.counting_skip_to_sorted_value(intersection)?;
+                        debug_assert!(skip_result.is_some() && skip_result.unwrap().is_eq());
                         iter
                     }
                 };

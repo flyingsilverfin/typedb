@@ -19,6 +19,7 @@ use concept::type_::TypeAPI;
 use encoding::AsBytes;
 use encoding::graph::type_::vertex::TypeVertex;
 use encoding::value::value::Value;
+use crate::variable_value::Referencable;
 
 pub mod answer_map;
 pub mod variable;
@@ -131,6 +132,14 @@ pub enum Thing<'a> {
     Entity(Entity<'a>),
     Relation(Relation<'a>),
     Attribute(Attribute<'a>),
+}
+
+impl<'a> Referencable for Thing<'a> {
+    type SelfType<'b> = Thing<'b>;
+
+    fn as_reference(&self) -> Self::SelfType<'_> {
+        todo!()
+    }
 }
 
 impl<'a> Thing<'a> {
