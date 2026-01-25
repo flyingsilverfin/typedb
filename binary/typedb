@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+# TypeDB global variables
+[[ $(readlink -f $0) ]] && path=$(readlink -f $0) || path=$0
+TYPEDB_HOME=$(cd "$(dirname "${path}")" && pwd -P)
+
+
+if [ -d "${TYPEDB_HOME}/console" ]; then
+  CONSOLE_EXISTS=1
+fi
+
+# ================================================
+# common helper functions
+# ================================================
+
+print_usage() {
+    echo "  Server:          typedb server [--help]"
+    if [[ $CONSOLE_EXISTS ]]; then
+      echo "  Console:         typedb console [--help]"
+    fi
+}
+
+# =============================================
+# main routine
+# =============================================
+
+
+case "$1" in
+    console)
+        if [[ ! $CONSOLE_EXISTS ]]; then
+            echo "TypeDB console was not included in this distribution. Please download it separately."
+            exit 1
+        fi
+        # exec replaces current shell process so no commands after this one will ever get executed
+        TYPEDB_CONSOLE_BIN="${TYPEDB_HOME}/console/typedb_console_bin"
+        exec ${TYPEDB_CONSOLE_BIN} "${@:2}"
+        ;;
+
+    server)
+        # exec replaces current shell process so no commands after these ones will ever get executed
+        TYPEDB_SERVER_BIN="${TYPEDB_HOME}/server/typedb_server_bin"
+        exec ${TYPEDB_SERVER_BIN} "${@:2}"
+        ;;
+
+    "")
+        echo "Missing argument. Possible commands are:"
+        print_usage
+        exit 1
+        ;;
+    *)
+        echo "Invalid argument: $1. Possible commands are: "
+        print_usage
+        exit 1
+        ;;
+    esac
+fi

@@ -1,0 +1,24 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+define
+    attribute name value string;
+    attribute uuid value string;
+    attribute hash value string;
+
+    entity user,
+        owns uuid @unique @card(1),
+        owns name @unique @card(1),
+        plays user-credentials:user;
+
+    entity credentials,
+        owns uuid @card(1),
+        plays user-credentials:credentials;
+
+    entity password, sub credentials,
+        owns hash @card(1);
+
+    relation user-credentials,
+        relates user @card(1),
+        relates credentials @card(1..);

@@ -1,0 +1,91 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+load("@typedb_dependencies//tool/checkstyle:rules.bzl", "checkstyle_test")
+load("@rules_rust//rust:defs.bzl", "rust_test", "rust_binary", "rustfmt_test")
+package(default_visibility = ["//visibility:public",])
+
+# To run this via Bazel, Criterion must be provided the --bench argument:
+#   bazel run --compilation_mode=opt //query/benches:bench_insert_queries -- --bench
+rust_test(
+    name = "bench_insert_queries",
+    srcs = glob([
+        "bench_insert_queries.rs",
+    ]),
+    deps = [
+        "//answer",
+        "//common/lending_iterator",
+        "//compiler",
+        "//concept",
+        "//durability",
+        "//encoding",
+        "//executor",
+        "//function",
+        "//ir",
+        "//query",
+        "//resource",
+        "//storage",
+
+        "//concept/tests:test_utils_concept",
+        "//encoding/tests:test_utils_encoding",
+        "//util/test:test_utils",
+
+        "@typeql//rust:typeql",
+
+        "@crates//:criterion",
+        "@crates//:rand",
+        "@crates//:pprof",
+    ],
+    use_libtest_harness = False,
+)
+
+# To run this via Bazel, Criterion must be provided the --bench argument:
+#   bazel run --compilation_mode=opt //executor/benches:bench_insert_queries -- --bench
+rust_test(
+    name = "bench_insert_queries_multithreaded",
+    srcs = glob([
+        "bench_insert_queries_multithreaded.rs",
+        "common.rs",
+    ]),
+    deps = [
+        "//answer",
+        "//common/lending_iterator",
+        "//compiler",
+        "//concept",
+        "//durability",
+        "//encoding",
+        "//executor",
+        "//function",
+        "//ir",
+        "//query",
+        "//resource",
+        "//storage",
+        "//util/test:test_utils",
+        "//concept/tests:test_utils_concept",
+        "//encoding/tests:test_utils_encoding",
+
+
+        "@typeql//rust:typeql",
+
+        "@crates//:criterion",
+        "@crates//:rand",
+        "@crates//:pprof",
+    ],
+    use_libtest_harness = False,
+)
+
+rustfmt_test(
+    name = "rustfmt_test",
+    targets = [
+        ":bench_insert_queries",
+        ":bench_insert_queries_multithreaded",
+    ],
+    size = "small",
+)
+
+checkstyle_test(
+    name = "checkstyle",
+    include = glob(["*", "*/*", "*/*/*"]),
+    license_type = "mpl-header",
+)

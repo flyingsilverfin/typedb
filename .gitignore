@@ -1,56 +1,65 @@
-# Mac files #
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+# Mac
 .DS_Store
 
-# IDE files #
+# Bazel
+bazel-*
+.bazel-remote-cache.rc
+.bazel-cache-credential.json
+
+# IDE
 .idea/
 *.iml
+*.ipr
+*.iws
 *.geany
+.ijwb/
 
-# VS Code #
+# VS Code
 .vscode/
 .settings/
 .project
 .classpath
 
-# Compiled files #
+# Compiled
+dist/
 out/
-target/
 *.class
+target
 
-# Mobile Tools for Java (J2ME)
-.mtj.tmp/
-
-# Package Files #
-*.jar
+# Package
+*.jarg
 *.war
 *.ear
 
-# Debug files #
+# Gradle
+.gradle/
+
+# Debug
 dep.tree
 
-# Databases #
+# Databases
 db/
 
-# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
+# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml #
 hs_err_pid*
 
-# Log files #
+# Log
 logs/
+*.log
 
-# Analytics files #
-grakn-test/db/
-grakn-test/output/
-grakn-test/*.txt
+# VIM swap
+*.swp
+*.swo
 
-# Sample Date Files #
-grakn-test/test-biomed/data/*
+# Python cache
+__pycache__
 
-# Benchmark Files #
-grakn-test/test-integration/benchmarks/
-
-# Integration Test Files #
-grakn-package
-hadoop
-parameters_bi.log
-parameters_interactive.log
-social_network
+# AI tools
+.aider*
+.clinerules
+.qodo
+memory-bank

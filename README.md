@@ -1,70 +1,256 @@
-![GRAKN.AI](https://grakn.ai/img/Grakn%20logo%20-%20transparent.png)
+[![TypeDB](./docs/banner.png)](https://typedb.com/introduction)
 
----
-[![GitHub release](https://img.shields.io/github/release/graknlabs/grakn.svg)](https://github.com/graknlabs/grakn/releases/latest)
-[![Build Status](https://travis-ci.org/graknlabs/grakn.svg?branch=internal)](https://travis-ci.org/graknlabs/grakn)
-[![Coverage Status](https://codecov.io/gh/graknlabs/grakn/branch/master/graph/badge.svg)](https://codecov.io/gh/graknlabs/grakn)
-[![Javadocs](https://javadoc.io/badge/ai.grakn/grakn.svg)](https://javadoc.io/doc/ai.grakn/grakn)
-[![Slack Status](http://grakn-slackin.herokuapp.com/badge.svg)](https://grakn.ai/slack)
-[![Stack Overflow][stackoverflow-shield]][stackoverflow-link]
-[![Download count](http://shields.grakn.ai/github/downloads/graknlabs/grakn/total.svg)](https://grakn.ai/download)
----
-[![Static Bugs](https://sonarcloud.io/api/project_badges/measure?project=ai.grakn%3Agrakn&metric=bugs)](https://sonarcloud.io/dashboard?id=ai.grakn%3Agrakn)
-[![Code Smells](https://sonarcloud.io/api/project_badges/measure?project=ai.grakn%3Agrakn&metric=code_smells)](https://sonarcloud.io/dashboard?id=ai.grakn%3Agrakn)
-[![Duplicated Code](https://sonarcloud.io/api/project_badges/measure?project=ai.grakn%3Agrakn&metric=duplicated_lines_density)](https://sonarcloud.io/dashboard?id=ai.grakn%3Agrakn)
+[![Factory](https://factory.vaticle.com/api/status/typedb/typedb/badge.svg)](https://factory.vaticle.com/typedb/typedb)
+[![CircleCI](https://circleci.com/gh/typedb/typedb/tree/master.svg?style=shield)](https://circleci.com/gh/typedb/typedb/tree/master)
+[![GitHub release](https://img.shields.io/github/release/typedb/typedb.svg)](https://github.com/typedb/typedb/releases/latest)
+[![Discord](https://img.shields.io/discord/665254494820368395?color=7389D8&label=discord&logo=discord&logoColor=ffffff)](https://typedb.com/discord)
+[![Discussion Forum](https://img.shields.io/badge/discourse-forum-blue.svg)](https://forum.typedb.com)
+[![Hosted By: Cloudsmith](https://img.shields.io/badge/OSS%20hosting%20by-cloudsmith-blue?logo=cloudsmith&style=flat)](https://cloudsmith.com)
 
-[stackoverflow-shield]: https://img.shields.io/badge/stackoverflow-grakn-blue.svg
-[stackoverflow-link]: https://stackoverflow.com/questions/tagged/grakn
+# Introducing TypeDB
 
-Grakn is the knowledge graph engine to organise complex networks of data and making it queryable.
+**TypeDB** is a next-gen database with a modern programming paradigm that lets you build data applications faster, safer, and more elegantly. Its intuitive and powerful data model unifies the strengths of relational, document and graph databases without their shortcomings. **TypeQL**, its groundbreaking query language, is declarative, functional, and strongly-typed, drastically simplifying data handling and logic. So now, even the most nested and interconnected datasets can be managed with ease. With TypeDB, we’ve reinvented the database for the modern programming era.
 
-| Get Started | Documentation | Discussion | _Join the Academy!_ |
-|:------------|:--------------|:-----------|:---------------------|
-| Whether you are new to programming or an experienced developer, it’s easy to learn and use Grakn. Get set up quickly with [quickstart tutorial](https://dev.grakn.ai/docs/get-started/quickstart-tutorial). | Documentation for Grakn’s development library and Graql language API, along with tutorials and guides, are available online. Visit our [documentation portal](https://dev.grakn.ai/). | When you’re stuck on a problem, collaborating helps. Ask your question on [StackOverflow](https://stackoverflow.com/questions/tagged/graql+or+grakn) or discuss it in our [Discussion Forum](https://discuss.grakn.ai/). | _Learn everything from the basic foundations to advanced topics of knowledge engineering and be an expert. Join [Grakn Academy](https://dev.grakn.ai/academy)._|
+## Getting started
 
-# Meet Grakn and Graql
+- [Deploy TypeDB](https://cloud.typedb.com) in the Cloud. Or, [download and install](https://typedb.com/docs/home/install/ce) TypeDB Community Edition.
+- Explore the basics of TypeDB in our [Get Started Guide](https://typedb.com/docs/home/get-started/overview)
+- Master TypeDB concepts with the [TypeDB Concepts docs](https://typedb.com/docs/core-concepts/typedb/overview) and [TypeQL Concepts docs](https://typedb.com/docs/core-concepts/typeql/)
+- Discover more of TypeDB’s unique [Features](https://typedb.com/features).
+- Find further articles and lectures in our [Learning Center](https://typedb.com/learn).
+- Stay updated with the latest TypeDB news by [subscribing to the TypeDB newsletter](https://typedb.com/?dialog=newsletter).
+- Join our vibrant developer community over on our [Discord](https://typedb.com/discord) chat server.
 
-Grakn is the knowledge graph engine to organise complex networks of data and making it queryable, by performing [knowledge engineering](https://en.wikipedia.org/wiki/Knowledge_engineering). Rooted in [Knowledge Representation and Automated Reasoning](https://en.wikipedia.org/wiki/Knowledge_representation_and_reasoning), Grakn provides the [knowledge foundation](https://en.wikipedia.org/wiki/Knowledge_base) for cognitive and intelligent (e.g. AI) systems, by providing an intelligent language for modelling, transactions and analytics. Being a distributed database, Grakn is designed to scale over a network of computers through partitioning and replication.
+##  Why TypeDB?
 
-Under the hood, Grakn has built an expressive knowledge representation system based on [hypergraph theory](https://en.wikipedia.org/wiki/Hypergraph) (a subfield in mathematics that generalises an edge to be a set of vertices) with a transactional query interface, Graql. Graql is Grakn’s reasoning (through OLTP) and analytics (through OLAP) declarative query language. 
+* TypeDB was crafted to natively express and combine diverse data features, allowing users to build advanced data models from a set of simple and intuitive building blocks.
+* TypeDB's type system provides safety and flexibility at the same time, which makes both prototyping and building performant, production-ready data applications fast, elegant, and _enjoyable_.
+* With TypeDB, and its query language TypeQL, we envision databases catching up with modern typed programming languages, allowing users to write clear, intuitive, and easy to maintain code.
+* TypeDB comes with a mature ecosystem including language drivers and a graphical user interface: **[TypeDB Studio!](studio.typedb.com)**
 
-## Knowledge Schema
+## Database Fundamentals
 
-Grakn provides an enhanced [entity-relationship](https://en.wikipedia.org/wiki/Entity–relationship_model) schema to model complex datasets. The schema allows users to model type hierarchies, hyper-entities, hyper-relationships and rules. The schema can be updated and extended at any time in the database lifecycle. Hyper-entities are entities with multiple instances of a given attribute, and hyper-relationships are nested relationships, cardinality-restricted relationships, or relationships between any number of entities. This enables the creation of complex knowledge models that can evolve flexibly.
+### The schema
 
-## Logical Inference
+TypeDB schemas are based on a modern type system that natively supports inheritance and interfaces, and follows a [conceptual data modeling](https://typedb.com/docs/core-concepts/typeql/entities-relations-attributes) approach, in which user-defined types subtype (based on their function) three root types: entities, relations, and attributes.
 
-Grakn’s query language performs logical inference through [deductive reasoning](https://en.wikipedia.org/wiki/Deductive_reasoning) of entity types and relationships, to infer implicit facts, associations and conclusions in real-time, during runtime of OLTP queries. The inference is performed through entity and relationship type reasoning, as well as rule-based reasoning. This allows the discovery of facts that would otherwise be too hard to find, the abstraction of complex relationships into its simpler conclusion, as well as translation of higher level queries into the lower level and more complex data representation.
+- *Entities* are independent objects,
+- *Relations* depend on their *role* interfaces played by either entities or relations,
+- *Attributes* are properties with a value that can be *owned* by entities or relations.
 
-## Distributed Analytics
+Interface and inheritance for these types can be combined in many ways, resulting in highly expressive ways of modeling data.
 
-Grakn’s query language performs distributed [Pregel](https://kowshik.github.io/JPregel/pregel_paper.pdf) and [MapReduce](https://en.wikipedia.org/wiki/MapReduce) ([BSP](https://en.wikipedia.org/wiki/Bulk_synchronous_parallel)) algorithms abstracted as OLAP queries. These types of queries usually require custom development of distributed algorithms for every use case. However, Grakn creates an abstraction of these distributed algorithms and incorporates them as part of the language API. This enables large scale computation of BSP algorithms through a declarative language without the need of implementing the algorithms.
+```typeql
+define
 
-## Higher-Level Language
+attribute full-name, value string;
+attribute id, value string;
+attribute email, sub id;
+attribute employee-id, sub id;
 
-With the expressivity of the schema, inference through OLTP and distributed algorithms through OLAP, Grakn provides strong abstraction over low-level data constructs and complicated relationships through its query language. The language provides a higher-level schema, OLTP, and OLAP query language, that makes working with complex data a lot easier. When developers can achieve more by writing less code, productivity rate increases by orders of magnitude.
+entity user,
+    owns full-name,
+    owns email @unique,
+    plays mentorship:trainee;
+entity employee,
+    owns employee-id @key,
+    plays mentorship:mentor;
 
-## System Requirements
-
-- Unix-based Operating Systems (Linux and Mac OSX)
-- Java 8 (OpenJDK or Oracle Java) with the $JAVA_HOME set accordingly
-
-**This repo uses submodules**, so clone using:
+relation mentorship,
+    relates mentor,
+    relates trainee;
 ```
-$ git clone --recurse-submodules https://github.com/graknlabs/grakn.git
-```
-Or if you have already cloned:
-```
-$ git submodule update --init --recursive
+
+### The query language
+
+The query language of TypeDB is [TypeQL](https://typedb.com/docs/core-concepts/typeql/). The syntax of TypeQL is fully variablizable and provides native support for polymorphic queries. The language is based on [fully declarative and composable](https://typedb.com/features#modern-language) patterns, mirroring the structure of natural language.
+
+```typeql
+match $user isa user,
+    has full-name $name,
+    has email $email;
+# This returns all users of any type
+
+match $user isa employee,
+    has full-name $name,
+    has email $email,
+    has employee-id $id;
+# This returns only users who are employees
+
+match $user-type sub user;
+$user isa $user-type,
+    has full-name $name,
+    has email $email;
+# This returns all users and their type
 ```
 
-Then you can build Grakn using Maven:
-```
-$ mvn package -DskipTests
-```
+### Functions
+
+Functions, a new concept in TypeDB 3.0 and a cornerstone of TypeQL's query model, are like modularizable subqueries you can re-use and invoke whenever you want. You can learn more about them from the [TypeQL Functions Documentation](https://typedb.com/docs/core-concepts/typeql/queries-as-functions).
+
+## Effective database engineering
+
+TypeDB breaks down the patchwork of existing database paradigms into three fundamental ingredients: [types](https://typedb.com/features#strong-type-system), [inheritance](https://typedb.com/features#conceptual-modeling), and [interfaces](https://typedb.com/features#polymorphic-queries). This provides a unified way of working with data across all database applications, that directly impacts development:
+
+- Make use of full [object model parity](https://typedb.com/#solve-object-relational-mismatch-entirely-within-the-database) when working with OOP
+- Ensure [continuous extensibility](https://typedb.com/features#conceptual-modeling) of your data model
+- Work with high-level [logical abstractions](https://typedb.com/features#conceptual-modeling) eliminating the need for physical data modeling
+- Write high-clarity code with TypeQL's [near-natural](https://typedb.com/features#modern-language) queries even for the most complex databases
+- Unleash the power of [fully declarative and composable](https://typedb.com/features#modern-language) patterns onto your data
+
+## Installation and editions
+
+### TypeDB editions
+
+* [TypeDB Cloud](https://cloud.typedb.com) — multi-cloud DBaaS
+* [TypeDB Enterprise](mailto://enterprise@typedb.com) — allows you to deploy TypeDB Cloud in your own environment
+* **TypeDB Community Edition (CE)** — Open-source edition of TypeDB ← _This repository_
+
+For a comparison of all three editions, see the [Deploy](https://typedb.com/deploy) page on our website.
+
+### Download and run TypeDB CE
+
+You can download TypeDB from the [GitHub Releases](https://github.com/typedb/typedb/releases). 
+
+Or check our [Installation documentation](https://typedb.com/docs/home/install/ce).
+
+### Compiling TypeDB CE from source using Bazel
+
+> Note: You DO NOT NEED to compile TypeDB from the source if you just want to use TypeDB. See the _"Download and Run 
+> TypeDB CE"_ section above.
+
+1. Make sure you have the following dependencies installed on your machine:
+   - [Bazel via Bazelisk](https://bazel.build/install).
+
+2. You can build TypeDB server with TypeDB Console included with this command:
+
+   ```sh
+   $ bazel build //:assemble-typedb-all
+   ```
+
+   or either one of the following commands, depending on the targeted architecture and operating system:
+   
+      ```sh
+      $ bazel build //:assemble-all-mac-x86_64-zip
+      $ bazel build //:assemble-all-mac-arm64-zip
+      $ bazel build //:assemble-all-linux-x86_64-targz
+      $ bazel build //:assemble-all-linux-arm64-targz
+      $ bazel build //:assemble-all-windows-x86_64-zip
+      ```
+   
+   To build only TypeDB server, use for your corresponding platform:
+   
+      ```sh
+      $ bazel build //:assemble-server-mac-x86_64-zip
+      $ bazel build //:assemble-server-mac-arm64-zip
+      $ bazel build //:assemble-server-linux-x86_64-targz
+      $ bazel build //:assemble-server-linux-arm64-targz
+      $ bazel build //:assemble-server-windows-x86_64-zip
+      ```
+   
+   The commands above output to: `bazel-bin/`.
+
+3. If you're on a Mac and would like to run any `bazel test` commands, you will need to install:
+   - snappy: `brew install snappy`
+   - jemalloc: `brew install jemalloc`
+
+### Compiling TypeDB CE from source using Cargo
+
+**For macs:**
+
+Install prerequisites:
+1. Rustup
+2. `brew install protoc`
+
+## Resources
+
+### Developer resources
+
+- Documentation: https://typedb.com/docs
+- Discussion Forum: https://forum.typedb.com/
+- Discord Chat Server: https://typedb.com/discord
+- Community Projects: https://github.com/typedb-osi
+
+### Useful links
+
+If you want to begin your journey with TypeDB, you can explore the following resources:
+
+* More on TypeDB's [features](https://typedb.com/features)
+* In-depth dive into TypeDB's [philosophy](https://typedb.com/philosophy)
+* [TypeDB Get Started Guide](https://typedb.com/docs/home/get-started/overview) 
+* [TypeDB Academy](https://typedb.com/docs/academy)
+* **[TypeQL](https://github.com/typedb/typeql)**
+* **[TypeDB Studio](https://github.com/typedb/typedb-studio)**
+
+## Contributions
+
+TypeDB and TypeQL are built using various open-source frameworks and technologies throughout its evolution. 
+Today TypeDB and TypeQL use
+[RocksDB](https://rocksdb.org),
+[Rust](https://www.rust-lang.org/),
+[pest](https://pest.rs/),
+[Bazel](https://bazel.build),
+[gRPC](https://grpc.io),
+and [ZeroMQ](https://zeromq.org).
+
+Thank you!
+
+In the past, TypeDB was enabled by various open-source products and communities that we are hugely thankful to:
+[Speedb](https://www.speedb.io/),
+[ANTLR](https://www.antlr.org),
+[Apache Cassandra](http://cassandra.apache.org), 
+[Apache Hadoop](https://hadoop.apache.org), 
+[Apache Spark](http://spark.apache.org), 
+[Apache TinkerPop](http://tinkerpop.apache.org),
+[Caffeine](https://github.com/ben-manes/caffeine),
+[JanusGraph](http://janusgraph.org),
+and [SCIP](https://www.scipopt.org).
+
+### Package hosting
+Package repository hosting is graciously provided by [Cloudsmith](https://cloudsmith.com).
+Cloudsmith is the only fully hosted, cloud-native, universal package management solution, that
+enables your organization to create, store and share packages in any format, to any place, with total
+confidence.
 
 ## Licensing
 
-This product includes software developed by [Grakn Labs Ltd](https://grakn.ai/).  It's released under the GNU Affero GENERAL PUBLIC LICENSE, Version 3, 29 June 2007. For license information, please see [LICENSE.txt](https://github.com/graknlabs/grakn/blob/master/LICENSE.txt). Grakn Labs Ltd also provides a commercial license for Grakn Enterprise KGMS - get in touch with our team at enterprise@grakn.ai.
+It's released under the Mozilla Public License 2.0 (MPL 2.0).
+For license information, please see [LICENSE](https://github.com/typedb/typedb/blob/master/LICENSE).
 
-Copyright (C) 2016-2017  Grakn Labs Limited.
+## Hello World
+
+Get started with TypeDB in minutes:
+
+```bash
+# Start TypeDB server
+typedb server
+
+# In another terminal, connect with TypeDB Console
+typedb console
+
+# Create a database
+> database create hello-world
+
+# Connect to the database
+> transaction hello-world schema write
+
+# Define a simple schema
+> define
+  entity person,
+    owns name;
+  attribute name, value string;
+
+# Commit the schema
+> commit
+
+# Insert data
+> transaction hello-world data write
+> insert $p isa person, has name "World";
+> commit
+
+# Query the data
+> transaction hello-world data read
+> match $p isa person, has name $n; get $n;
+```
+
+For more detailed tutorials and guides, visit the [TypeDB Documentation](https://typedb.com/docs). 
