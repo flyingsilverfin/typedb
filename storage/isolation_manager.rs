@@ -20,7 +20,6 @@ use std::{
 };
 
 use durability::DurabilityRecordType;
-use kv::write_batches::WriteBatches;
 use logger::result::ResultExt;
 use primitive::maybe_owns::MaybeOwns;
 use resource::constants::storage::TIMELINE_WINDOW_SIZE;
@@ -33,7 +32,6 @@ use crate::{
     },
     sequence_number::SequenceNumber,
     snapshot::{buffer::OperationsBuffer, lock::LockType, write::Write},
-    FromOperationsBuffer,
 };
 
 #[derive(Debug)]
@@ -112,13 +110,7 @@ impl IsolationManager {
         }
         match isolation_conflict {
             Some(conflict) => Ok(ValidatedCommit::Conflict(conflict)),
-            None => {
-                let commit_record = match window.get_status(sequence_number) {
-                    CommitStatus::Validated(commit_record) | CommitStatus::Applied(commit_record) => commit_record,
-                    _ => panic!("get_commit_record called on uncommitted record"), // TODO: Do we want to be able to apply on pending?
-                };
-                Ok(ValidatedCommit::Write(WriteBatches::from_operations(sequence_number, commit_record.operations())))
-            }
+            None => Ok(ValidatedCommit::Write(CommitRecordRef { window, sequence_number })),
         }
     }
 
@@ -239,6 +231,10 @@ impl IsolationManager {
         ))
     }
 
+    pub(crate) fn get_window(&self, sequence_number: SequenceNumber) -> Arc<TimelineWindow<TIMELINE_WINDOW_SIZE>> {
+        self.timeline.try_get_window(sequence_number).expect("expected window to exist")
+    }
+
     pub(crate) fn watermark(&self) -> SequenceNumber {
         self.timeline.watermark()
     }
@@ -254,7 +250,26 @@ impl IsolationManager {
 
 pub(crate) enum ValidatedCommit {
     Conflict(IsolationConflict),
-    Write(WriteBatches),
+    Write(CommitRecordRef),
+}
+
+pub(crate) struct CommitRecordRef {
+    window: Arc<TimelineWindow<TIMELINE_WINDOW_SIZE>>,
+    sequence_number: SequenceNumber,
+}
+
+impl CommitRecordRef {
+    pub(crate) fn new(window: Arc<TimelineWindow<TIMELINE_WINDOW_SIZE>>, sequence_number: SequenceNumber) -> Self {
+        Self { window, sequence_number }
+    }
+
+    pub(crate) fn sequence_number(&self) -> SequenceNumber {
+        self.sequence_number
+    }
+
+    pub(crate) fn commit_record(&self) -> &CommitRecord {
+        self.window.get_commit_record(self.sequence_number)
+    }
 }
 
 fn resolve_concurrent(
@@ -526,7 +541,7 @@ impl Drop for ReaderDropGuard {
 }
 
 #[derive(Debug)]
-struct TimelineWindow<const SIZE: usize> {
+pub(crate) struct TimelineWindow<const SIZE: usize> {
     start: SequenceNumber,
     slot_status: [AtomicU8; SIZE],
     commit_records: [OnceLock<CommitRecord>; SIZE],
@@ -569,6 +584,11 @@ impl<const SIZE: usize> TimelineWindow<SIZE> {
     fn set_applied(&self, sequence_number: SequenceNumber) {
         let index = sequence_number - self.start;
         self.slot_status[index].store(SlotMarker::Applied.as_u8(), Ordering::SeqCst);
+    }
+
+    fn get_commit_record(&self, sequence_number: SequenceNumber) -> &CommitRecord {
+        let index = sequence_number - self.start;
+        self.commit_records[index].get().expect("get_commit_record called on empty slot")
     }
 
     fn get_status(&self, sequence_number: SequenceNumber) -> CommitStatus<'_> {
@@ -737,7 +757,9 @@ impl CommitRecord {
 
         let locks = self.operations().locks();
         let predecessor_locks = predecessor.operations().locks();
-        for (write_buffer, pred_write_buffer) in self.operations().write_buffers().zip(predecessor.operations()) {
+        for ((_keyspace, write_buffer), pred_write_buffer) in
+            self.operations().write_buffers().zip(predecessor.operations())
+        {
             let writes = write_buffer.writes();
             let predecessor_writes = pred_write_buffer.writes();
 

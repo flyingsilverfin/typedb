@@ -16,7 +16,7 @@ use error::typedb_error;
 use itertools::Itertools;
 use kv::{
     keyspaces::{KeyspaceSet, Keyspaces, KeyspacesError},
-    KVStore,
+    KVBackend, KVStore,
 };
 use same_file::is_same_file;
 use tracing::trace;
@@ -137,6 +137,7 @@ impl Checkpoint {
         &self,
         keyspaces_dir: &Path,
         durability_client: &Durability,
+        kv_backend: KVBackend,
     ) -> Result<(Keyspaces, SequenceNumber), CheckpointLoadError> {
         use CheckpointLoadError::{CheckpointRestore, CommitRecoveryFailed, KeyspacesOpen};
 
@@ -148,8 +149,8 @@ impl Checkpoint {
                 .map_err(|error| CheckpointRestore { dir: self.directory.clone(), source: Arc::new(error) })?;
         }
 
-        let keyspaces =
-            KVStore::open_keyspaces::<KS>(keyspaces_dir).map_err(|error| KeyspacesOpen { typedb_source: error })?;
+        let keyspaces = KVStore::open_keyspaces::<KS>(keyspaces_dir, kv_backend)
+            .map_err(|error| KeyspacesOpen { typedb_source: error })?;
 
         trace!("Finished recovering keyspaces, recovering missing commits");
 

@@ -24,7 +24,6 @@ use iterator::MVCCReadError;
 use kv::{
     iterator::KVRangeIterator,
     keyspaces::{KeyspaceId, KeyspaceSet, Keyspaces, KeyspacesError},
-    write_batches::{KVWriteBatch, WriteBatches},
     KVStore,
 };
 use lending_iterator::LendingIterator;
@@ -61,10 +60,14 @@ pub mod recovery;
 pub mod sequence_number;
 pub mod snapshot;
 
+pub use kv::KVBackend;
+use resource::constants::storage::MVCC_KEY_INLINE_SIZE;
+
 #[derive(Debug)]
 pub struct MVCCStorage<Durability> {
     name: Arc<String>,
     path: PathBuf,
+    kv_backend: KVBackend,
     keyspaces: Keyspaces,
     durability_client: Durability,
     isolation_manager: IsolationManager,
@@ -77,6 +80,7 @@ impl<Durability> MVCCStorage<Durability> {
         name: impl AsRef<str>,
         path: &Path,
         mut durability_client: Durability,
+        kv_backend: KVBackend,
     ) -> Result<Self, StorageOpenError>
     where
         Durability: DurabilityClient,
@@ -91,12 +95,13 @@ impl<Durability> MVCCStorage<Durability> {
             source: Arc::new(error),
         })?;
         Self::register_durability_record_types(&mut durability_client);
-        let keyspaces = Self::create_keyspaces::<KS>(name.as_ref(), &storage_dir)?;
+        let keyspaces = Self::create_keyspaces::<KS>(name.as_ref(), &storage_dir, kv_backend)?;
 
         let isolation_manager = IsolationManager::new(durability_client.current());
         Ok(Self {
             name: Arc::new(name.as_ref().to_owned()),
             path: storage_dir,
+            kv_backend,
             durability_client,
             keyspaces,
             isolation_manager,
@@ -106,8 +111,9 @@ impl<Durability> MVCCStorage<Durability> {
     fn create_keyspaces<KS: KeyspaceSet>(
         name: impl AsRef<str>,
         storage_dir: &Path,
+        kv_backend: KVBackend,
     ) -> Result<Keyspaces, StorageOpenError> {
-        let keyspaces = KVStore::open_keyspaces::<KS>(&storage_dir)
+        let keyspaces = KVStore::open_keyspaces::<KS>(storage_dir, kv_backend)
             .map_err(|err| StorageOpenError::KeyspaceOpen { name: name.as_ref().to_owned(), typedb_source: err })?;
         Ok(keyspaces)
     }
@@ -117,6 +123,7 @@ impl<Durability> MVCCStorage<Durability> {
         path: &Path,
         mut durability_client: Durability,
         checkpoint: &Option<Checkpoint>,
+        kv_backend: KVBackend,
     ) -> Result<Self, StorageOpenError>
     where
         Durability: DurabilityClient,
@@ -133,7 +140,7 @@ impl<Durability> MVCCStorage<Durability> {
                     .map_err(|err| StorageDirectoryRecreate { name: name.to_owned(), source: Arc::new(err) })?;
                 fs::create_dir_all(&storage_dir)
                     .map_err(|err| StorageDirectoryRecreate { name: name.to_owned(), source: Arc::new(err) })?;
-                let keyspaces = Self::create_keyspaces::<KS>(name, &storage_dir)?;
+                let keyspaces = Self::create_keyspaces::<KS>(name, &storage_dir, kv_backend)?;
                 trace!("No checkpoint found, loading from WAL");
                 let commits = load_commit_data_from(SequenceNumber::MIN.next(), &durability_client, usize::MAX)
                     .map_err(|err| RecoverFromDurability { name: name.to_owned(), typedb_source: err })?;
@@ -144,12 +151,19 @@ impl<Durability> MVCCStorage<Durability> {
                 (keyspaces, next_sequence_number)
             }
             Some(checkpoint) => checkpoint
-                .recover_storage::<KS, _>(&storage_dir, &durability_client)
+                .recover_storage::<KS, _>(&storage_dir, &durability_client, kv_backend)
                 .map_err(|error| RecoverFromCheckpoint { name: name.to_owned(), typedb_source: error })?,
         };
 
         let isolation_manager = IsolationManager::new(next_sequence_number);
-        Ok(Self { name: Arc::new(name.to_owned()), path: storage_dir, durability_client, keyspaces, isolation_manager })
+        Ok(Self {
+            name: Arc::new(name.to_owned()),
+            path: storage_dir,
+            kv_backend,
+            durability_client,
+            keyspaces,
+            isolation_manager,
+        })
     }
 
     fn register_durability_record_types(durability_client: &mut impl DurabilityClient) {
@@ -248,13 +262,12 @@ impl<Durability> MVCCStorage<Durability> {
         commit_profile.snapshot_isolation_validated();
 
         match validate_result {
-            Ok(ValidatedCommit::Write(write_batches)) => {
+            Ok(ValidatedCommit::Write(ops_ref)) => {
                 sync_notifier.recv().unwrap(); // Ensure WAL is persisted before inserting to the KV store
                                                // Write to the k-v store
                 commit_profile.snapshot_durable_write_data_confirmed();
 
-                self.keyspaces
-                    .write(write_batches)
+                keyspaces_write(&self.keyspaces, ops_ref.sequence_number(), ops_ref.commit_record().operations())
                     .map_err(|error| Keyspace { name: self.name.clone(), typedb_source: Arc::new(error) })?;
                 commit_profile.snapshot_storage_written();
 
@@ -480,6 +493,28 @@ impl<Durability> MVCCStorage<Durability> {
     }
 }
 
+pub(crate) fn keyspaces_write(
+    keyspaces: &Keyspaces,
+    seq: SequenceNumber,
+    operations: &OperationsBuffer,
+) -> Result<(), KeyspacesError> {
+    for (keyspace_id, buffer) in operations.write_buffers() {
+        let writes = buffer.writes();
+        if writes.is_empty() {
+            continue;
+        }
+        let kv_writes = writes
+            .iter()
+            .flat_map(|(key, write)| write.to_key_value(key, seq))
+            .map(|(mvcc_key, value)| (mvcc_key.into_bytes(), value));
+        keyspaces
+            .get(keyspace_id)
+            .write(kv_writes)
+            .map_err(|e| KeyspacesError::KVStoreError { typedb_source: e.into() })?;
+    }
+    Ok(())
+}
+
 typedb_error! {
     pub StorageOpenError(component = "Storage open", prefix = "STO") {
         StorageDirectoryExists(1, "Failed to open database '{name}' in directory '{path:?}'", name: String, path: PathBuf),
@@ -528,18 +563,15 @@ typedb_error! {
 
 /// MVCC keys are made of three parts: the [KEY][SEQ][OP]
 pub struct MVCCKey<'bytes> {
-    bytes: Bytes<'bytes, MVCC_KEY_INLINE_SIZE>,
+    bytes: Bytes<'bytes, { MVCC_KEY_INLINE_SIZE }>,
 }
-
-// byte array inline size can be adjusted to avoid allocation since these key are often short-lived
-const MVCC_KEY_INLINE_SIZE: usize = 128;
 
 impl<'bytes> MVCCKey<'bytes> {
     const OPERATION_START_NEGATIVE_OFFSET: usize = StorageOperation::serialised_len();
     const SEQUENCE_NUMBER_START_NEGATIVE_OFFSET: usize =
         Self::OPERATION_START_NEGATIVE_OFFSET + SequenceNumber::serialised_len();
 
-    fn build(key: &[u8], sequence_number: SequenceNumber, storage_operation: StorageOperation) -> Self {
+    pub(crate) fn build(key: &[u8], sequence_number: SequenceNumber, storage_operation: StorageOperation) -> Self {
         let length = key.len() + SequenceNumber::serialised_len() + StorageOperation::serialised_len();
         let mut byte_array = ByteArray::zeros(length);
         let bytes = &mut *byte_array;
@@ -563,8 +595,12 @@ impl<'bytes> MVCCKey<'bytes> {
         self.sequence_number() <= sequence_number
     }
 
-    fn bytes(&self) -> &[u8] {
+    pub(crate) fn bytes(&self) -> &[u8] {
         &self.bytes
+    }
+
+    pub(crate) fn into_bytes(self) -> Bytes<'bytes, MVCC_KEY_INLINE_SIZE> {
+        self.bytes
     }
 
     fn length(&self) -> usize {
@@ -596,7 +632,7 @@ impl<'bytes> MVCCKey<'bytes> {
     }
 }
 
-enum StorageOperation {
+pub(crate) enum StorageOperation {
     Insert,
     Delete,
 }
@@ -626,9 +662,14 @@ impl StorageOperation {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::Ordering;
+
     use bytes::byte_array::ByteArray;
     use durability::wal::WAL;
-    use kv::write_batches::WriteBatches;
+    use kv::{
+        keyspaces::{KeyspaceId, KeyspacesError},
+        KVBackend, KVStore,
+    };
     use resource::profile::StorageCounters;
     use test_utils::{create_tmp_dir, init_logging};
 
@@ -636,8 +677,8 @@ mod tests {
         durability_client::{DurabilityClient, WALClient},
         isolation_manager::{CommitRecord, CommitType},
         key_value::StorageKeyArray,
-        snapshot::buffer::OperationsBuffer,
-        MVCCStorage,
+        snapshot::{buffer::OperationsBuffer, write::Write},
+        MVCCKey, MVCCStorage, StorageOperation,
     };
 
     macro_rules! test_keyspace_set {
@@ -661,9 +702,6 @@ mod tests {
 
     #[test]
     fn test_recovery_from_partial_write() {
-        use kv::KVStore;
-
-        use crate::FromOperationsBuffer;
         test_keyspace_set! {
             PersistedKeyspace => 0: "write",
             FailedKeyspace => 1: "failed",
@@ -690,12 +728,21 @@ mod tests {
                 .sequenced_write(&CommitRecord::new(full_operations, durability_client.previous(), CommitType::Data))
                 .unwrap();
 
-            let partial_commit = WriteBatches::from_operations(seq, &partial_operations);
+            // Simulate a partial write: only write keyspace 0's data
             let keyspaces = KVStore::open_keyspaces::<TestKeyspaceSet>(
                 storage_path.join(MVCCStorage::<WALClient>::STORAGE_DIR_NAME).as_path(),
+                KVBackend::RocksDB,
             )
             .unwrap();
-            keyspaces.write(partial_commit).unwrap();
+            for (keyspace_id, buffer) in partial_operations.write_buffers() {
+                let kv_writes = buffer
+                    .writes()
+                    .iter()
+                    .map(|(key, write)| write.to_key_value(key, seq))
+                    .flatten()
+                    .map(|(mvcc_key, value)| (mvcc_key.into_bytes(), value));
+                keyspaces.get(keyspace_id).write(kv_writes).unwrap()
+            }
 
             /* CRASH */
 
@@ -704,42 +751,14 @@ mod tests {
 
         let mut durability_client = WALClient::new(WAL::load(storage_path.join(WAL::WAL_DIR_NAME)).unwrap());
         durability_client.register_record_type::<CommitRecord>();
-        let storage =
-            MVCCStorage::<WALClient>::load::<TestKeyspaceSet>("storage", &storage_path, durability_client, &None)
-                .unwrap();
+        let storage = MVCCStorage::<WALClient>::load::<TestKeyspaceSet>(
+            "storage",
+            &storage_path,
+            durability_client,
+            &None,
+            KVBackend::RocksDB,
+        )
+        .unwrap();
         assert_eq!(storage.get::<0>(&key_2, seq, StorageCounters::DISABLED).unwrap().unwrap(), ByteArray::empty());
-    }
-}
-
-pub(crate) trait FromOperationsBuffer {
-    fn from_operations(seq: SequenceNumber, operations: &OperationsBuffer) -> WriteBatches;
-}
-
-impl FromOperationsBuffer for WriteBatches {
-    fn from_operations(seq: SequenceNumber, operations: &OperationsBuffer) -> Self {
-        let mut write_batches = Self::default();
-
-        for (index, buffer) in operations.write_buffers().enumerate() {
-            let writes = buffer.writes();
-            if !writes.is_empty() {
-                let write_batch = write_batches.batches[index].insert(KVWriteBatch::default());
-                for (key, write) in writes {
-                    match write {
-                        Write::Insert { value } => {
-                            write_batch.put(MVCCKey::build(key, seq, StorageOperation::Insert).bytes(), value)
-                        }
-                        Write::Put { value, reinsert, .. } => {
-                            if reinsert.load(Ordering::SeqCst) {
-                                write_batch.put(MVCCKey::build(key, seq, StorageOperation::Insert).bytes(), value)
-                            }
-                        }
-                        Write::Delete => {
-                            write_batch.put(MVCCKey::build(key, seq, StorageOperation::Delete).bytes(), [])
-                        }
-                    }
-                }
-            }
-        }
-        write_batches
     }
 }

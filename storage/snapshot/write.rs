@@ -16,6 +16,8 @@ use bytes::byte_array::ByteArray;
 use resource::constants::snapshot::BUFFER_VALUE_INLINE;
 use serde::{Deserialize, Serialize};
 
+use crate::{sequence_number::SequenceNumber, MVCCKey, StorageOperation};
+
 #[derive(Serialize, Deserialize, Clone)]
 pub enum Write {
     // Insert KeyValue with a new version. Never conflicts. May represent a brand new key or re-inserting an existing key blindly
@@ -24,6 +26,22 @@ pub enum Write {
     Put { value: ByteArray<BUFFER_VALUE_INLINE>, reinsert: Arc<AtomicBool>, known_to_exist: bool },
     // Delete with a new version. Conflicts with Require.
     Delete,
+}
+
+impl Write {
+    pub(crate) fn to_key_value(&self, key: &[u8], seq: SequenceNumber) -> Option<(MVCCKey<'_>, &[u8])> {
+        match self {
+            Write::Insert { value } => Some((MVCCKey::build(key, seq, StorageOperation::Insert), value)),
+            Write::Put { value, reinsert, .. } => {
+                if reinsert.load(Ordering::SeqCst) {
+                    Some((MVCCKey::build(key, seq, StorageOperation::Insert), value))
+                } else {
+                    None
+                }
+            }
+            Write::Delete => Some((MVCCKey::build(key, seq, StorageOperation::Delete), &[])),
+        }
+    }
 }
 
 impl fmt::Debug for Write {

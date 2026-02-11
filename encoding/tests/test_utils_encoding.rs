@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use durability::wal::WAL;
 use encoding::EncodingKeyspace;
+use kv::KVBackend;
 use storage::{durability_client::WALClient, MVCCStorage};
 use test_utils::{create_tmp_dir, init_logging, TempDir};
 
@@ -15,7 +16,9 @@ pub fn create_core_storage() -> (TempDir, Arc<MVCCStorage<WALClient>>) {
     init_logging();
     let storage_path = create_tmp_dir();
     let wal = WAL::create(&storage_path).unwrap();
-    let storage =
-        Arc::new(MVCCStorage::create::<EncodingKeyspace>("db_storage", &storage_path, WALClient::new(wal)).unwrap());
+    let storage = Arc::new(
+        MVCCStorage::create::<EncodingKeyspace>("db_storage", &storage_path, WALClient::new(wal), KVBackend::RocksDB)
+            .unwrap(),
+    );
     (storage_path, storage)
 }

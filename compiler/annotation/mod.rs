@@ -233,7 +233,7 @@ pub mod tests {
         },
         EncodingKeyspace,
     };
-    use storage::{durability_client::WALClient, MVCCStorage};
+    use storage::{durability_client::WALClient, KVBackend, MVCCStorage};
     use test_utils::{create_tmp_dir, init_logging, TempDir};
 
     use crate::annotation::match_inference::{
@@ -275,8 +275,13 @@ pub mod tests {
         let storage_path = create_tmp_dir();
         let wal = WAL::create(&storage_path).unwrap();
         let storage = Arc::new(
-            MVCCStorage::<WALClient>::create::<EncodingKeyspace>("storage", &storage_path, WALClient::new(wal))
-                .unwrap(),
+            MVCCStorage::<WALClient>::create::<EncodingKeyspace>(
+                "storage",
+                &storage_path,
+                WALClient::new(wal),
+                KVBackend::RocksDB,
+            )
+            .unwrap(),
         );
         (storage_path, storage)
     }

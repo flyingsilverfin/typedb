@@ -100,7 +100,7 @@ mod typedb_database {
         durability_client::WALClient,
         key_value::StorageKeyArray,
         snapshot::{CommittableSnapshot, SnapshotError, WritableSnapshot, WriteSnapshot},
-        MVCCStorage, StorageOpenError,
+        KVBackend, MVCCStorage, StorageOpenError,
     };
     use test_utils::{create_tmp_dir, TempDir};
 
@@ -116,8 +116,12 @@ mod typedb_database {
             let name = "bench_rocks__typedb";
             let path = create_tmp_dir();
             let wal = WAL::create(&path).unwrap();
-            let storage =
-                Arc::new(MVCCStorage::<WALClient>::create::<BenchKeySpace>(name, &path, WALClient::new(wal))?);
+            let storage = Arc::new(MVCCStorage::<WALClient>::create::<BenchKeySpace>(
+                name,
+                &path,
+                WALClient::new(wal),
+                KVBackend::RocksDB,
+            )?);
             Ok(Self { path, storage })
         }
     }

@@ -5,10 +5,10 @@
  */
 pub mod iterator;
 pub mod keyspaces;
+pub mod memory;
 pub mod rocks;
-pub mod write_batches;
 
-use std::path::Path;
+use std::{borrow::Borrow, path::Path};
 
 use bytes::Bytes;
 use error::TypeDBError;
@@ -18,35 +18,51 @@ use resource::profile::StorageCounters;
 use crate::{
     iterator::KVRangeIterator,
     keyspaces::{KeyspaceSet, Keyspaces, KeyspacesError},
+    memory::InMemoryKVStore,
     rocks::RocksKVStore,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KVBackend {
+    RocksDB,
+    InMemory,
+}
 
 #[derive(Debug)]
 pub enum KVStore {
     RocksDB(RocksKVStore),
+    InMemory(InMemoryKVStore),
 }
 
 impl KVStore {
-    pub fn open_keyspaces<KS: KeyspaceSet>(storage_dir: &Path) -> Result<Keyspaces, KeyspacesError> {
-        // TODO: here we have to pick the storage type? Or is it above?
-        RocksKVStore::open_keyspaces::<KS>(storage_dir)
+    pub fn open_keyspaces<KS: KeyspaceSet>(
+        storage_dir: &Path,
+        backend: KVBackend,
+    ) -> Result<Keyspaces, KeyspacesError> {
+        match backend {
+            KVBackend::RocksDB => RocksKVStore::open_keyspaces::<KS>(storage_dir),
+            KVBackend::InMemory => InMemoryKVStore::open_keyspaces::<KS>(),
+        }
     }
 
     pub fn id(&self) -> KVStoreID {
         match self {
             Self::RocksDB(s) => s.id(),
+            Self::InMemory(s) => s.id(),
         }
     }
 
     pub fn name(&self) -> &'static str {
         match self {
             Self::RocksDB(s) => s.name(),
+            Self::InMemory(s) => s.name(),
         }
     }
 
     pub fn put(&self, key: &[u8], value: &[u8]) -> Result<(), Box<dyn TypeDBError>> {
         match self {
             Self::RocksDB(s) => s.put(key, value),
+            Self::InMemory(s) => s.put(key, value),
         }
     }
 
@@ -56,6 +72,7 @@ impl KVStore {
     {
         match self {
             Self::RocksDB(s) => s.get(key, mapper),
+            Self::InMemory(s) => s.get(key, mapper),
         }
     }
 
@@ -65,6 +82,7 @@ impl KVStore {
     {
         match self {
             Self::RocksDB(s) => s.get_prev(key, mapper),
+            Self::InMemory(s) => s.get_prev(key, mapper),
         }
     }
 
@@ -75,42 +93,53 @@ impl KVStore {
     ) -> KVRangeIterator {
         match self {
             Self::RocksDB(s) => KVRangeIterator::RocksDB(s.iterate_range(range, storage_counters)),
+            Self::InMemory(s) => KVRangeIterator::InMemory(s.iterate_range(range, storage_counters)),
         }
     }
 
-    pub fn write(&self, write_batch: write_batches::KVWriteBatch) -> Result<(), Box<dyn TypeDBError>> {
-        match (self, write_batch) {
-            (Self::RocksDB(s), write_batches::KVWriteBatch::RocksDB(b)) => s.write(b),
+    pub fn write<K, V>(&self, kv_iterator: impl Iterator<Item = (K, V)>) -> Result<(), Box<dyn TypeDBError>>
+    where
+        K: Borrow<[u8]>,
+        V: Borrow<[u8]>,
+    {
+        match self {
+            Self::RocksDB(s) => s.write(kv_iterator),
+            Self::InMemory(s) => s.write(kv_iterator),
         }
     }
 
     pub fn checkpoint(&self, checkpoint_dir: &Path) -> Result<(), Box<dyn TypeDBError>> {
         match self {
             Self::RocksDB(s) => s.checkpoint(checkpoint_dir),
+            Self::InMemory(s) => s.checkpoint(checkpoint_dir),
         }
     }
 
     pub fn delete(self) -> Result<(), Box<dyn TypeDBError>> {
         match self {
             Self::RocksDB(s) => s.delete(),
+            Self::InMemory(s) => s.delete(),
         }
     }
 
     pub fn reset(&mut self) -> Result<(), Box<dyn TypeDBError>> {
         match self {
             Self::RocksDB(s) => s.reset(),
+            Self::InMemory(s) => s.reset(),
         }
     }
 
     pub fn estimate_size_in_bytes(&self) -> Result<u64, Box<dyn TypeDBError>> {
         match self {
             Self::RocksDB(s) => s.estimate_size_in_bytes(),
+            Self::InMemory(s) => s.estimate_size_in_bytes(),
         }
     }
 
     pub fn estimate_key_count(&self) -> Result<u64, Box<dyn TypeDBError>> {
         match self {
             Self::RocksDB(s) => s.estimate_key_count(),
+            Self::InMemory(s) => s.estimate_key_count(),
         }
     }
 }

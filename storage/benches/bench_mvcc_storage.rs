@@ -122,6 +122,7 @@ fn setup_storage(storage_path: &Path, key_count: usize) -> Arc<MVCCStorage<WALCl
             "storage_bench",
             storage_path,
             WALClient::new(WAL::create(storage_path).unwrap()),
+            kv::KVBackend::RocksDB,
         )
         .unwrap(),
     );

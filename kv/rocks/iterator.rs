@@ -13,7 +13,7 @@ use resource::profile::StorageCounters;
 use rocksdb::DBRawIterator;
 
 use crate::{
-    iterator::ContinueCondition,
+    iterator::{accept_value, ContinueCondition},
     rocks::{pool::PoolRecycleGuard, RocksKVError, RocksKVStore},
 };
 
@@ -145,7 +145,7 @@ impl Seekable<[u8]> for RocksRangeIterator {
     }
 
     fn compare_key(&self, item: &Self::Item<'_>, key: &[u8]) -> Ordering {
-        compare_key(item, key)
+        crate::iterator::compare_key(item, key)
     }
 }
 
@@ -267,15 +267,6 @@ impl Seekable<[u8]> for DBIterator {
     }
 
     fn compare_key(&self, item: &Self::Item<'_>, key: &[u8]) -> Ordering {
-        compare_key(item, key)
-    }
-}
-
-pub(super) fn compare_key<E>(item: &Result<(&[u8], &[u8]), E>, key: &[u8]) -> Ordering {
-    if let Ok(item) = item {
-        let (peek, _) = item;
-        peek.cmp(&key)
-    } else {
-        Ordering::Equal
+        crate::iterator::compare_key(item, key)
     }
 }

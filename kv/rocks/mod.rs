@@ -8,6 +8,7 @@ mod iterpool;
 pub mod pool;
 
 use std::{
+    borrow::Borrow,
     fs, io,
     path::{Path, PathBuf},
     sync::Arc,
@@ -19,7 +20,7 @@ use primitive::key_range::KeyRange;
 use resource::{constants::storage::ROCKSDB_CACHE_SIZE_MB, profile::StorageCounters};
 use rocksdb::{
     checkpoint::Checkpoint, BlockBasedIndexType, BlockBasedOptions, Cache, DBCompressionType, IteratorMode, Options,
-    ReadOptions, SliceTransform, WriteBatch, WriteOptions, DB,
+    ReadOptions, SliceTransform, WriteOptions, DB,
 };
 
 use crate::{
@@ -198,7 +199,13 @@ impl RocksKVStore {
         RocksRangeIterator::new(self, range, storage_counters)
     }
 
-    pub fn write(&self, write_batch: WriteBatch) -> Result<(), Box<dyn TypeDBError>> {
+    pub fn write<K, V>(&self, kv_iterator: impl Iterator<Item = (K, V)>) -> Result<(), Box<dyn TypeDBError>>
+    where
+        K: Borrow<[u8]>,
+        V: Borrow<[u8]>,
+    {
+        let mut write_batch = rocksdb::WriteBatch::default();
+        kv_iterator.for_each(|(key, value)| write_batch.put(key.borrow(), value.borrow()));
         self.rocks
             .write_opt(write_batch, &self.write_options)
             .map_err(|error| RocksKVError::BatchWrite { name: self.name, source: error }.into())

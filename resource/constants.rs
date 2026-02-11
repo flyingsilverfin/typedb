@@ -133,6 +133,8 @@ pub mod storage {
     pub const COMMIT_WAIT_FOR_FSYNC: bool = true;
 
     pub const ROCKSDB_CACHE_SIZE_MB: u64 = 1024;
+
+    pub const MVCC_KEY_INLINE_SIZE: usize = 48;
 }
 
 pub mod encoding {

@@ -60,8 +60,8 @@ impl OperationsBuffer {
         &mut self.write_buffers[keyspace_id.0 as usize]
     }
 
-    pub(crate) fn write_buffers(&self) -> impl Iterator<Item = &WriteBuffer> {
-        self.write_buffers.iter()
+    pub(crate) fn write_buffers(&self) -> impl Iterator<Item = (KeyspaceId, &WriteBuffer)> {
+        self.write_buffers.iter().enumerate().map(|(index, buffer)| (KeyspaceId(index as u8), buffer))
     }
 
     pub(crate) fn lock_add(&mut self, key: ByteArray<BUFFER_KEY_INLINE>, lock_type: LockType) {
@@ -81,7 +81,7 @@ impl OperationsBuffer {
     }
 
     pub fn iterate_writes(&self) -> impl Iterator<Item = (StorageKeyArray<BUFFER_KEY_INLINE>, Write)> + '_ {
-        self.write_buffers().flat_map(|buffer| {
+        self.write_buffers().flat_map(|(_keyspace_id, buffer)| {
             buffer.iterate_range(KeyRange::new_unbounded(RangeStart::Inclusive(Bytes::Array(ByteArray::<
                 BUFFER_KEY_INLINE,
             >::empty()))))
@@ -96,7 +96,7 @@ impl OperationsBuffer {
     }
 
     pub(crate) fn len(&self) -> usize {
-        self.write_buffers().map(|w| w.writes().len()).sum()
+        self.write_buffers().map(|(_keyspace_id, buffer)| buffer.writes().len()).sum()
     }
 }
 

@@ -17,6 +17,7 @@ use encoding::{
     },
     EncodingKeyspace, Keyable,
 };
+use kv::KVBackend;
 use resource::constants::snapshot::BUFFER_KEY_INLINE;
 use storage::{durability_client::WALClient, key_value::StorageKey, snapshot::WriteSnapshot, MVCCStorage};
 use test_utils::{create_tmp_dir, init_logging};
@@ -42,7 +43,13 @@ fn criterion_benchmark(c: &mut Criterion) {
     let storage_path = create_tmp_dir();
     let wal = WAL::create(&storage_path).unwrap();
     let storage = Arc::new(
-        MVCCStorage::<WALClient>::create::<EncodingKeyspace>("storage", &storage_path, WALClient::new(wal)).unwrap(),
+        MVCCStorage::<WALClient>::create::<EncodingKeyspace>(
+            "storage",
+            &storage_path,
+            WALClient::new(wal),
+            KVBackend::RocksDB,
+        )
+        .unwrap(),
     );
 
     let type_id = TypeID::new(0);

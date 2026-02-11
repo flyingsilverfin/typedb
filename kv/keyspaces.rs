@@ -8,7 +8,7 @@ use std::{fmt, path::Path, sync::Arc};
 use error::{typedb_error, TypeDBError};
 use serde::{Deserialize, Serialize};
 
-use crate::{write_batches::WriteBatches, KVStore, KVStoreID};
+use crate::{KVStore, KVStoreID};
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct KeyspaceId(pub u8);
@@ -86,16 +86,6 @@ impl Keyspaces {
     pub fn get(&self, keyspace_id: KeyspaceId) -> &KVStore {
         let keyspace_index = self.index[keyspace_id.0 as usize].unwrap();
         &self.keyspaces[keyspace_index.0 as usize]
-    }
-
-    pub fn write(&self, write_batches: WriteBatches) -> Result<(), KeyspacesError> {
-        for (index, write_batch) in write_batches.into_iter() {
-            debug_assert!(index < KEYSPACE_MAXIMUM_COUNT);
-            self.get(KeyspaceId(index as u8))
-                .write(write_batch)
-                .map_err(|e| KeyspacesError::KVStoreError { typedb_source: e.into() })?;
-        }
-        Ok(())
     }
 
     pub fn checkpoint(&self, current_checkpoint_dir: &Path) -> Result<(), KeyspacesError> {
