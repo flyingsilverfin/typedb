@@ -7,6 +7,7 @@
 use std::{cmp::Ordering, collections::BTreeMap, ops::Bound};
 
 use bytes::{byte_array::ByteArray, util::increment, Bytes};
+use error::TypeDBError;
 use lending_iterator::{LendingIterator, Seekable};
 use primitive::key_range::{KeyRange, RangeEnd, RangeStart};
 use resource::{
@@ -16,7 +17,6 @@ use resource::{
 
 use crate::{
     iterator::{accept_value, ContinueCondition},
-    KVStoreError,
 };
 
 pub struct InMemoryRangeIterator {
@@ -77,7 +77,7 @@ impl InMemoryRangeIterator {
 
 impl LendingIterator for InMemoryRangeIterator {
     type Item<'a>
-        = Result<(&'a [u8], &'a [u8]), Box<dyn KVStoreError>>
+        = Result<(&'a [u8], &'a [u8]), Box<dyn TypeDBError>>
     where
         Self: 'a;
 
@@ -88,7 +88,7 @@ impl LendingIterator for InMemoryRangeIterator {
         }
 
         let (ref key, ref value) = self.data[self.position];
-        let result: Result<(&[u8], &[u8]), Box<dyn KVStoreError>> = Ok((&key[..], &value[..]));
+        let result: Result<(&[u8], &[u8]), Box<dyn TypeDBError>> = Ok((&key[..], &value[..]));
 
         if !accept_value(&self.continue_condition, &result) {
             self.is_finished = true;

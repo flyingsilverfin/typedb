@@ -151,7 +151,8 @@ impl ThingVertexGenerator {
         &self.large_value_hasher
     }
 
-    pub fn create_entity<Snapshot>(&self, type_id: TypeID, snapshot: &mut Snapshot) -> ObjectVertexwhere
+    pub fn create_entity<Snapshot>(&self, type_id: TypeID, snapshot: &mut Snapshot) -> ObjectVertex
+    where
         Snapshot: WritableSnapshot,
     {
         let entity_id = self.entity_ids[type_id.as_u16() as usize].fetch_add(1, Ordering::Relaxed);

@@ -13,7 +13,7 @@ use std::{
 };
 
 use bytes::{byte_array::ByteArray, Bytes};
-use error::typedb_error;
+use error::{typedb_error, TypeDBError};
 use primitive::key_range::KeyRange;
 use resource::{
     constants::snapshot::{BUFFER_KEY_INLINE, BUFFER_VALUE_INLINE},
@@ -23,7 +23,7 @@ use resource::{
 use crate::{
     keyspaces::{KeyspaceId, KeyspaceSet, Keyspaces, KeyspacesError},
     memory::iterator::InMemoryRangeIterator,
-    KVStore, KVStoreError, KVStoreID,
+    KVStore, KVStoreID,
 };
 
 pub struct InMemoryKVStore {
@@ -56,13 +56,13 @@ impl InMemoryKVStore {
         self.name
     }
 
-    pub fn put(&self, key: &[u8], value: &[u8]) -> Result<(), Box<dyn KVStoreError>> {
+    pub fn put(&self, key: &[u8], value: &[u8]) -> Result<(), Box<dyn TypeDBError>> {
         let mut data = self.data.write().unwrap();
         data.insert(ByteArray::copy(key), ByteArray::copy(value));
         Ok(())
     }
 
-    pub fn get<M, V>(&self, key: &[u8], mut mapper: M) -> Result<Option<V>, Box<dyn KVStoreError>>
+    pub fn get<M, V>(&self, key: &[u8], mut mapper: M) -> Result<Option<V>, Box<dyn TypeDBError>>
     where
         M: FnMut(&[u8]) -> V,
     {
@@ -86,7 +86,7 @@ impl InMemoryKVStore {
         InMemoryRangeIterator::new(&self.data.read().unwrap(), range, storage_counters)
     }
 
-    pub fn write<K, V>(&self, kv_iterator: impl Iterator<Item = (K, V)>) -> Result<(), Box<dyn KVStoreError>>
+    pub fn write<K, V>(&self, kv_iterator: impl Iterator<Item = (K, V)>) -> Result<(), Box<dyn TypeDBError>>
     where
         K: Borrow<[u8]>,
         V: Borrow<[u8]>,
@@ -98,27 +98,27 @@ impl InMemoryKVStore {
         Ok(())
     }
 
-    pub fn checkpoint(&self, _checkpoint_dir: &Path) -> Result<(), Box<dyn KVStoreError>> {
+    pub fn checkpoint(&self, _checkpoint_dir: &Path) -> Result<(), Box<dyn TypeDBError>> {
         Ok(())
     }
 
-    pub fn delete(self) -> Result<(), Box<dyn KVStoreError>> {
+    pub fn delete(self) -> Result<(), Box<dyn TypeDBError>> {
         Ok(())
     }
 
-    pub fn reset(&mut self) -> Result<(), Box<dyn KVStoreError>> {
+    pub fn reset(&mut self) -> Result<(), Box<dyn TypeDBError>> {
         let mut data = self.data.write().unwrap();
         data.clear();
         Ok(())
     }
 
-    pub fn estimate_size_in_bytes(&self) -> Result<u64, Box<dyn KVStoreError>> {
+    pub fn estimate_size_in_bytes(&self) -> Result<u64, Box<dyn TypeDBError>> {
         let data = self.data.read().unwrap();
         let total: u64 = data.iter().map(|(k, v)| (k.len() + v.len()) as u64).sum();
         Ok(total)
     }
 
-    pub fn estimate_key_count(&self) -> Result<u64, Box<dyn KVStoreError>> {
+    pub fn estimate_key_count(&self) -> Result<u64, Box<dyn TypeDBError>> {
         let data = self.data.read().unwrap();
         Ok(data.len() as u64)
     }
@@ -148,5 +148,3 @@ impl std::error::Error for InMemoryKVError {
         None
     }
 }
-
-impl KVStoreError for InMemoryKVError {}
