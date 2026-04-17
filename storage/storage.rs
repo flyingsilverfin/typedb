@@ -13,27 +13,21 @@ use std::{
     fs, io,
     path::{Path, PathBuf},
     sync::{
-        Arc,
         atomic::{AtomicU64, Ordering},
+        Arc,
     },
-    thread::sleep,
-    time::Duration,
+    time::Instant,
 };
 
 use ::error::typedb_error;
-use bytes::{Bytes, byte_array::ByteArray};
-use durability::DurabilitySequenceNumber;
-use fail_point::{
-    COMMIT_APPLIED_WITHOUT_PERSISTING_STATUS, COMMIT_DATA_UNSYNC_IN_WAL, COMMIT_REJECTED_WITHOUT_PERSISTING_STATUS,
-    STORAGE_DELETED_KEYSPACES_BUT_NOT_WAL, STORAGE_EMPTY_STORAGE_DIR, STORAGE_MISSING_STORAGE_DIR, fail_point,
-};
+use bytes::{byte_array::ByteArray, Bytes};
 use isolation_manager::IsolationConflict;
 use iterator::MVCCReadError;
 use keyspace::KeyspaceDeleteError;
 use lending_iterator::LendingIterator;
 use logger::{error, result::ResultExt};
 use resource::{
-    constants::{snapshot::BUFFER_VALUE_INLINE, storage::WATERMARK_WAIT_INTERVAL_MICROSECONDS},
+    constants::snapshot::BUFFER_VALUE_INLINE,
     profile::{CommitProfile, StorageCounters},
 };
 use tracing::trace;
@@ -41,24 +35,23 @@ use tracing::trace;
 use crate::{
     durability_client::{DurabilityClient, DurabilityClientError},
     error::{MVCCStorageError, MVCCStorageErrorKind},
-    isolation_manager::{IsolationManager, ValidatedCommit},
+    isolation_manager::{CommitRecord, IsolationManager, StatusRecord, ValidatedCommit},
     iterator::MVCCRangeIterator,
     key_range::KeyRange,
     key_value::{StorageKey, StorageKeyReference},
     keyspace::{
-        IteratorPool, Keyspace, KeyspaceError, KeyspaceId, KeyspaceOpenError, KeyspaceSet, Keyspaces,
-        iterator::KeyspaceRangeIterator,
+        iterator::KeyspaceRangeIterator, IteratorPool, Keyspace, KeyspaceError, KeyspaceId, KeyspaceOpenError,
+        KeyspaceSet, Keyspaces,
     },
-    record::{CommitRecord, LegacyCommitRecordV1, StatusRecord},
     recovery::{
-        checkpoint::{CheckpointCreateError, CheckpointLoadError, CheckpointReader, CheckpointWriter},
-        commit_recovery::{StorageRecoveryError, apply_recovered, load_commit_data_from},
+        checkpoint::{Checkpoint, CheckpointCreateError, CheckpointLoadError},
+        commit_recovery::{apply_recovered, load_commit_data_from, StorageRecoveryError},
     },
     sequence_number::SequenceNumber,
-    snapshot::{
-        CommittableSnapshot, ReadSnapshot, SchemaSnapshot, WriteSnapshot, snapshot_id::SnapshotId, write::Write,
-    },
+    snapshot::{write::Write, CommittableSnapshot, ReadSnapshot, SchemaSnapshot, WriteSnapshot},
 };
+
+pub use durability::wal::WAL_WRITE_PHASE_STATS;
 
 pub mod durability_client;
 pub mod error;
@@ -67,11 +60,94 @@ pub mod iterator;
 pub mod key_range;
 pub mod key_value;
 pub mod keyspace;
-pub mod record;
 pub mod recovery;
 pub mod sequence_number;
 pub mod snapshot;
 mod write_batches;
+
+// --- Commit phase instrumentation ---
+// Each field accumulates total nanoseconds across all commits. Read via
+// `commit_phase_stats_dump()` to produce a per-phase breakdown that helps
+// direct optimization work. Lives outside MVCCStorage so a single database's
+// stats are global (keeps the benchmark summary simple) and the atomic hits
+// are contention-free in practice at the thread counts we test.
+pub struct CommitPhaseStats {
+    count: AtomicU64,
+    put_status_ns: AtomicU64,
+    record_create_ns: AtomicU64,
+    wal_write_ns: AtomicU64,
+    isolation_ns: AtomicU64,
+    sync_wait_ns: AtomicU64,
+    storage_write_ns: AtomicU64,
+    applied_ns: AtomicU64,
+    status_write_ns: AtomicU64,
+}
+
+impl CommitPhaseStats {
+    #[allow(clippy::too_many_arguments)]
+    fn record(
+        &self,
+        put_status: std::time::Duration,
+        record_create: std::time::Duration,
+        wal_write: std::time::Duration,
+        isolation: std::time::Duration,
+        sync_wait: std::time::Duration,
+        storage_write: std::time::Duration,
+        applied: std::time::Duration,
+        status_write: std::time::Duration,
+    ) {
+        self.count.fetch_add(1, Ordering::Relaxed);
+        self.put_status_ns.fetch_add(put_status.as_nanos() as u64, Ordering::Relaxed);
+        self.record_create_ns.fetch_add(record_create.as_nanos() as u64, Ordering::Relaxed);
+        self.wal_write_ns.fetch_add(wal_write.as_nanos() as u64, Ordering::Relaxed);
+        self.isolation_ns.fetch_add(isolation.as_nanos() as u64, Ordering::Relaxed);
+        self.sync_wait_ns.fetch_add(sync_wait.as_nanos() as u64, Ordering::Relaxed);
+        self.storage_write_ns.fetch_add(storage_write.as_nanos() as u64, Ordering::Relaxed);
+        self.applied_ns.fetch_add(applied.as_nanos() as u64, Ordering::Relaxed);
+        self.status_write_ns.fetch_add(status_write.as_nanos() as u64, Ordering::Relaxed);
+    }
+
+    pub fn reset(&self) {
+        self.count.store(0, Ordering::Relaxed);
+        self.put_status_ns.store(0, Ordering::Relaxed);
+        self.record_create_ns.store(0, Ordering::Relaxed);
+        self.wal_write_ns.store(0, Ordering::Relaxed);
+        self.isolation_ns.store(0, Ordering::Relaxed);
+        self.sync_wait_ns.store(0, Ordering::Relaxed);
+        self.storage_write_ns.store(0, Ordering::Relaxed);
+        self.applied_ns.store(0, Ordering::Relaxed);
+        self.status_write_ns.store(0, Ordering::Relaxed);
+    }
+
+    pub fn dump(&self) -> String {
+        let n = self.count.load(Ordering::Relaxed).max(1);
+        let avg_us = |x: u64| (x / n) as f64 / 1000.0;
+        format!(
+            "  commits={} (avg per-tx us): put_status={:.1} record_create={:.1} wal_write={:.1} isolation={:.1} sync_wait={:.1} storage_write={:.1} applied={:.1} status_write={:.1}",
+            self.count.load(Ordering::Relaxed),
+            avg_us(self.put_status_ns.load(Ordering::Relaxed)),
+            avg_us(self.record_create_ns.load(Ordering::Relaxed)),
+            avg_us(self.wal_write_ns.load(Ordering::Relaxed)),
+            avg_us(self.isolation_ns.load(Ordering::Relaxed)),
+            avg_us(self.sync_wait_ns.load(Ordering::Relaxed)),
+            avg_us(self.storage_write_ns.load(Ordering::Relaxed)),
+            avg_us(self.applied_ns.load(Ordering::Relaxed)),
+            avg_us(self.status_write_ns.load(Ordering::Relaxed)),
+        )
+    }
+}
+
+pub static COMMIT_PHASE_STATS: CommitPhaseStats = CommitPhaseStats {
+    count: AtomicU64::new(0),
+    put_status_ns: AtomicU64::new(0),
+    record_create_ns: AtomicU64::new(0),
+    wal_write_ns: AtomicU64::new(0),
+    isolation_ns: AtomicU64::new(0),
+    sync_wait_ns: AtomicU64::new(0),
+    storage_write_ns: AtomicU64::new(0),
+    applied_ns: AtomicU64::new(0),
+    status_write_ns: AtomicU64::new(0),
+};
 
 #[derive(Debug)]
 pub struct MVCCStorage<Durability> {
@@ -80,7 +156,6 @@ pub struct MVCCStorage<Durability> {
     keyspaces: Keyspaces,
     durability_client: Durability,
     isolation_manager: IsolationManager,
-    highest_committed_snapshot: AtomicU64,
 }
 
 impl<Durability> MVCCStorage<Durability> {
@@ -103,19 +178,16 @@ impl<Durability> MVCCStorage<Durability> {
             name: name.as_ref().to_owned(),
             source: Arc::new(error),
         })?;
-        fail_point!(STORAGE_EMPTY_STORAGE_DIR);
         Self::register_durability_record_types(&mut durability_client);
         let keyspaces = Self::create_keyspaces::<KS>(name.as_ref(), &storage_dir)?;
 
-        let next_sequence_number = durability_client.current();
-        let isolation_manager = IsolationManager::new(next_sequence_number);
+        let isolation_manager = IsolationManager::new(durability_client.current());
         Ok(Self {
             name: Arc::new(name.as_ref().to_owned()),
             path: storage_dir,
             durability_client,
             keyspaces,
             isolation_manager,
-            highest_committed_snapshot: AtomicU64::new(next_sequence_number.number() - 1),
         })
     }
 
@@ -132,7 +204,7 @@ impl<Durability> MVCCStorage<Durability> {
         name: impl AsRef<str>,
         path: &Path,
         mut durability_client: Durability,
-        checkpoint: &Option<CheckpointReader>,
+        checkpoint: &Option<Checkpoint>,
     ) -> Result<Self, StorageOpenError>
     where
         Durability: DurabilityClient,
@@ -143,45 +215,32 @@ impl<Durability> MVCCStorage<Durability> {
         let storage_dir = path.join(Self::STORAGE_DIR_NAME);
 
         Self::register_durability_record_types(&mut durability_client);
-        let (keyspaces, next_sequence_number) = if let Some(checkpoint) = checkpoint {
-            checkpoint
-                .recover_storage::<KS, _>(name, &storage_dir, &durability_client)
-                .map_err(|error| RecoverFromCheckpoint { name: name.to_owned(), typedb_source: error })?
-        } else {
-            match fs::remove_dir_all(&storage_dir) {
-                Err(err) if err.kind() != io::ErrorKind::NotFound => {
-                    return Err(StorageDirectoryRecreate { name: name.to_owned(), source: Arc::new(err) });
-                }
-                _ => (),
+        let (keyspaces, next_sequence_number) = match checkpoint {
+            None => {
+                fs::remove_dir_all(&storage_dir)
+                    .map_err(|err| StorageDirectoryRecreate { name: name.to_owned(), source: Arc::new(err) })?;
+                fs::create_dir_all(&storage_dir)
+                    .map_err(|err| StorageDirectoryRecreate { name: name.to_owned(), source: Arc::new(err) })?;
+                let keyspaces = Self::create_keyspaces::<KS>(name, &storage_dir)?;
+                trace!("No checkpoint found, loading from WAL");
+                let commits = load_commit_data_from(SequenceNumber::MIN.next(), &durability_client, usize::MAX)
+                    .map_err(|err| RecoverFromDurability { name: name.to_owned(), typedb_source: err })?;
+                let next_sequence_number = commits.keys().max().cloned().unwrap_or(SequenceNumber::MIN).next();
+                apply_recovered(commits, &durability_client, &keyspaces)
+                    .map_err(|err| RecoverFromDurability { name: name.to_owned(), typedb_source: err })?;
+                trace!("Finished applying commits from WAL.");
+                (keyspaces, next_sequence_number)
             }
-            fail_point!(STORAGE_MISSING_STORAGE_DIR);
-            fs::create_dir_all(&storage_dir)
-                .map_err(|err| StorageDirectoryRecreate { name: name.to_owned(), source: Arc::new(err) })?;
-            fail_point!(STORAGE_EMPTY_STORAGE_DIR);
-            let keyspaces = Self::create_keyspaces::<KS>(name, &storage_dir)?;
-            trace!("No checkpoint found, loading from WAL");
-            let commits = load_commit_data_from(SequenceNumber::MIN.next(), &durability_client)
-                .map_err(|err| RecoverFromDurability { name: name.to_owned(), typedb_source: err })?;
-            let next_sequence_number = commits.keys().max().cloned().unwrap_or(SequenceNumber::MIN).next();
-            apply_recovered(name, commits, &durability_client, &keyspaces)
-                .map_err(|err| RecoverFromDurability { name: name.to_owned(), typedb_source: err })?;
-            trace!("Finished applying commits from WAL.");
-            (keyspaces, next_sequence_number)
+            Some(checkpoint) => checkpoint
+                .recover_storage::<KS, _>(&storage_dir, &durability_client)
+                .map_err(|error| RecoverFromCheckpoint { name: name.to_owned(), typedb_source: error })?,
         };
 
         let isolation_manager = IsolationManager::new(next_sequence_number);
-        Ok(Self {
-            name: Arc::new(name.to_owned()),
-            path: storage_dir,
-            durability_client,
-            keyspaces,
-            isolation_manager,
-            highest_committed_snapshot: AtomicU64::new(next_sequence_number.number() - 1),
-        })
+        Ok(Self { name: Arc::new(name.to_owned()), path: storage_dir, durability_client, keyspaces, isolation_manager })
     }
 
     fn register_durability_record_types(durability_client: &mut impl DurabilityClient) {
-        durability_client.register_record_type::<LegacyCommitRecordV1>();
         durability_client.register_record_type::<CommitRecord>();
         durability_client.register_record_type::<StatusRecord>();
     }
@@ -204,28 +263,20 @@ impl<Durability> MVCCStorage<Durability> {
 
     pub fn open_snapshot_write(self: Arc<Self>) -> WriteSnapshot<Durability> {
         // guarantee external consistency: we always await the latest snapshots to finish
-        let possible_sequence_number = self.highest_committed_snapshot();
+        let possible_sequence_number = self.isolation_manager.highest_validated_sequence_number();
         let open_sequence_number = self.wait_for_watermark(possible_sequence_number);
-        WriteSnapshot::new_with_open_sequence_number(self, open_sequence_number)
+        WriteSnapshot::new(self, open_sequence_number)
     }
 
     pub fn open_snapshot_write_at(self: Arc<Self>, sequence_number: SequenceNumber) -> WriteSnapshot<Durability> {
-        let current_watermark = self.snapshot_watermark();
-        if sequence_number < current_watermark {
-            // Opening a committable snapshot at a historical position is not supported.
-            // The commit idempotency check (commit_record_exists) relies
-            // on SnapshotIds to be unique for an open seqnum. With the current nature of
-            // SnapshotIds, opening a write snapshot in the past can lead to SnapshotId collisions.
-            todo!("Opening committable snapshots at historical positions is not supported");
-        }
         // guarantee external consistency: await this sequence number to be behind the watermark
         self.wait_for_watermark(sequence_number);
-        WriteSnapshot::new_with_open_sequence_number(self, sequence_number)
+        WriteSnapshot::new(self, sequence_number)
     }
 
     pub fn open_snapshot_read(self: Arc<Self>) -> ReadSnapshot<Durability> {
         // guarantee external consistency: we always await the latest snapshots to finish
-        let possible_sequence_number = self.highest_committed_snapshot();
+        let possible_sequence_number = self.isolation_manager.highest_validated_sequence_number();
         let open_sequence_number = self.wait_for_watermark(possible_sequence_number);
         ReadSnapshot::new(self, open_sequence_number)
     }
@@ -237,23 +288,20 @@ impl<Durability> MVCCStorage<Durability> {
 
     pub fn open_snapshot_schema(self: Arc<Self>) -> SchemaSnapshot<Durability> {
         // guarantee external consistency: we always await the latest snapshots to finish
-        let possible_sequence_number = self.highest_committed_snapshot();
+        let possible_sequence_number = self.isolation_manager.highest_validated_sequence_number();
         let open_sequence_number = self.wait_for_watermark(possible_sequence_number);
-        SchemaSnapshot::new_with_open_sequence_number(self, open_sequence_number)
+        SchemaSnapshot::new(self, open_sequence_number)
     }
 
     fn wait_for_watermark(&self, target: SequenceNumber) -> SequenceNumber {
-        // We can alternatively also block commits from returning until the watermark rises
         // See detailed analysis at https://github.com/typedb/typedb/pull/7254/
-        let mut watermark = self.snapshot_watermark();
-        while watermark < target {
-            sleep(Duration::from_micros(WATERMARK_WAIT_INTERVAL_MICROSECONDS));
-            watermark = self.snapshot_watermark();
-        }
-        watermark
+        // Parks on a condvar inside the timeline (woken by may_increment_watermark) instead
+        // of sleep-polling at WATERMARK_WAIT_INTERVAL_MICROSECONDS, which eliminates the
+        // per-open 50us tail and lets tx-open scale past 10 threads.
+        self.isolation_manager.wait_for_watermark(target)
     }
 
-    pub fn snapshot_commit(
+    fn snapshot_commit(
         &self,
         snapshot: impl CommittableSnapshot<Durability>,
         commit_profile: &mut CommitProfile,
@@ -263,12 +311,15 @@ impl<Durability> MVCCStorage<Durability> {
     {
         use StorageCommitError::{Durability, Internal, Keyspace, MVCCRead};
 
+        let t_start = Instant::now();
         self.set_initial_put_status(&snapshot, commit_profile.storage_counters())
             .map_err(|error| MVCCRead { name: self.name.clone(), source: error })?;
         commit_profile.snapshot_put_statuses_checked();
+        let t_put_status = Instant::now();
 
         let (reader_guard, commit_record) = snapshot.into_commit_record();
         commit_profile.snapshot_commit_record_created();
+        let t_record_create = Instant::now();
 
         commit_profile.commit_size(commit_record.operations().len());
 
@@ -277,44 +328,56 @@ impl<Durability> MVCCStorage<Durability> {
             .sequenced_write(&commit_record)
             .map_err(|error| Durability { name: self.name.clone(), typedb_source: error })?;
         commit_profile.snapshot_durable_write_data_submitted();
-
-        fail_point!(COMMIT_DATA_UNSYNC_IN_WAL);
+        let t_wal_write = Instant::now();
 
         let sync_notifier = self.durability_client.request_sync();
         let validate_result =
             self.isolation_manager.validate_commit(commit_sequence_number, commit_record, &self.durability_client);
         drop(reader_guard);
         commit_profile.snapshot_isolation_validated();
+        let t_isolation = Instant::now();
 
-        let result = match validate_result {
+        match validate_result {
             Ok(ValidatedCommit::Write(write_batches)) => {
                 sync_notifier.recv().unwrap(); // Ensure WAL is persisted before inserting to the KV store
-                // Write to the k-v store
+                                               // Write to the k-v store
                 commit_profile.snapshot_durable_write_data_confirmed();
+                let t_sync = Instant::now();
 
                 self.keyspaces
                     .write(write_batches)
                     .map_err(|error| Keyspace { name: self.name.clone(), source: Arc::new(error) })?;
                 commit_profile.snapshot_storage_written();
-
-                fail_point!(COMMIT_APPLIED_WITHOUT_PERSISTING_STATUS);
+                let t_storage = Instant::now();
 
                 // Inform the isolation manager and increment the watermark
                 self.isolation_manager
                     .applied(commit_sequence_number)
                     .map_err(|error| Internal { name: self.name.clone(), source: Arc::new(error) })?;
                 commit_profile.snapshot_isolation_manager_notified();
+                let t_applied = Instant::now();
 
                 Self::persist_commit_status(true, commit_sequence_number, &self.durability_client)
                     .map_err(|error| Durability { name: self.name.clone(), typedb_source: error })?;
                 commit_profile.snapshot_durable_write_commit_status_submitted();
+                let t_status = Instant::now();
+
+                COMMIT_PHASE_STATS.record(
+                    t_put_status - t_start,
+                    t_record_create - t_put_status,
+                    t_wal_write - t_record_create,
+                    t_isolation - t_wal_write,
+                    t_sync - t_isolation,
+                    t_storage - t_sync,
+                    t_applied - t_storage,
+                    t_status - t_applied,
+                );
+
                 Ok(commit_sequence_number)
             }
             Ok(ValidatedCommit::Conflict(conflict)) => {
                 sync_notifier.recv().unwrap();
                 commit_profile.snapshot_durable_write_data_confirmed();
-
-                fail_point!(COMMIT_REJECTED_WITHOUT_PERSISTING_STATUS);
 
                 Self::persist_commit_status(false, commit_sequence_number, &self.durability_client)
                     .map_err(|error| Durability { name: self.name.clone(), typedb_source: error })?;
@@ -326,10 +389,7 @@ impl<Durability> MVCCStorage<Durability> {
                 commit_profile.snapshot_durable_write_data_confirmed();
                 Err(Durability { name: self.name.clone(), typedb_source: error })
             }
-        };
-
-        self.update_highest_committed_snapshot(commit_sequence_number);
-        result
+        }
     }
 
     fn set_initial_put_status(
@@ -349,15 +409,14 @@ impl<Durability> MVCCStorage<Durability> {
             for (key, value, reinsert, known_to_exist) in puts {
                 let wrapped = StorageKeyReference::new_raw(buffer.keyspace_id, key);
                 if known_to_exist {
-                    debug_assert!(
-                        self.get::<0>(
+                    debug_assert!(self
+                        .get::<0>(
                             snapshot.iterator_pool(),
                             wrapped,
                             snapshot.open_sequence_number(),
                             storage_counters.clone()
                         )
-                        .is_ok_and(|opt| opt.is_some())
-                    );
+                        .is_ok_and(|opt| opt.is_some()));
                     reinsert.store(false, Ordering::Release);
                 } else {
                     let existing_stored = self
@@ -375,26 +434,6 @@ impl<Durability> MVCCStorage<Durability> {
         Ok(())
     }
 
-    // WARNING: this method scans the whole WAL starting from the snapshot_id's sequence number.
-    // WARNING: this method checks only the WAL, and records removed from the WAL will be missing.
-    pub fn commit_record_exists(
-        &self,
-        open_sequence_number: DurabilitySequenceNumber,
-        snapshot_id: SnapshotId,
-    ) -> Result<bool, DurabilityClientError>
-    where
-        Durability: DurabilityClient,
-    {
-        let mut iter = self.durability_client.iter_sequenced_type_from::<CommitRecord>(open_sequence_number)?;
-        while let Some(entry) = iter.next() {
-            let (_, iter_record) = entry?;
-            if iter_record.snapshot_id() == snapshot_id && iter_record.open_sequence_number() == open_sequence_number {
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    }
-
     fn persist_commit_status(
         did_apply: bool,
         commit_sequence_number: SequenceNumber,
@@ -403,7 +442,10 @@ impl<Durability> MVCCStorage<Durability> {
     where
         Durability: DurabilityClient,
     {
-        durability_client.unsequenced_write(&StatusRecord::new(commit_sequence_number, did_apply))?;
+        // E5: fire-and-forget. The CommitRecord is already fsynced and the
+        // storage apply has completed, so re-validation on crash recovery is
+        // idempotent — safe for the caller to see "success" before this lands.
+        durability_client.unsequenced_write_async(&StatusRecord::new(commit_sequence_number, did_apply))?;
         Ok(())
     }
 
@@ -411,7 +453,7 @@ impl<Durability> MVCCStorage<Durability> {
         self.keyspaces.get(keyspace_id)
     }
 
-    pub fn checkpoint(&self, checkpoint: &CheckpointWriter) -> Result<(), CheckpointCreateError> {
+    pub fn checkpoint(&self, checkpoint: &Checkpoint) -> Result<(), CheckpointCreateError> {
         checkpoint.add_storage(&self.keyspaces, self.snapshot_watermark())
     }
 
@@ -423,13 +465,9 @@ impl<Durability> MVCCStorage<Durability> {
 
         self.keyspaces.delete().map_err(|errs| KeyspaceDelete { name: self.name.clone(), errors: errs })?;
 
-        fail_point!(STORAGE_DELETED_KEYSPACES_BUT_NOT_WAL);
-
         self.durability_client
             .delete_durability()
             .map_err(|err| DurabilityDelete { name: self.name.clone(), typedb_source: err })?;
-
-        fail_point!(STORAGE_EMPTY_STORAGE_DIR);
 
         if self.path.exists() {
             std::fs::remove_dir_all(&self.path).map_err(|error| {
@@ -494,21 +532,12 @@ impl<Durability> MVCCStorage<Durability> {
         MVCCRangeIterator::new(self, iterpool, range, open_sequence_number, storage_counters)
     }
 
-    fn highest_committed_snapshot(&self) -> SequenceNumber {
-        SequenceNumber::new(self.highest_committed_snapshot.load(Ordering::SeqCst))
-    }
-
-    fn update_highest_committed_snapshot(&self, sequence_number: SequenceNumber) {
-        self.highest_committed_snapshot.fetch_max(sequence_number.number(), Ordering::SeqCst);
-    }
-
     pub fn snapshot_watermark(&self) -> SequenceNumber {
         self.isolation_manager.watermark()
     }
 
     // --- direct access to storage, bypassing MVCC and returning raw key/value pairs ---
 
-    #[cfg(debug_assertions)] // put_raw is only used in tests, this will make typedb fail to compile in release if it's used anywhere in the binary
     pub fn put_raw(&self, key: StorageKeyReference<'_>, value: &Bytes<'_, BUFFER_VALUE_INLINE>) {
         // TODO: writes should always have to go through a transaction? Otherwise we have to WAL right here in a different path
         self.keyspaces
@@ -734,18 +763,17 @@ impl StorageOperation {
 mod tests {
     use bytes::byte_array::ByteArray;
     use durability::wal::WAL;
-    use resource::profile::{CommitProfile, StorageCounters};
-    use test_utils::{create_tmp_storage_dir, init_logging};
+    use resource::profile::StorageCounters;
+    use test_utils::{create_tmp_dir, init_logging};
 
     use crate::{
-        Arc, MVCCStorage, SnapshotId,
         durability_client::{DurabilityClient, WALClient},
+        isolation_manager::{CommitRecord, CommitType},
         key_value::StorageKeyArray,
         keyspace::{IteratorPool, KeyspaceId, KeyspaceSet, Keyspaces},
-        record::{CommitRecord, CommitType, LegacyCommitRecordV1, StatusRecord},
-        sequence_number::SequenceNumber,
-        snapshot::{WriteSnapshot, buffer::OperationsBuffer},
+        snapshot::buffer::OperationsBuffer,
         write_batches::WriteBatches,
+        MVCCStorage,
     };
 
     macro_rules! test_keyspace_set {
@@ -768,14 +796,14 @@ mod tests {
     }
 
     #[test]
-    fn test_storage_recovery_from_partial_write() {
+    fn test_recovery_from_partial_write() {
         test_keyspace_set! {
             PersistedKeyspace => 0: "write",
             FailedKeyspace => 1: "failed",
         }
 
         init_logging();
-        let storage_path = create_tmp_storage_dir();
+        let storage_path = create_tmp_dir();
         let key_1 = StorageKeyArray::from((TestKeyspaceSet::PersistedKeyspace, b"hello"));
         let key_2 = StorageKeyArray::from((TestKeyspaceSet::FailedKeyspace, b"world"));
 
@@ -790,15 +818,9 @@ mod tests {
                 .insert(key_1.byte_array().clone(), ByteArray::empty());
 
             let mut durability_client = WALClient::new(WAL::create(storage_path.join(WAL::WAL_DIR_NAME)).unwrap());
-            durability_client.register_record_type::<LegacyCommitRecordV1>();
             durability_client.register_record_type::<CommitRecord>();
             let seq = durability_client
-                .sequenced_write(&CommitRecord::new(
-                    full_operations,
-                    durability_client.previous(),
-                    CommitType::Data,
-                    SnapshotId::new(),
-                ))
+                .sequenced_write(&CommitRecord::new(full_operations, durability_client.previous(), CommitType::Data))
                 .unwrap();
 
             let partial_commit = WriteBatches::from_operations(seq, &partial_operations);
@@ -813,7 +835,6 @@ mod tests {
         };
 
         let mut durability_client = WALClient::new(WAL::load(storage_path.join(WAL::WAL_DIR_NAME)).unwrap());
-        durability_client.register_record_type::<LegacyCommitRecordV1>();
         durability_client.register_record_type::<CommitRecord>();
         let storage =
             MVCCStorage::<WALClient>::load::<TestKeyspaceSet>("storage", &storage_path, durability_client, &None)
@@ -822,179 +843,5 @@ mod tests {
             storage.get::<0>(&IteratorPool::new(), &key_2, seq, StorageCounters::DISABLED).unwrap().unwrap(),
             ByteArray::empty()
         );
-    }
-
-    #[test]
-    fn test_storage_snapshot_id_search() {
-        test_keyspace_set! {
-            PersistedKeyspace => 0: "write",
-            FailedKeyspace => 1: "failed",
-        }
-
-        init_logging();
-        let mut profile = CommitProfile::DISABLED;
-
-        let storage_path = create_tmp_storage_dir();
-        let mut durability_client = WALClient::new(WAL::create(storage_path.join(WAL::WAL_DIR_NAME)).unwrap());
-        durability_client.register_record_type::<LegacyCommitRecordV1>();
-        durability_client.register_record_type::<CommitRecord>();
-        let storage = Arc::new(
-            MVCCStorage::<WALClient>::create::<TestKeyspaceSet>("storage", &storage_path, durability_client).unwrap(),
-        );
-
-        // Parallel snapshot commits with the same open seqnum
-
-        let key_1 = StorageKeyArray::from((TestKeyspaceSet::PersistedKeyspace, b"hello"));
-        let mut snapshot1_operations = OperationsBuffer::new();
-        snapshot1_operations.writes_in_mut(key_1.keyspace_id()).insert(key_1.byte_array().clone(), ByteArray::empty());
-        let commit_record1 = CommitRecord::new(
-            snapshot1_operations,
-            storage.durability_client.previous(),
-            CommitType::Data,
-            SnapshotId::new(),
-        );
-        let snapshot_id1 = commit_record1.snapshot_id();
-        let seqnum1 = commit_record1.open_sequence_number();
-
-        let key_2 = StorageKeyArray::from((TestKeyspaceSet::PersistedKeyspace, b"world"));
-        let mut snapshot2_operations = OperationsBuffer::new();
-        snapshot2_operations.writes_in_mut(key_2.keyspace_id()).insert(key_2.byte_array().clone(), ByteArray::empty());
-        let commit_record2 = CommitRecord::new(
-            snapshot2_operations,
-            storage.durability_client.previous(),
-            CommitType::Data,
-            SnapshotId::new(),
-        );
-        let snapshot_id2 = commit_record2.snapshot_id();
-        let seqnum2 = commit_record2.open_sequence_number();
-
-        assert!(!storage.commit_record_exists(seqnum1, snapshot_id1).unwrap());
-        assert!(!storage.commit_record_exists(seqnum2, snapshot_id2).unwrap());
-        storage
-            .snapshot_commit(WriteSnapshot::new_with_commit_record(storage.clone(), commit_record1), &mut profile)
-            .unwrap();
-        assert!(storage.commit_record_exists(seqnum1, snapshot_id1).unwrap());
-        assert!(!storage.commit_record_exists(seqnum2, snapshot_id2).unwrap());
-
-        storage
-            .snapshot_commit(WriteSnapshot::new_with_commit_record(storage.clone(), commit_record2), &mut profile)
-            .unwrap();
-        assert_eq!(seqnum1, seqnum2);
-        assert!(storage.commit_record_exists(seqnum1, snapshot_id1).unwrap());
-        assert!(storage.commit_record_exists(seqnum2, snapshot_id2).unwrap());
-
-        // New seqnum, new Snapshot id
-
-        let key_3 = StorageKeyArray::from((TestKeyspaceSet::PersistedKeyspace, b"!"));
-        let mut snapshot3_operations = OperationsBuffer::new();
-        snapshot3_operations.writes_in_mut(key_3.keyspace_id()).insert(key_3.byte_array().clone(), ByteArray::empty());
-        let commit_record3 = CommitRecord::new(
-            snapshot3_operations,
-            storage.durability_client.previous(),
-            CommitType::Schema,
-            SnapshotId::new(),
-        );
-        let snapshot_id3 = commit_record3.snapshot_id();
-        let seqnum3 = commit_record3.open_sequence_number();
-
-        assert!(storage.commit_record_exists(seqnum1, snapshot_id1).unwrap());
-        assert!(storage.commit_record_exists(seqnum2, snapshot_id2).unwrap());
-        assert!(!storage.commit_record_exists(seqnum3, snapshot_id3).unwrap());
-
-        storage
-            .snapshot_commit(WriteSnapshot::new_with_commit_record(storage.clone(), commit_record3), &mut profile)
-            .unwrap();
-        assert!(storage.commit_record_exists(seqnum1, snapshot_id1).unwrap());
-        assert!(storage.commit_record_exists(seqnum2, snapshot_id2).unwrap());
-        assert!(storage.commit_record_exists(seqnum3, snapshot_id3).unwrap());
-
-        // New seqnum, duplicated Snapshot id
-
-        let key_4 = StorageKeyArray::from((TestKeyspaceSet::PersistedKeyspace, b"!!"));
-        let mut snapshot4_operations = OperationsBuffer::new();
-        snapshot4_operations.writes_in_mut(key_4.keyspace_id()).insert(key_4.byte_array().clone(), ByteArray::empty());
-        let commit_record4 = CommitRecord::new(
-            snapshot4_operations,
-            storage.durability_client.previous(),
-            CommitType::Schema,
-            snapshot_id2,
-        );
-        let snapshot_id4 = commit_record4.snapshot_id();
-        let seqnum4 = commit_record4.open_sequence_number();
-
-        assert_eq!(snapshot_id2, snapshot_id4);
-        assert!(storage.commit_record_exists(seqnum1, snapshot_id1).unwrap());
-        assert!(storage.commit_record_exists(seqnum2, snapshot_id2).unwrap());
-        assert!(storage.commit_record_exists(seqnum3, snapshot_id3).unwrap());
-        assert!(!storage.commit_record_exists(seqnum4, snapshot_id4).unwrap());
-
-        storage
-            .snapshot_commit(WriteSnapshot::new_with_commit_record(storage.clone(), commit_record4), &mut profile)
-            .unwrap();
-        assert!(storage.commit_record_exists(seqnum1, snapshot_id1).unwrap());
-        assert!(storage.commit_record_exists(seqnum2, snapshot_id2).unwrap());
-        assert!(storage.commit_record_exists(seqnum3, snapshot_id3).unwrap());
-        assert!(storage.commit_record_exists(seqnum4, snapshot_id4).unwrap());
-    }
-
-    #[test]
-    fn test_mixed_legacy_and_current_commit_records() {
-        test_keyspace_set! {
-            TestKeyspace => 0: "test",
-        }
-
-        init_logging();
-        let storage_path = create_tmp_storage_dir();
-
-        let mut wal_client = WALClient::new(WAL::create(storage_path.join(WAL::WAL_DIR_NAME)).unwrap());
-        wal_client.register_record_type::<LegacyCommitRecordV1>();
-        wal_client.register_record_type::<CommitRecord>();
-        wal_client.register_record_type::<StatusRecord>();
-
-        // Write legacy records (RECORD_TYPE=0) directly to WAL
-        let key_legacy = StorageKeyArray::from((TestKeyspaceSet::TestKeyspace, b"legacy"));
-        let mut legacy_ops = OperationsBuffer::new();
-        legacy_ops.writes_in_mut(key_legacy.keyspace_id()).insert(key_legacy.byte_array().clone(), ByteArray::empty());
-        let legacy_record = LegacyCommitRecordV1::new(legacy_ops, wal_client.previous(), CommitType::Data);
-        let legacy_seqnum = wal_client.sequenced_write(&legacy_record).unwrap();
-
-        // Load WAL back
-        drop(wal_client);
-        let mut wal_client = WALClient::new(WAL::load(storage_path.join(WAL::WAL_DIR_NAME)).unwrap());
-        wal_client.register_record_type::<LegacyCommitRecordV1>();
-        wal_client.register_record_type::<CommitRecord>();
-        wal_client.register_record_type::<StatusRecord>();
-
-        // Write a new-format record
-        let key_new = StorageKeyArray::from((TestKeyspaceSet::TestKeyspace, b"new"));
-        let mut new_ops = OperationsBuffer::new();
-        new_ops.writes_in_mut(key_new.keyspace_id()).insert(key_new.byte_array().clone(), ByteArray::empty());
-        let new_snapshot_id = SnapshotId::new();
-        let new_record = CommitRecord::new(new_ops, wal_client.previous(), CommitType::Data, new_snapshot_id);
-        let new_seqnum = wal_client.sequenced_write(&new_record).unwrap();
-
-        assert_ne!(legacy_seqnum, new_seqnum);
-
-        // Read both record types back from WAL
-        // Legacy records are read as LegacyCommitRecordV1 and can be converted
-        let legacy_records: Vec<_> = wal_client
-            .iter_sequenced_type_from::<LegacyCommitRecordV1>(SequenceNumber::MIN)
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert_eq!(legacy_records.len(), 1, "Expected exactly one legacy record");
-
-        // New records are read as CommitRecord
-        let new_records: Vec<_> = wal_client
-            .iter_sequenced_type_from::<CommitRecord>(SequenceNumber::MIN)
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert_eq!(new_records.len(), 1, "Expected exactly one new-format record");
-        assert_eq!(new_records[0].1.snapshot_id(), new_snapshot_id);
-
-        // Legacy records convert to CommitRecord with UNSET snapshot_id
-        let converted = CommitRecord::from(legacy_records.into_iter().next().unwrap().1);
-        assert_eq!(converted.snapshot_id(), SnapshotId::UNSET);
     }
 }

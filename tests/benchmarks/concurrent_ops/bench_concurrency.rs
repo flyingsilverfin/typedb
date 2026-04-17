@@ -9,8 +9,8 @@
 use std::{
     env,
     sync::{
-        Arc, Mutex, RwLock,
         atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex, RwLock,
     },
     thread,
     thread::JoinHandle,
@@ -18,20 +18,31 @@ use std::{
 };
 
 use database::{
-    Database,
     database_manager::DatabaseManager,
     query::{execute_schema_query, execute_write_query_in_write},
-    transaction::{CommitIntent, TransactionRead, TransactionSchema, TransactionWrite},
+    transaction::{TransactionRead, TransactionSchema, TransactionWrite},
+    Database,
 };
-use executor::{ExecutionInterrupt, pipeline::stage::StageIterator};
+use executor::{pipeline::stage::StageIterator, ExecutionInterrupt};
 use options::{QueryOptions, TransactionOptions};
+use query::query_manager::PipelinePayload;
 use rand_core::RngCore;
-use storage::durability_client::WALClient;
-use test_utils::{TempDir, create_tmp_storage_dir};
+use storage::{durability_client::WALClient, COMMIT_PHASE_STATS, WAL_WRITE_PHASE_STATS};
+use test_utils::{create_tmp_dir, TempDir};
 use xoshiro::Xoshiro256Plus;
 
-const TOTAL_OPS: usize = 300_000;
-const READ_OPS: usize = 100_000;
+// Total operations per write workload. Can be overridden at runtime with
+// BENCH_TOTAL_OPS=N env var for quicker smoke runs.
+const DEFAULT_TOTAL_OPS: usize = 300_000;
+const DEFAULT_READ_OPS: usize = 100_000;
+
+fn total_ops() -> usize {
+    env::var("BENCH_TOTAL_OPS").ok().and_then(|v| v.parse().ok()).unwrap_or(DEFAULT_TOTAL_OPS)
+}
+
+fn read_ops() -> usize {
+    env::var("BENCH_READ_OPS").ok().and_then(|v| v.parse().ok()).unwrap_or(DEFAULT_READ_OPS)
+}
 
 const DB_NAME: &str = "bench-concurrency";
 
@@ -43,6 +54,34 @@ const SCHEMA: &str = r#"define
     relation friendship relates friend @card(0..);
     person plays friendship:friend;
 "#;
+
+// Inputs-stage query strings: each is compiled once per transaction and executed
+// with N input rows, amortizing parse + compilation over the whole batch. The
+// typed inputs declaration prepends a `inputs $v: T;` stage that is evaluated
+// row-by-row against the pipeline body. Parenthesising input value references in
+// `has` clauses (e.g. `has name ($n)`) forces the parser to treat them as
+// expressions rather than attribute-variable aliases, avoiding a category
+// conflict with the Value category assigned by the inputs stage.
+const INSERT_QUERY: &str =
+    r#"inputs $n: string, $a: integer; insert $p isa person, has name == $n, has age == $a;"#;
+
+const UPDATE_QUERY: &str =
+    r#"inputs $n: string, $s: double; match $p isa person, has name == $n; insert $p has score == $s;"#;
+
+const RELATION_QUERY: &str =
+    r#"inputs $an: string, $bn: string; match $a isa person, has name == $an; $b isa person, has name == $bn; insert friendship (friend: $a, friend: $b);"#;
+
+fn quoted_string_literal(value: &str) -> String {
+    // Inputs rows are parsed server-side via `typeql::parse_value(&str)`. String
+    // values therefore need their quotes preserved; the schema-generated names
+    // here never contain quotes or backslashes so we skip escaping.
+    format!(r#""{value}""#)
+}
+
+fn make_payload(query: &str, inputs: Vec<Vec<Option<String>>>) -> PipelinePayload {
+    let parsed = typeql::parse_query(query).unwrap().into_structure().into_pipeline();
+    PipelinePayload { parsed, inputs: Some(inputs) }
+}
 
 struct TxSample {
     open_ns: u64,
@@ -138,7 +177,7 @@ impl TimingAnalysis {
 // --- Database setup helpers ---
 
 fn create_database(schema: &str) -> (TempDir, Arc<Database<WALClient>>) {
-    let tmp_dir = create_tmp_storage_dir();
+    let tmp_dir = create_tmp_dir();
     let dbm = DatabaseManager::new(&tmp_dir).unwrap();
     dbm.put_database(DB_NAME).unwrap();
     let database = dbm.database(DB_NAME).unwrap();
@@ -147,8 +186,7 @@ fn create_database(schema: &str) -> (TempDir, Arc<Database<WALClient>>) {
     let tx = TransactionSchema::open(database.clone(), TransactionOptions::default()).unwrap();
     let (tx, result) = execute_schema_query(tx, schema_query, schema.to_string());
     result.unwrap();
-    let (mut profile, intent) = tx.finalise();
-    intent.unwrap().commit(profile.commit_profile()).unwrap();
+    tx.commit().1.unwrap();
 
     (tmp_dir, database)
 }
@@ -159,28 +197,35 @@ fn seed_persons(database: &Arc<Database<WALClient>>, count: usize) {
     while offset < count {
         let n = std::cmp::min(batch_size, count - offset);
         let mut tx = TransactionWrite::open(database.clone(), TransactionOptions::default()).unwrap();
-        for i in 0..n {
-            let id = offset + i;
-            let age: u32 = (id % 100) as u32;
-            let query_str = format!(r#"insert $p isa person, has name "person_{id}", has age {age};"#);
-            let pipeline = typeql::parse_query(&query_str).unwrap().into_structure().into_pipeline();
-            let (returned_tx, result) = execute_write_query_in_write(
-                tx,
-                QueryOptions::default_grpc(),
-                pipeline,
-                query_str,
-                ExecutionInterrupt::new_uninterruptible(),
-            );
-            result.unwrap();
-            tx = returned_tx;
-        }
-        let (mut profile, intent) = tx.finalise();
-        intent.unwrap().commit(profile.commit_profile()).unwrap();
+        let inputs: Vec<Vec<Option<String>>> = (0..n)
+            .map(|i| {
+                let id = offset + i;
+                let age: u32 = (id % 100) as u32;
+                vec![Some(quoted_string_literal(&format!("person_{id}"))), Some(age.to_string())]
+            })
+            .collect();
+        let payload = make_payload(INSERT_QUERY, inputs);
+        let (returned_tx, result) = execute_write_query_in_write(
+            tx,
+            QueryOptions::default_grpc(),
+            payload,
+            INSERT_QUERY.to_string(),
+            ExecutionInterrupt::new_uninterruptible(),
+        );
+        result.unwrap();
+        tx = returned_tx;
+        tx.commit().1.unwrap();
         offset += n;
     }
 }
 
 // --- Write transaction helpers ---
+//
+// Each helper opens one write transaction, submits a single inputs-stage query
+// containing `ops_per_tx` input rows, commits, and records the open / exec /
+// commit timing split. Bulk loading therefore pays parse + compile costs once
+// per batch instead of once per row, which is the hot path krishnan's
+// add-inputs-stage patch was designed to accelerate.
 
 fn execute_insert_batch(
     database: &Arc<Database<WALClient>>,
@@ -189,29 +234,29 @@ fn execute_insert_batch(
     timings: &PhaseTimings,
 ) {
     let t0 = Instant::now();
-    let mut tx = TransactionWrite::open(database.clone(), TransactionOptions::default()).unwrap();
+    let tx = TransactionWrite::open(database.clone(), TransactionOptions::default()).unwrap();
     let t1 = Instant::now();
 
     let mut rng = Xoshiro256Plus::from_seed_u64(rand::random());
-    for i in 0..ops_per_tx {
-        let age: u32 = rng.next_u64() as u32;
-        let name_id = batch_id * ops_per_tx + i;
-        let query_str = format!(r#"insert $p isa person, has name "person_{name_id}", has age {age};"#);
-        let pipeline = typeql::parse_query(&query_str).unwrap().into_structure().into_pipeline();
-        let (returned_tx, result) = execute_write_query_in_write(
-            tx,
-            QueryOptions::default_grpc(),
-            pipeline,
-            query_str,
-            ExecutionInterrupt::new_uninterruptible(),
-        );
-        result.unwrap();
-        tx = returned_tx;
-    }
+    let inputs: Vec<Vec<Option<String>>> = (0..ops_per_tx)
+        .map(|i| {
+            let age: u32 = rng.next_u64() as u32;
+            let name_id = batch_id * ops_per_tx + i;
+            vec![Some(quoted_string_literal(&format!("person_{name_id}"))), Some(age.to_string())]
+        })
+        .collect();
+    let payload = make_payload(INSERT_QUERY, inputs);
+    let (tx, result) = execute_write_query_in_write(
+        tx,
+        QueryOptions::default_grpc(),
+        payload,
+        INSERT_QUERY.to_string(),
+        ExecutionInterrupt::new_uninterruptible(),
+    );
+    result.unwrap();
     let t2 = Instant::now();
 
-    let (mut profile, intent) = tx.finalise();
-    intent.unwrap().commit(profile.commit_profile()).unwrap();
+    tx.commit().1.unwrap();
     let t3 = Instant::now();
 
     timings.record((t1 - t0).as_nanos() as u64, (t2 - t1).as_nanos() as u64, (t3 - t2).as_nanos() as u64);
@@ -225,29 +270,30 @@ fn execute_update_batch(
     timings: &PhaseTimings,
 ) {
     let t0 = Instant::now();
-    let mut tx = TransactionWrite::open(database.clone(), TransactionOptions::default()).unwrap();
+    let tx = TransactionWrite::open(database.clone(), TransactionOptions::default()).unwrap();
     let t1 = Instant::now();
 
     let mut rng = Xoshiro256Plus::from_seed_u64(rand::random());
-    for i in 0..ops_per_tx {
-        let person_id = (batch_id * ops_per_tx + i) % seed_count;
-        let score: f64 = rng.next_u64() as u32 as f64 / 100.0;
-        let query_str = format!(r#"match $p isa person, has name "person_{person_id}"; insert $p has score {score};"#);
-        let pipeline = typeql::parse_query(&query_str).unwrap().into_structure().into_pipeline();
-        let (returned_tx, result) = execute_write_query_in_write(
-            tx,
-            QueryOptions::default_grpc(),
-            pipeline,
-            query_str,
-            ExecutionInterrupt::new_uninterruptible(),
-        );
-        result.unwrap();
-        tx = returned_tx;
-    }
+    let inputs: Vec<Vec<Option<String>>> = (0..ops_per_tx)
+        .map(|i| {
+            let person_id = (batch_id * ops_per_tx + i) % seed_count;
+            let score: f64 = rng.next_u64() as u32 as f64 / 100.0;
+            // Force a decimal point so the literal is parsed as double, not integer.
+            vec![Some(quoted_string_literal(&format!("person_{person_id}"))), Some(format!("{score:.6}"))]
+        })
+        .collect();
+    let payload = make_payload(UPDATE_QUERY, inputs);
+    let (tx, result) = execute_write_query_in_write(
+        tx,
+        QueryOptions::default_grpc(),
+        payload,
+        UPDATE_QUERY.to_string(),
+        ExecutionInterrupt::new_uninterruptible(),
+    );
+    result.unwrap();
     let t2 = Instant::now();
 
-    let (mut profile, intent) = tx.finalise();
-    intent.unwrap().commit(profile.commit_profile()).unwrap();
+    tx.commit().1.unwrap();
     let t3 = Instant::now();
 
     timings.record((t1 - t0).as_nanos() as u64, (t2 - t1).as_nanos() as u64, (t3 - t2).as_nanos() as u64);
@@ -261,31 +307,32 @@ fn execute_relation_batch(
     timings: &PhaseTimings,
 ) {
     let t0 = Instant::now();
-    let mut tx = TransactionWrite::open(database.clone(), TransactionOptions::default()).unwrap();
+    let tx = TransactionWrite::open(database.clone(), TransactionOptions::default()).unwrap();
     let t1 = Instant::now();
 
-    for i in 0..ops_per_tx {
-        let idx = batch_id * ops_per_tx + i;
-        let a_id = idx % seed_count;
-        let b_id = (idx + 1) % seed_count;
-        let query_str = format!(
-            r#"match $a isa person, has name "person_{a_id}"; $b isa person, has name "person_{b_id}"; insert friendship (friend: $a, friend: $b);"#
-        );
-        let pipeline = typeql::parse_query(&query_str).unwrap().into_structure().into_pipeline();
-        let (returned_tx, result) = execute_write_query_in_write(
-            tx,
-            QueryOptions::default_grpc(),
-            pipeline,
-            query_str,
-            ExecutionInterrupt::new_uninterruptible(),
-        );
-        result.unwrap();
-        tx = returned_tx;
-    }
+    let inputs: Vec<Vec<Option<String>>> = (0..ops_per_tx)
+        .map(|i| {
+            let idx = batch_id * ops_per_tx + i;
+            let a_id = idx % seed_count;
+            let b_id = (idx + 1) % seed_count;
+            vec![
+                Some(quoted_string_literal(&format!("person_{a_id}"))),
+                Some(quoted_string_literal(&format!("person_{b_id}"))),
+            ]
+        })
+        .collect();
+    let payload = make_payload(RELATION_QUERY, inputs);
+    let (tx, result) = execute_write_query_in_write(
+        tx,
+        QueryOptions::default_grpc(),
+        payload,
+        RELATION_QUERY.to_string(),
+        ExecutionInterrupt::new_uninterruptible(),
+    );
+    result.unwrap();
     let t2 = Instant::now();
 
-    let (mut profile, intent) = tx.finalise();
-    intent.unwrap().commit(profile.commit_profile()).unwrap();
+    tx.commit().1.unwrap();
     let t3 = Instant::now();
 
     timings.record((t1 - t0).as_nanos() as u64, (t2 - t1).as_nanos() as u64, (t3 - t2).as_nanos() as u64);
@@ -303,7 +350,7 @@ fn execute_read_query(database: &Arc<Database<WALClient>>, query_str: &str) {
             type_manager,
             thing_manager.clone(),
             function_manager,
-            &query,
+            PipelinePayload::from(query),
             query_str,
         )
         .unwrap();
@@ -434,19 +481,29 @@ where
 // --- W1: Pure Insert ---
 
 fn run_pure_insert_benchmark(thread_counts: &[usize], batch_size: usize, show_dist: bool) {
+    let show_phases = env::var("BENCH_COMMIT_PHASES").is_ok();
     print_header("PureInsert", batch_size);
     for &num_threads in thread_counts {
         let (_tmp_dir, database) = create_database(SCHEMA);
         let timings = Arc::new(PhaseTimings::new());
-        let total_transactions = TOTAL_OPS / batch_size;
+        let total_transactions = total_ops() / batch_size;
         let actual_ops = total_transactions * batch_size;
 
+        if show_phases {
+            COMMIT_PHASE_STATS.reset();
+            WAL_WRITE_PHASE_STATS.reset();
+        }
+
         let elapsed =
-            run_write_threads(&database, num_threads, batch_size, TOTAL_OPS, &timings, |db, batch_id, ops, t| {
+            run_write_threads(&database, num_threads, batch_size, total_ops(), &timings, |db, batch_id, ops, t| {
                 execute_insert_batch(db, batch_id, ops, t);
             });
 
         print_result(num_threads, elapsed, actual_ops, &timings, show_dist);
+        if show_phases {
+            eprintln!("{}", COMMIT_PHASE_STATS.dump());
+            eprintln!("{}", WAL_WRITE_PHASE_STATS.dump());
+        }
     }
 }
 
@@ -463,12 +520,12 @@ fn run_pure_update_benchmark(thread_counts: &[usize], batch_size: usize, show_di
         let (_tmp_dir, database) = create_database(SCHEMA);
         seed_persons(&database, UPDATE_SEED_COUNT);
         let timings = Arc::new(PhaseTimings::new());
-        let total_transactions = TOTAL_OPS / batch_size;
+        let total_transactions = total_ops() / batch_size;
         let actual_ops = total_transactions * batch_size;
 
         let seed_count = UPDATE_SEED_COUNT;
         let elapsed =
-            run_write_threads(&database, num_threads, batch_size, TOTAL_OPS, &timings, move |db, batch_id, ops, t| {
+            run_write_threads(&database, num_threads, batch_size, total_ops(), &timings, move |db, batch_id, ops, t| {
                 execute_update_batch(db, batch_id, ops, seed_count, t);
             });
 
@@ -489,12 +546,12 @@ fn run_insert_relation_benchmark(thread_counts: &[usize], batch_size: usize, sho
         let (_tmp_dir, database) = create_database(SCHEMA);
         seed_persons(&database, RELATION_SEED_COUNT);
         let timings = Arc::new(PhaseTimings::new());
-        let total_transactions = TOTAL_OPS / batch_size;
+        let total_transactions = total_ops() / batch_size;
         let actual_ops = total_transactions * batch_size;
 
         let seed_count = RELATION_SEED_COUNT;
         let elapsed =
-            run_write_threads(&database, num_threads, batch_size, TOTAL_OPS, &timings, move |db, batch_id, ops, t| {
+            run_write_threads(&database, num_threads, batch_size, total_ops(), &timings, move |db, batch_id, ops, t| {
                 execute_relation_batch(db, batch_id, ops, seed_count, t);
             });
 
@@ -526,7 +583,7 @@ fn run_mixed_benchmark(thread_counts: &[usize], batch_size: usize, write_ratio: 
         let read_ops_total = Arc::new(AtomicU64::new(0));
 
         let ops_per_write_tx = batch_size;
-        let total_write_txns = TOTAL_OPS / ops_per_write_tx;
+        let total_write_txns = total_ops() / ops_per_write_tx;
         let next_write_batch = Arc::new(AtomicU64::new(0));
 
         let running = Arc::new(AtomicBool::new(true));
@@ -610,7 +667,7 @@ fn run_pure_read_benchmark(thread_counts: &[usize]) {
         let (_tmp_dir, database) = create_database(SCHEMA);
         seed_persons(&database, READ_SEED_COUNT);
 
-        let ops_per_thread = READ_OPS / num_threads;
+        let ops_per_thread = read_ops() / num_threads;
         let actual_ops = ops_per_thread * num_threads;
 
         let start_signal = Arc::new(RwLock::new(()));
@@ -652,44 +709,69 @@ fn run_pure_read_benchmark(thread_counts: &[usize]) {
 
 // --- Main ---
 
+fn parse_csv_usize(var: &str, default: &[usize]) -> Vec<usize> {
+    match env::var(var) {
+        Ok(v) => v.split(',').filter_map(|s| s.trim().parse().ok()).collect(),
+        Err(_) => default.to_vec(),
+    }
+}
+
+fn parse_csv_str(var: &str, default: &[&str]) -> Vec<String> {
+    match env::var(var) {
+        Ok(v) => v.split(',').map(|s| s.trim().to_lowercase()).collect(),
+        Err(_) => default.iter().map(|s| s.to_string()).collect(),
+    }
+}
+
 fn main() {
-    let thread_counts = [1, 4, 8];
+    let thread_counts = parse_csv_usize("BENCH_THREADS", &[1, 4, 8]);
+    let batch_sizes = parse_csv_usize("BENCH_BATCH_SIZES", &[1000, 100, 1]);
+    let workloads = parse_csv_str(
+        "BENCH_WORKLOADS",
+        &["insert", "update", "relation", "mixed50", "mixed20", "read"],
+    );
     let show_dist = env::var("BENCH_DIST").is_ok();
 
-    eprintln!("Concurrent Write Scalability Benchmark Suite");
-    eprintln!("=============================================");
-    eprintln!("Total ops per write workload: {TOTAL_OPS}");
-    eprintln!("Total ops for pure read:      {READ_OPS}");
+    eprintln!("Concurrent Write Scalability Benchmark Suite (inputs-stage bulk-load)");
+    eprintln!("=====================================================================");
+    eprintln!("Total ops per write workload: {}", total_ops());
+    eprintln!("Total ops for pure read:      {}", read_ops());
+    eprintln!("Threads:                      {:?}", thread_counts);
+    eprintln!("Batch sizes:                  {:?}", batch_sizes);
+    eprintln!("Workloads:                    {:?}", workloads);
     if show_dist {
         eprintln!("Distribution output:          enabled (BENCH_DIST)");
     }
     eprintln!();
 
-    // W1: Pure Insert
-    for &batch_size in &[1000, 100, 1] {
-        run_pure_insert_benchmark(&thread_counts, batch_size, show_dist);
-    }
+    let run = |name: &str| workloads.iter().any(|w| w == name);
 
-    // W2: Pure Update (match-insert generating Puts)
-    for &batch_size in &[1000, 100, 1] {
-        run_pure_update_benchmark(&thread_counts, batch_size, show_dist);
+    if run("insert") {
+        for &batch_size in &batch_sizes {
+            run_pure_insert_benchmark(&thread_counts, batch_size, show_dist);
+        }
     }
-
-    // W3: Insert Relations
-    for &batch_size in &[1000, 100, 1] {
-        run_insert_relation_benchmark(&thread_counts, batch_size, show_dist);
+    if run("update") {
+        for &batch_size in &batch_sizes {
+            run_pure_update_benchmark(&thread_counts, batch_size, show_dist);
+        }
     }
-
-    // W4: Mixed 50/50
-    for &batch_size in &[1000, 100, 1] {
-        run_mixed_benchmark(&thread_counts, batch_size, 0.5, show_dist);
+    if run("relation") {
+        for &batch_size in &batch_sizes {
+            run_insert_relation_benchmark(&thread_counts, batch_size, show_dist);
+        }
     }
-
-    // W5: Mixed 20/80
-    for &batch_size in &[1000, 100, 1] {
-        run_mixed_benchmark(&thread_counts, batch_size, 0.2, show_dist);
+    if run("mixed50") {
+        for &batch_size in &batch_sizes {
+            run_mixed_benchmark(&thread_counts, batch_size, 0.5, show_dist);
+        }
     }
-
-    // W6: Pure Read
-    run_pure_read_benchmark(&thread_counts);
+    if run("mixed20") {
+        for &batch_size in &batch_sizes {
+            run_mixed_benchmark(&thread_counts, batch_size, 0.2, show_dist);
+        }
+    }
+    if run("read") {
+        run_pure_read_benchmark(&thread_counts);
+    }
 }

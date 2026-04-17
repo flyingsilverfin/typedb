@@ -12,27 +12,82 @@ use std::{
     collections::{HashMap, VecDeque},
     error::Error,
     fmt,
+    io::Read,
     sync::{
-        Arc, OnceLock, RwLock,
-        atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
+        Arc, Condvar, Mutex, OnceLock, RwLock,
     },
 };
 
+use bytes::byte_array::ByteArray;
+use durability::DurabilityRecordType;
 use logger::result::ResultExt;
 use primitive::maybe_owns::MaybeOwns;
-use resource::constants::storage::TIMELINE_WINDOW_SIZE;
+use resource::constants::{snapshot::BUFFER_KEY_INLINE, storage::TIMELINE_WINDOW_SIZE};
+use serde::{Deserialize, Serialize};
 
 use crate::{
-    durability_client::{DurabilityClient, DurabilityClientError},
-    record::{CommitRecord, StatusRecord},
+    durability_client::{
+        DurabilityClient, DurabilityClientError, DurabilityRecord, SequencedDurabilityRecord,
+        UnsequencedDurabilityRecord,
+    },
     sequence_number::SequenceNumber,
+    snapshot::{buffer::OperationsBuffer, lock::LockType, write::Write},
     write_batches::WriteBatches,
 };
+
+// Small bloom filter for compute_dependency hot path. 16384 bits (2 KiB) gives
+// roughly a 0.1% false-positive rate at ~70 keys and ~0.2% at ~400 keys, which
+// covers the realistic predecessor sizes we see in practice. Built once per
+// predecessor per call, transient only — never serialized.
+const BLOOM_BITS: usize = 16384;
+const BLOOM_MASK: usize = BLOOM_BITS - 1;
+const BLOOM_U64S: usize = BLOOM_BITS / 64;
+
+struct QuickBloom {
+    bits: [u64; BLOOM_U64S],
+}
+
+impl QuickBloom {
+    fn new() -> Self {
+        Self { bits: [0; BLOOM_U64S] }
+    }
+
+    fn insert(&mut self, key: &[u8]) {
+        let (h1, h2) = Self::positions(key);
+        self.bits[h1 / 64] |= 1u64 << (h1 % 64);
+        self.bits[h2 / 64] |= 1u64 << (h2 % 64);
+    }
+
+    fn may_contain(&self, key: &[u8]) -> bool {
+        let (h1, h2) = Self::positions(key);
+        (self.bits[h1 / 64] & (1u64 << (h1 % 64))) != 0
+            && (self.bits[h2 / 64] & (1u64 << (h2 % 64))) != 0
+    }
+
+    fn positions(key: &[u8]) -> (usize, usize) {
+        let mut h: u64 = 0xcbf29ce484222325;
+        for &b in key {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        ((h as usize) & BLOOM_MASK, ((h >> 18) as usize) & BLOOM_MASK)
+    }
+
+    fn from_btree_keys<V>(map: &std::collections::BTreeMap<ByteArray<BUFFER_KEY_INLINE>, V>) -> Self {
+        let mut bloom = Self::new();
+        for key in map.keys() {
+            bloom.insert(key.as_ref());
+        }
+        bloom
+    }
+}
 
 #[derive(Debug)]
 pub(crate) struct IsolationManager {
     initial_sequence_number: SequenceNumber,
     timeline: Timeline,
+    highest_validated_sequence_number: AtomicU64,
 }
 
 impl fmt::Display for IsolationManager {
@@ -46,6 +101,7 @@ impl IsolationManager {
         IsolationManager {
             initial_sequence_number: next_sequence_number,
             timeline: Timeline::new(next_sequence_number),
+            highest_validated_sequence_number: AtomicU64::new(next_sequence_number.number() - 1),
         }
     }
 
@@ -95,6 +151,8 @@ impl IsolationManager {
         let isolation_conflict = self.validate_all_concurrent(sequence_number, &commit_record, durability_client)?;
         if isolation_conflict.is_none() {
             window.set_validated(sequence_number);
+            // We can't increment watermark here till the status is "applied", but we do update the latest validated number
+            self.highest_validated_sequence_number.fetch_max(sequence_number.number(), Ordering::SeqCst);
         } else {
             window.set_aborted(sequence_number);
             self.timeline.may_increment_watermark(sequence_number);
@@ -123,7 +181,7 @@ impl IsolationManager {
 
         // Pre-collect all the ARCs so we can validate against them.
         let (windows, first_sequence_number_in_memory) =
-            self.timeline.collect_concurrent_windows(commit_record.open_sequence_number(), commit_sequence_number);
+            self.timeline.collect_concurrent_windows(commit_record.open_sequence_number, commit_sequence_number);
         if commit_record.open_sequence_number().next() < first_sequence_number_in_memory {
             if let Some(conflict) =
                 self.validate_concurrent_from_disk(commit_record, first_sequence_number_in_memory, durability_client)?
@@ -148,7 +206,7 @@ impl IsolationManager {
     ) -> Result<Option<IsolationConflict>, DurabilityClientError> {
         for commit_status_result in Self::iterate_commit_status_from_disk(
             durability_client,
-            commit_record.open_sequence_number().next(),
+            commit_record.open_sequence_number.next(),
             stop_sequence_number,
         )? {
             if let Ok((_, commit_status)) = commit_status_result {
@@ -177,7 +235,7 @@ impl IsolationManager {
         windows: &[Arc<TimelineWindow<TIMELINE_WINDOW_SIZE>>],
         first_window_sequence_number: SequenceNumber,
     ) -> Option<IsolationConflict> {
-        let start_validation_index = max(commit_record.open_sequence_number().next(), first_window_sequence_number);
+        let start_validation_index = max(commit_record.open_sequence_number.next(), first_window_sequence_number);
         debug_assert!(start_validation_index <= first_window_sequence_number + TIMELINE_WINDOW_SIZE);
         let mut window_index = 0;
         for validate_against in start_validation_index.number()..commit_sequence_number.number() {
@@ -232,6 +290,14 @@ impl IsolationManager {
         self.timeline.watermark()
     }
 
+    pub(crate) fn wait_for_watermark(&self, target: SequenceNumber) -> SequenceNumber {
+        self.timeline.wait_until_watermark_reaches(target)
+    }
+
+    pub(crate) fn highest_validated_sequence_number(&self) -> SequenceNumber {
+        SequenceNumber::new(self.highest_validated_sequence_number.load(Ordering::SeqCst))
+    }
+
     pub fn reset(&mut self) {
         self.timeline = Timeline::new(self.initial_sequence_number);
     }
@@ -281,7 +347,7 @@ fn handle_dependency(commit_dependency: CommitDependency) -> Option<IsolationCon
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum DependentPut {
+enum DependentPut {
     Deleted { reinsert: Arc<AtomicBool> },
     Inserted { reinsert: Arc<AtomicBool> },
 }
@@ -296,7 +362,7 @@ impl DependentPut {
 }
 
 #[derive(Debug)]
-pub(crate) enum CommitDependency {
+enum CommitDependency {
     Independent,
     DependentPuts { puts: Vec<DependentPut> },
     Conflict(IsolationConflict),
@@ -354,13 +420,36 @@ struct Timeline {
     // We can adjust the Window size to amortise the cost of the read-write locks to maintain the timeline
     windows: RwLock<VecDeque<Arc<TimelineWindow<TIMELINE_WINDOW_SIZE>>>>,
     watermark: AtomicU64,
+    // Event channel for watermark advancement. Readers of `wait_until_watermark_reaches`
+    // park on the condvar and are notified (all) every time the watermark advances, replacing
+    // the prior 50us sleep-poll. The mutex content is unused — the actual state is the atomic.
+    watermark_advance_lock: Mutex<()>,
+    watermark_advance_cv: Condvar,
 }
 
 impl Timeline {
     // The whole of the timeline uses the underlying u64
     fn new(next_sequence_number: SequenceNumber) -> Timeline {
         let windows = VecDeque::from([Arc::new(TimelineWindow::new(next_sequence_number))]);
-        Timeline { windows: RwLock::new(windows), watermark: AtomicU64::new(next_sequence_number.number() - 1) }
+        Timeline {
+            windows: RwLock::new(windows),
+            watermark: AtomicU64::new(next_sequence_number.number() - 1),
+            watermark_advance_lock: Mutex::new(()),
+            watermark_advance_cv: Condvar::new(),
+        }
+    }
+
+    fn wait_until_watermark_reaches(&self, target: SequenceNumber) -> SequenceNumber {
+        let current = self.watermark();
+        if current >= target {
+            return current;
+        }
+        let guard = self.watermark_advance_lock.lock().unwrap();
+        let _guard = self
+            .watermark_advance_cv
+            .wait_while(guard, |_| self.watermark() < target)
+            .unwrap();
+        self.watermark()
     }
 
     fn may_free_windows(&self) {
@@ -380,6 +469,7 @@ impl Timeline {
             return;
         }
 
+        let start_watermark = self.watermark();
         let mut candidate_watermark = sequence_number;
         {
             let mut window = self.try_get_window(sequence_number);
@@ -410,6 +500,13 @@ impl Timeline {
         }
 
         let watermark = candidate_watermark - 1; // Invaraint
+        // Wake threads parked in wait_until_watermark_reaches when the watermark advances.
+        // Acquiring the mutex is required to avoid the classic lost-wakeup race with a
+        // waiter that has just observed the old watermark but not yet called wait_while.
+        if watermark > start_watermark {
+            let _guard = self.watermark_advance_lock.lock().unwrap();
+            self.watermark_advance_cv.notify_all();
+        }
         if let Some(watermark_window_end) = { self.try_get_window(sequence_number - 1).map(|w| w.end()) } {
             if watermark >= watermark_window_end {
                 self.may_free_windows();
@@ -559,13 +656,17 @@ impl<const SIZE: usize> TimelineWindow<SIZE> {
     fn get_status(&self, sequence_number: SequenceNumber) -> CommitStatus<'_> {
         let index = sequence_number - self.start;
         let status = SlotMarker::from(self.slot_status[index].load(Ordering::SeqCst));
-        let lazy_record = || self.commit_records[index].get().unwrap();
-        match status {
-            SlotMarker::Empty => CommitStatus::Empty,
-            SlotMarker::Aborted => CommitStatus::Aborted,
-            SlotMarker::Pending => CommitStatus::Pending(MaybeOwns::Borrowed(lazy_record())),
-            SlotMarker::Validated => CommitStatus::Validated(MaybeOwns::Borrowed(lazy_record())),
-            SlotMarker::Applied => CommitStatus::Applied(MaybeOwns::Borrowed(lazy_record())),
+        if let SlotMarker::Empty = status {
+            CommitStatus::Empty
+        } else {
+            let record = self.commit_records[index].get().unwrap();
+            match status {
+                SlotMarker::Empty => unreachable!(),
+                SlotMarker::Pending => CommitStatus::Pending(MaybeOwns::Borrowed(record)),
+                SlotMarker::Validated => CommitStatus::Validated(MaybeOwns::Borrowed(record)),
+                SlotMarker::Applied => CommitStatus::Applied(MaybeOwns::Borrowed(record)),
+                SlotMarker::Aborted => CommitStatus::Aborted,
+            }
         }
     }
 
@@ -640,13 +741,219 @@ impl SlotMarker {
     }
 }
 
+// TODO: move out of isolation manager
+#[derive(Serialize, Deserialize)]
+pub struct CommitRecord {
+    // TODO: this could read-through to the WAL if we have to save memory?
+    operations: OperationsBuffer,
+    open_sequence_number: SequenceNumber,
+    commit_type: CommitType,
+}
+
+impl fmt::Debug for CommitRecord {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CommitRecord")
+            .field("open_sequence_number", &self.open_sequence_number)
+            .field("commit_type", &self.commit_type)
+            .field("operations", &self.operations)
+            .finish()
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
+pub enum CommitType {
+    Data,
+    Schema,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct StatusRecord {
+    pub(crate) commit_record_sequence_number: SequenceNumber,
+    pub(crate) was_committed: bool,
+}
+
+impl CommitRecord {
+    pub(crate) fn new(
+        operations: OperationsBuffer,
+        open_sequence_number: SequenceNumber,
+        commit_type: CommitType,
+    ) -> CommitRecord {
+        CommitRecord { operations, open_sequence_number, commit_type }
+    }
+
+    pub fn operations(&self) -> &OperationsBuffer {
+        &self.operations
+    }
+
+    pub fn into_operations(self) -> OperationsBuffer {
+        self.operations
+    }
+
+    pub fn commit_type(&self) -> CommitType {
+        self.commit_type
+    }
+
+    pub fn open_sequence_number(&self) -> SequenceNumber {
+        self.open_sequence_number
+    }
+
+    fn deserialise_from(record_type: DurabilityRecordType, reader: impl Read)
+    where
+        Self: Sized,
+    {
+        assert_eq!(Self::RECORD_TYPE, record_type);
+        // TODO: handle error with a better message
+        bincode::deserialize_from(reader).unwrap_or_log()
+    }
+
+    fn compute_dependency(&self, predecessor: &CommitRecord) -> CommitDependency {
+        let mut puts_to_update = Vec::new();
+
+        let locks = self.operations().locks();
+        let predecessor_locks = predecessor.operations().locks();
+
+        // Pre-build a bloom filter over the predecessor's locks once. It is reused
+        // across the per-keyspace writes loop and the final locks-vs-locks loop to
+        // short-circuit BTreeMap lookups for keys that are definitely absent.
+        // Build cost is O(predecessor_locks) hashes; lookup cost is O(1) hashes.
+        let pred_locks_bloom = QuickBloom::from_btree_keys(predecessor_locks);
+
+        for (write_buffer, pred_write_buffer) in self.operations().write_buffers().zip(predecessor.operations()) {
+            let writes = write_buffer.writes();
+            let predecessor_writes = pred_write_buffer.writes();
+            let pred_writes_bloom = QuickBloom::from_btree_keys(predecessor_writes);
+
+            for (key, write) in writes.iter() {
+                if pred_writes_bloom.may_contain(key.as_ref()) {
+                    if let Some(predecessor_write) = predecessor_writes.get(key) {
+                        match (predecessor_write, write) {
+                            (Write::Insert { .. } | Write::Put { .. }, Write::Put { reinsert, .. }) => {
+                                puts_to_update.push(DependentPut::Inserted { reinsert: reinsert.clone() });
+                            }
+                            (Write::Delete, Write::Put { reinsert, .. }) => {
+                                puts_to_update.push(DependentPut::Deleted { reinsert: reinsert.clone() });
+                            }
+                            _ => (),
+                        }
+                    }
+                }
+                if matches!(write, Write::Delete)
+                    && pred_locks_bloom.may_contain(key.as_ref())
+                    && matches!(predecessor_locks.get(key), Some(LockType::Unmodifiable))
+                {
+                    return CommitDependency::Conflict(IsolationConflict::DeletingRequiredKey);
+                }
+            }
+
+            // Check for conflicts: our Unmodifiable locks vs predecessor Delete writes.
+            // Iterate the smaller collection and point-lookup into the larger one.
+            if locks.len() <= predecessor_writes.len() {
+                for (key, lock) in locks.iter() {
+                    if matches!(lock, LockType::Unmodifiable)
+                        && pred_writes_bloom.may_contain(key.as_ref())
+                        && matches!(predecessor_writes.get(key), Some(Write::Delete))
+                    {
+                        return CommitDependency::Conflict(IsolationConflict::RequireDeletedKey);
+                    }
+                }
+            } else {
+                for (key, write) in predecessor_writes.iter() {
+                    if matches!(write, Write::Delete) && matches!(locks.get(key), Some(LockType::Unmodifiable)) {
+                        return CommitDependency::Conflict(IsolationConflict::RequireDeletedKey);
+                    }
+                }
+            }
+        }
+
+        for (key, lock) in locks.iter() {
+            if matches!(lock, LockType::Exclusive)
+                && pred_locks_bloom.may_contain(key.as_ref())
+                && matches!(predecessor_locks.get(key), Some(LockType::Exclusive))
+            {
+                return CommitDependency::Conflict(IsolationConflict::ExclusiveLock);
+            }
+        }
+
+        if puts_to_update.is_empty() {
+            CommitDependency::Independent
+        } else {
+            CommitDependency::DependentPuts { puts: puts_to_update }
+        }
+    }
+}
+
+impl DurabilityRecord for CommitRecord {
+    const RECORD_TYPE: DurabilityRecordType = 0;
+
+    const RECORD_NAME: &'static str = "commit_record";
+
+    fn serialise_into(&self, writer: &mut impl std::io::Write) -> bincode::Result<()> {
+        debug_assert_eq!(
+            bincode::serialize(
+                &bincode::deserialize::<CommitRecord>(bincode::serialize(&self).as_ref().unwrap()).unwrap()
+            )
+            .unwrap(),
+            bincode::serialize(self).unwrap()
+        );
+        bincode::serialize_into(writer, &self)
+    }
+
+    fn deserialise_from(reader: &mut impl Read) -> bincode::Result<Self> {
+        // https://github.com/bincode-org/bincode/issues/633
+        let mut buf = Vec::new();
+        reader.read_to_end(&mut buf).unwrap();
+        bincode::deserialize(&buf)
+    }
+}
+
+impl SequencedDurabilityRecord for CommitRecord {}
+
+impl StatusRecord {
+    pub(crate) fn new(sequence_number: SequenceNumber, committed: bool) -> StatusRecord {
+        StatusRecord { commit_record_sequence_number: sequence_number, was_committed: committed }
+    }
+
+    pub(crate) fn was_committed(&self) -> bool {
+        self.was_committed
+    }
+
+    pub(crate) fn commit_record_sequence_number(&self) -> SequenceNumber {
+        self.commit_record_sequence_number
+    }
+}
+
+impl DurabilityRecord for StatusRecord {
+    const RECORD_TYPE: DurabilityRecordType = 1;
+    const RECORD_NAME: &'static str = "status_record";
+
+    fn serialise_into(&self, writer: &mut impl std::io::Write) -> bincode::Result<()> {
+        debug_assert_eq!(
+            bincode::serialize(
+                &bincode::deserialize::<StatusRecord>(bincode::serialize(&self).as_ref().unwrap()).unwrap()
+            )
+            .unwrap(),
+            bincode::serialize(self).unwrap()
+        );
+        bincode::serialize_into(writer, &self)
+    }
+
+    fn deserialise_from(reader: &mut impl Read) -> bincode::Result<Self> {
+        // https://github.com/bincode-org/bincode/issues/633
+        let mut buf = Vec::new();
+        reader.read_to_end(&mut buf).unwrap();
+        bincode::deserialize(&buf)
+    }
+}
+
+impl UnsequencedDurabilityRecord for StatusRecord {}
+
 #[cfg(test)]
 mod tests {
     use std::{
         array,
         sync::{
-            Arc,
             atomic::{AtomicU64, Ordering},
+            Arc,
         },
         thread::{self, JoinHandle},
     };
@@ -654,11 +961,10 @@ mod tests {
     use assert as assert_true;
 
     use crate::{
-        isolation_manager::{CommitStatus, ReaderDropGuard, TIMELINE_WINDOW_SIZE, Timeline},
+        isolation_manager::{CommitRecord, CommitStatus, CommitType, ReaderDropGuard, Timeline, TIMELINE_WINDOW_SIZE},
         keyspace::{KeyspaceId, KeyspaceSet},
-        record::{CommitRecord, CommitType},
         sequence_number::SequenceNumber,
-        snapshot::{buffer::OperationsBuffer, snapshot_id::SnapshotId},
+        snapshot::buffer::OperationsBuffer,
     };
 
     macro_rules! test_keyspace_set {
@@ -717,7 +1023,7 @@ mod tests {
             } else {
                 window.set_aborted(tx.commit_sequence_number);
             }
-            let _sequence_number = commit_record.open_sequence_number();
+            let sequence_number = commit_record.open_sequence_number;
             drop(window);
             drop(read_guard);
             timeline.may_increment_watermark(tx.commit_sequence_number);
@@ -731,7 +1037,7 @@ mod tests {
     }
 
     fn _record(read_sequence_number: SequenceNumber) -> CommitRecord {
-        CommitRecord::new(OperationsBuffer::new(), read_sequence_number, CommitType::Data, SnapshotId::new())
+        CommitRecord::new(OperationsBuffer::new(), read_sequence_number, CommitType::Data)
     }
 
     #[test]

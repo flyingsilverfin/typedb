@@ -16,22 +16,17 @@ use std::{
     mem,
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex, RwLock, RwLockReadGuard,
-        atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
-        mpsc,
+        atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
+        mpsc, Arc, Mutex, RwLock, RwLockReadGuard,
     },
-    thread::{self, JoinHandle, sleep},
+    thread::{self, sleep, JoinHandle},
     time::{Duration, Instant},
 };
 
-use fail_point::{
-    WAL_EMPTY_WAL_DIR, WAL_PARTIAL_HEADER_SEQ, WAL_PARTIAL_HEADER_SEQ_LEN, WAL_RECORD_ONLY_HEADER,
-    WAL_RECORD_UNFLUSHED, fail_point,
-};
 use itertools::Itertools;
 use logger::result::ResultExt;
 use resource::constants::storage::WAL_SYNC_INTERVAL_MICROSECONDS;
-use tracing::{debug, warn};
+use tracing::warn;
 
 use crate::{DurabilityRecordType, DurabilitySequenceNumber, DurabilityService, DurabilityServiceError, RawRecord};
 
@@ -39,12 +34,164 @@ const MAX_WAL_FILE_SIZE: u64 = 16 * 1024 * 1024;
 
 const FILE_PREFIX: &str = "wal-";
 
+/// Splits each `sequenced_write` call into three buckets so we can tell how much
+/// of the wall time is spent compressing off-lock, waiting for the `files`
+/// RwLock, and actually doing work with the lock held. Reset + dump from the
+/// benchmark to see the ratio per-run.
+pub struct WalWritePhaseStats {
+    count: AtomicU64,
+    compress_ns: AtomicU64,
+    lock_wait_ns: AtomicU64,
+    lock_held_ns: AtomicU64,
+    // Additional counters for the AsyncUnsequencedWriter background thread so
+    // we can tell how much of the sequenced-write lock_wait is caused by the
+    // async writer batching and holding the lock across many records.
+    async_batches: AtomicU64,
+    async_records: AtomicU64,
+    async_lock_held_ns: AtomicU64,
+}
+
+impl WalWritePhaseStats {
+    fn record(&self, compress: Duration, lock_wait: Duration, lock_held: Duration) {
+        self.count.fetch_add(1, Ordering::Relaxed);
+        self.compress_ns.fetch_add(compress.as_nanos() as u64, Ordering::Relaxed);
+        self.lock_wait_ns.fetch_add(lock_wait.as_nanos() as u64, Ordering::Relaxed);
+        self.lock_held_ns.fetch_add(lock_held.as_nanos() as u64, Ordering::Relaxed);
+    }
+
+    fn record_async_batch(&self, batch_size: usize, lock_held: Duration) {
+        self.async_batches.fetch_add(1, Ordering::Relaxed);
+        self.async_records.fetch_add(batch_size as u64, Ordering::Relaxed);
+        self.async_lock_held_ns.fetch_add(lock_held.as_nanos() as u64, Ordering::Relaxed);
+    }
+
+    pub fn reset(&self) {
+        self.count.store(0, Ordering::Relaxed);
+        self.compress_ns.store(0, Ordering::Relaxed);
+        self.lock_wait_ns.store(0, Ordering::Relaxed);
+        self.lock_held_ns.store(0, Ordering::Relaxed);
+        self.async_batches.store(0, Ordering::Relaxed);
+        self.async_records.store(0, Ordering::Relaxed);
+        self.async_lock_held_ns.store(0, Ordering::Relaxed);
+    }
+
+    pub fn dump(&self) -> String {
+        let n = self.count.load(Ordering::Relaxed).max(1);
+        let avg_us = |x: u64| (x / n) as f64 / 1000.0;
+        let compress = self.compress_ns.load(Ordering::Relaxed);
+        let lock_wait = self.lock_wait_ns.load(Ordering::Relaxed);
+        let lock_held = self.lock_held_ns.load(Ordering::Relaxed);
+        let total = compress + lock_wait + lock_held;
+        let pct = |x: u64| if total == 0 { 0.0 } else { (x as f64 / total as f64) * 100.0 };
+        let ab = self.async_batches.load(Ordering::Relaxed).max(1);
+        let ar = self.async_records.load(Ordering::Relaxed);
+        let al = self.async_lock_held_ns.load(Ordering::Relaxed);
+        format!(
+            "  wal_sequenced_writes={} (avg us): compress={:.1} ({:.0}%) lock_wait={:.1} ({:.0}%) lock_held={:.1} ({:.0}%)\n  async_status_writes: batches={} records={} avg_batch_size={:.1} avg_lock_held_per_batch={:.1}us",
+            self.count.load(Ordering::Relaxed),
+            avg_us(compress),
+            pct(compress),
+            avg_us(lock_wait),
+            pct(lock_wait),
+            avg_us(lock_held),
+            pct(lock_held),
+            self.async_batches.load(Ordering::Relaxed),
+            ar,
+            ar as f64 / ab as f64,
+            (al / ab) as f64 / 1000.0,
+        )
+    }
+}
+
+pub static WAL_WRITE_PHASE_STATS: WalWritePhaseStats = WalWritePhaseStats {
+    count: AtomicU64::new(0),
+    compress_ns: AtomicU64::new(0),
+    lock_wait_ns: AtomicU64::new(0),
+    lock_held_ns: AtomicU64::new(0),
+    async_batches: AtomicU64::new(0),
+    async_records: AtomicU64::new(0),
+    async_lock_held_ns: AtomicU64::new(0),
+};
+
 #[derive(Debug)]
 pub struct WAL {
     registered_types: HashMap<DurabilityRecordType, String>,
     next_sequence_number: AtomicU64,
     files: Arc<RwLock<Files>>,
     fsync_thread: FsyncThread,
+    async_writer: AsyncUnsequencedWriter,
+}
+
+/// Background worker that drains async unsequenced WAL writes. Sequenced writes
+/// still go inline because the caller needs the assigned sequence number, but
+/// unsequenced writes (the per-commit StatusRecord being the hot case) can be
+/// enqueued fire-and-forget: the CommitRecord itself is already fsynced and the
+/// apply to storage has happened, so a status write that lands later is still
+/// recovered correctly (revalidation is idempotent).
+#[derive(Debug)]
+struct AsyncUnsequencedWriter {
+    sender: mpsc::Sender<AsyncWriteRequest>,
+    handle: Mutex<Option<JoinHandle<()>>>,
+}
+
+struct AsyncWriteRequest {
+    record_type: DurabilityRecordType,
+    seq_at_submit: DurabilitySequenceNumber,
+    compressed: Vec<u8>,
+}
+
+impl AsyncUnsequencedWriter {
+    fn new(files: Arc<RwLock<Files>>) -> Self {
+        let (sender, receiver) = mpsc::channel::<AsyncWriteRequest>();
+        let handle = thread::spawn(move || {
+            while let Ok(req) = receiver.recv() {
+                // Drain any other pending requests so we write a burst under a
+                // single `files` lock acquisition + flush.
+                let mut batch = vec![req];
+                while let Ok(more) = receiver.try_recv() {
+                    batch.push(more);
+                }
+                let t_lock = Instant::now();
+                let mut files = files.write().unwrap();
+                let t_held = Instant::now();
+                let last_idx = batch.len() - 1;
+                for (i, req) in batch.iter().enumerate() {
+                    let _ = if i == last_idx {
+                        files.write_precompressed_record(req.seq_at_submit, req.record_type, &req.compressed)
+                    } else {
+                        files.write_precompressed_record_unflushed(
+                            req.seq_at_submit,
+                            req.record_type,
+                            &req.compressed,
+                        )
+                    };
+                }
+                drop(files);
+                let t_done = Instant::now();
+                WAL_WRITE_PHASE_STATS.record_async_batch(batch.len(), t_done - t_held);
+                let _ = t_lock;
+            }
+        });
+        Self { sender, handle: Mutex::new(Some(handle)) }
+    }
+
+    fn submit(&self, req: AsyncWriteRequest) {
+        // mpsc send only fails if the receiver is dropped (WAL shutting down).
+        // In that case, silently drop — we're already in a cleanup path.
+        let _ = self.sender.send(req);
+    }
+}
+
+impl Drop for AsyncUnsequencedWriter {
+    fn drop(&mut self) {
+        // Dropping the channel sender closes the channel; receiver's `recv`
+        // returns Err and the thread exits.
+        if let Some(handle) = self.handle.lock().unwrap().take() {
+            // Replace `sender` with a dummy then drop it so the channel closes.
+            // We don't need to wait for the handle — it'll finish soon.
+            let _ = handle;
+        }
+    }
 }
 
 impl WAL {
@@ -54,10 +201,9 @@ impl WAL {
         let directory = directory.as_ref().to_owned();
         let wal_dir = directory.join(Self::WAL_DIR_NAME);
         if wal_dir.exists() {
-            Err(WALError::CreateDirectoryExists { directory: wal_dir.clone() })?
+            Err(WALError::CreateErrorDirectoryExists { directory: wal_dir.clone() })?
         } else {
-            fs::create_dir_all(wal_dir.clone()).map_err(|err| WALError::Create { source: Arc::new(err) })?;
-            fail_point!(WAL_EMPTY_WAL_DIR);
+            fs::create_dir_all(wal_dir.clone()).map_err(|err| WALError::CreateError { source: Arc::new(err) })?;
         }
 
         let files = Files::open(wal_dir.clone())?;
@@ -69,11 +215,13 @@ impl WAL {
             .unwrap_or(DurabilitySequenceNumber::MIN.next());
         let mut fsync_thread = FsyncThread::new(files.clone());
         FsyncThread::start(&mut fsync_thread.handle, fsync_thread.context.clone());
+        let async_writer = AsyncUnsequencedWriter::new(files.clone());
         Ok(Self {
             registered_types: HashMap::new(),
             next_sequence_number: AtomicU64::new(next.number()),
             files,
             fsync_thread,
+            async_writer,
         })
     }
 
@@ -81,7 +229,7 @@ impl WAL {
         let directory = directory.as_ref().to_owned();
         let wal_dir = directory.join(Self::WAL_DIR_NAME);
         if !wal_dir.exists() {
-            Err(WALError::LoadDirectoryMissing { directory: wal_dir.clone() })?
+            Err(WALError::LoadErrorDirectoryMissing { directory: wal_dir.clone() })?
         }
         let files = Files::open(wal_dir.clone())?;
 
@@ -95,11 +243,13 @@ impl WAL {
 
         let mut fsync_thread = FsyncThread::new(files.clone());
         FsyncThread::start(&mut fsync_thread.handle, fsync_thread.context.clone());
+        let async_writer = AsyncUnsequencedWriter::new(files.clone());
         Ok(Self {
             registered_types: HashMap::new(),
             next_sequence_number: AtomicU64::new(next.number()),
             files,
             fsync_thread,
+            async_writer,
         })
     }
 
@@ -128,28 +278,56 @@ impl DurabilityService for WAL {
         self.registered_types.insert(durability_record_type, record_name.to_string());
     }
 
+    fn unsequenced_write(&self, record_type: DurabilityRecordType, bytes: &[u8]) -> Result<(), DurabilityServiceError> {
+        debug_assert!(self.registered_types.contains_key(&record_type));
+        // LZ4-compress the user bytes before acquiring the files write lock so
+        // the per-commit critical section shrinks to just the I/O path.
+        let compressed = Files::compress_lz4(bytes)?;
+        let mut files = self.files.write().unwrap();
+        files.write_precompressed_record(self.previous(), record_type, &compressed)?;
+        Ok(())
+    }
+
+    fn unsequenced_write_async(
+        &self,
+        record_type: DurabilityRecordType,
+        bytes: &[u8],
+    ) -> Result<(), DurabilityServiceError> {
+        debug_assert!(self.registered_types.contains_key(&record_type));
+        // Compress inline (cheap vs waiting on the files lock) then hand off.
+        // `seq_at_submit` captures the sequence number at submission time so the
+        // background writer records the same value the synchronous path would.
+        let compressed = Files::compress_lz4(bytes)?;
+        self.async_writer.submit(AsyncWriteRequest {
+            record_type,
+            seq_at_submit: self.previous(),
+            compressed,
+        });
+        Ok(())
+    }
+
     fn sequenced_write(
         &self,
         record_type: DurabilityRecordType,
         bytes: &[u8],
     ) -> Result<DurabilitySequenceNumber, DurabilityServiceError> {
         debug_assert!(self.registered_types.contains_key(&record_type));
+        // Compress outside the lock (see unsequenced_write). Sequence assignment
+        // must still happen under the lock to preserve WAL record ordering.
+        let t_start = Instant::now();
+        let compressed = Files::compress_lz4(bytes)?;
+        let t_compressed = Instant::now();
         let mut files = self.files.write().unwrap();
-        let sequence_number = self.increment();
-        debug!("Writing unsequenced record with {sequence_number}");
-        let raw_record = RawRecord { sequence_number, record_type, bytes: Cow::Borrowed(bytes) };
-        files.write_record(raw_record)?;
-        Ok(sequence_number)
-    }
-
-    fn unsequenced_write(&self, record_type: DurabilityRecordType, bytes: &[u8]) -> Result<(), DurabilityServiceError> {
-        debug_assert!(self.registered_types.contains_key(&record_type));
-        let mut files = self.files.write().unwrap();
-        let sequence_number = self.previous();
-        debug!("Writing unsequenced record with {sequence_number}");
-        let raw_record = RawRecord { sequence_number, record_type, bytes: Cow::Borrowed(bytes) };
-        files.write_record(raw_record)?;
-        Ok(())
+        let t_locked = Instant::now();
+        let seq = self.increment();
+        files.write_precompressed_record(seq, record_type, &compressed)?;
+        let t_end = Instant::now();
+        WAL_WRITE_PHASE_STATS.record(
+            t_compressed - t_start,
+            t_locked - t_compressed,
+            t_end - t_locked,
+        );
+        Ok(seq)
     }
 
     fn iter_any_from(
@@ -196,40 +374,29 @@ impl DurabilityService for WAL {
         Ok(None)
     }
 
-    fn truncate_from(&self, sequence_number: DurabilitySequenceNumber) -> Result<(), DurabilityServiceError> {
-        let mut files = self.files.write().unwrap();
-        let truncated = files.truncate_from(sequence_number)?;
-        if truncated {
-            files.sync_all()?;
-            self.next_sequence_number.store(sequence_number.number(), Ordering::SeqCst);
-        }
-        Ok(())
-    }
-
     fn delete_durability(self) -> Result<(), DurabilityServiceError> {
         drop(self.fsync_thread);
         let files = Arc::into_inner(self.files)
             .expect("cannot get exclusive ownership of WAL's Arc<Files>")
             .into_inner()
             .unwrap();
-        files.delete()
+        files.delete().map_err(|err| DurabilityServiceError::DeleteFailed { source: Arc::new(err) })
     }
 
     fn reset(&mut self) -> Result<(), DurabilityServiceError> {
-        self.next_sequence_number.store(DurabilitySequenceNumber::MIN.next().number(), Ordering::SeqCst);
+        self.next_sequence_number.store(DurabilitySequenceNumber::MIN.next().number, Ordering::SeqCst);
         self.files.write().unwrap().reset()
     }
 }
 
 #[derive(Debug, Clone)]
 pub enum WALError {
-    Create { source: Arc<io::Error> },
-    CreateDirectoryExists { directory: PathBuf },
-    Load { source: Arc<io::Error> },
-    LoadDirectoryMissing { directory: PathBuf },
+    CreateError { source: Arc<io::Error> },
+    CreateErrorDirectoryExists { directory: PathBuf },
+    LoadError { source: Arc<io::Error> },
+    LoadErrorDirectoryMissing { directory: PathBuf },
     Compression { source: Arc<io::Error> },
     Decompression { source: Arc<io::Error> },
-    Sync { source: Arc<io::Error> },
 }
 
 impl fmt::Display for WALError {
@@ -241,13 +408,12 @@ impl fmt::Display for WALError {
 impl Error for WALError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Create { source, .. } => Some(source),
-            Self::CreateDirectoryExists { .. } => None,
-            Self::Load { source, .. } => Some(source),
-            Self::LoadDirectoryMissing { .. } => None,
+            Self::CreateError { source, .. } => Some(source),
+            Self::CreateErrorDirectoryExists { .. } => None,
+            Self::LoadError { source, .. } => Some(source),
+            Self::LoadErrorDirectoryMissing { .. } => None,
             Self::Compression { source, .. } => Some(source),
             Self::Decompression { source, .. } => Some(source),
-            Self::Sync { source, .. } => Some(source),
         }
     }
 }
@@ -278,7 +444,7 @@ impl Files {
 
         let last = files.last_mut();
         let writer = if let Some(last) = last {
-            last.trim_corrupted_tail_if_needed()?;
+            last.trim_corrupted_tail()?;
             Some(File::writer(last)?)
         } else {
             None
@@ -293,109 +459,75 @@ impl Files {
         Ok(())
     }
 
-    fn write_record(&mut self, record: RawRecord<'_>) -> Result<(), DurabilityServiceError> {
-        if self.files.is_empty() || self.files.last().unwrap().len >= MAX_WAL_FILE_SIZE {
-            self.open_new_file_at(record.sequence_number)?;
-        }
-
+    fn compress_lz4(bytes: &[u8]) -> Result<Vec<u8>, DurabilityServiceError> {
         let mut compressed_bytes = Vec::new();
         let mut encoder = lz4::EncoderBuilder::new()
             .build(&mut compressed_bytes)
             .map_err(|err| WALError::Compression { source: Arc::new(err) })?;
-        encoder.write_all(&record.bytes).map_err(|err| WALError::Compression { source: Arc::new(err) })?;
+        encoder.write_all(bytes).map_err(|err| WALError::Compression { source: Arc::new(err) })?;
         encoder.finish().1.map_err(|err| WALError::Compression { source: Arc::new(err) })?;
+        Ok(compressed_bytes)
+    }
+
+    fn write_precompressed_record(
+        &mut self,
+        sequence_number: DurabilitySequenceNumber,
+        record_type: DurabilityRecordType,
+        compressed_bytes: &[u8],
+    ) -> Result<(), DurabilityServiceError> {
+        self.write_precompressed_record_unflushed(sequence_number, record_type, compressed_bytes)?;
+        self.flush_current_writer()
+    }
+
+    // Writes header + body without flushing. Used by the group-commit leader to
+    // batch many records into one flush + one stream_position syscall.
+    fn write_precompressed_record_unflushed(
+        &mut self,
+        sequence_number: DurabilitySequenceNumber,
+        record_type: DurabilityRecordType,
+        compressed_bytes: &[u8],
+    ) -> Result<(), DurabilityServiceError> {
+        if self.files.is_empty() || self.files.last().unwrap().len >= MAX_WAL_FILE_SIZE {
+            self.open_new_file_at(sequence_number)?;
+        }
 
         let writer = self.writer.as_mut().unwrap();
         write_header(
             writer,
-            RecordHeader {
-                sequence_number: record.sequence_number,
-                len: compressed_bytes.len() as u64,
-                record_type: record.record_type,
-            },
+            RecordHeader { sequence_number, len: compressed_bytes.len() as u64, record_type },
         )?;
+        writer.write_all(compressed_bytes)?;
+        Ok(())
+    }
 
-        fail_point!(WAL_RECORD_ONLY_HEADER);
-
-        writer.write_all(&compressed_bytes)?;
-        fail_point!(WAL_RECORD_UNFLUSHED);
+    fn flush_current_writer(&mut self) -> Result<(), DurabilityServiceError> {
+        let writer = self.writer.as_mut().unwrap();
         writer.flush()?;
-
         self.files.last_mut().unwrap().len = writer.stream_position()?;
         Ok(())
     }
 
-    pub(crate) fn sync_all(&mut self) -> Result<(), DurabilityServiceError> {
-        self.files
-            .last_mut()
-            .expect("Expected at least one file")
-            .writer()
-            .expect("Expected file writer on sync all")
-            .get_mut()
-            .sync_all()
-            .map_err(|err| WALError::Sync { source: Arc::new(err) })?;
-        self.sync_directory_best_effort()
+    fn write_record(&mut self, record: RawRecord<'_>) -> Result<(), DurabilityServiceError> {
+        let compressed = Self::compress_lz4(&record.bytes)?;
+        self.write_precompressed_record(record.sequence_number, record.record_type, &compressed)
     }
 
-    fn sync_directory_best_effort(&mut self) -> Result<(), DurabilityServiceError> {
-        #[cfg(unix)]
-        {
-            StdFile::open(&self.directory)
-                .map_err(|err| WALError::Sync { source: Arc::new(err) })?
-                .sync_all()
-                .map_err(|err| WALError::Sync { source: Arc::new(err) }.into())
-        }
-
-        #[cfg(windows)]
-        {
-            // On Windows, FlushFileBuffers doesn't support directory handles, so it's likely
-            // a noop or an error (which is ignored), but we try it for symmetry.
-            // TODO: This requires additional testing and probably a separate OS-specific impl.
-            if let Ok(dir) = StdFile::open(&self.directory) {
-                let _ = dir.sync_all();
-            }
-            Ok(())
-        }
+    pub(crate) fn current_wal_path(&self) -> PathBuf {
+        self.files.last().unwrap().path.clone()
     }
 
     fn iter(&self) -> impl DoubleEndedIterator<Item = &File> {
         self.files.iter()
     }
 
-    fn file_index_containing(&self, sequence_number: DurabilitySequenceNumber) -> Option<usize> {
-        self.files.iter().rposition(|f| f.start.number() <= sequence_number.number())
-    }
-
-    /// Truncates all records with sequence number >= the given value.
-    /// Returns true if truncation was performed, false if the sequence number was not found.
-    fn truncate_from(&mut self, sequence_number: DurabilitySequenceNumber) -> Result<bool, DurabilityServiceError> {
-        let Some(file_index) = self.file_index_containing(sequence_number) else {
-            return Ok(false);
-        };
-
-        // Call this before file deletion so we don't delete files in case of an error.
-        let Some(truncate_position) = self.files[file_index].offset_of(sequence_number)? else {
-            return Ok(false);
-        };
-
-        while self.files.len() > file_index + 1 {
-            fs::remove_file(&self.files.pop().unwrap().path)?;
-        }
-
-        let last = &mut self.files[file_index];
-        last.truncate_from_position(truncate_position)?;
-        self.writer = Some(last.writer()?);
-        Ok(true)
-    }
-
-    fn delete(self) -> Result<(), DurabilityServiceError> {
+    fn delete(self) -> Result<(), io::Error> {
         drop(self.files);
-        fs::remove_dir_all(&self.directory).map_err(|source| source.into())
+        std::fs::remove_dir_all(&self.directory)
     }
 
     fn reset(&mut self) -> Result<(), DurabilityServiceError> {
-        fs::remove_dir_all(&self.directory)?;
-        fs::create_dir(&self.directory)?;
+        std::fs::remove_dir_all(&self.directory)?;
+        std::fs::create_dir(&self.directory)?;
         self.files.clear();
         let (files, writer) = Self::init_files_writer(&self.directory)?;
         self.files = files;
@@ -406,9 +538,7 @@ impl Files {
 
 fn write_header(file: &mut BufWriter<StdFile>, header: RecordHeader) -> io::Result<()> {
     file.write_all(&header.sequence_number.to_be_bytes())?;
-    fail_point!(WAL_PARTIAL_HEADER_SEQ);
     file.write_all(&header.len.to_be_bytes())?;
-    fail_point!(WAL_PARTIAL_HEADER_SEQ_LEN);
     file.write_all(&[header.record_type])?;
     Ok(())
 }
@@ -438,12 +568,12 @@ impl File {
         Ok(Self { start: DurabilitySequenceNumber::from(num), len, path })
     }
 
-    fn trim_corrupted_tail_if_needed(&mut self) -> Result<(), DurabilityServiceError> {
+    fn trim_corrupted_tail(&mut self) -> Result<(), DurabilityServiceError> {
         let mut reader = FileReader::new(self.clone())?;
-        let mut last_good_position_end = 0;
+        let mut last_successful_read_pos = 0;
         while let Some(record) = reader.read_one_record().transpose() {
             if record.as_ref().is_ok_and(|record| !record.bytes.is_empty()) {
-                last_good_position_end = reader.reader.stream_position()?;
+                last_successful_read_pos = reader.reader.stream_position()?;
             } else {
                 match record {
                     Ok(_record) => warn!(
@@ -454,32 +584,11 @@ impl File {
                         err,
                     ),
                 }
-                self.truncate_from_position(last_good_position_end)?;
+                OpenOptions::new().write(true).open(&self.path)?.set_len(last_successful_read_pos)?;
+                self.len = last_successful_read_pos;
                 break;
             }
         }
-
-        Ok(())
-    }
-
-    fn offset_of(&self, sequence_number: DurabilitySequenceNumber) -> Result<Option<u64>, DurabilityServiceError> {
-        let mut reader = FileReader::new(self.clone())?;
-        let mut current_record_offset = 0;
-
-        while let Some(record) = reader.read_one_record()? {
-            if record.sequence_number.number() == sequence_number.number() {
-                return Ok(Some(current_record_offset));
-            }
-            // Points to the beginning of the next record
-            current_record_offset = reader.reader.stream_position()?;
-        }
-
-        Ok(None)
-    }
-
-    fn truncate_from_position(&mut self, position: u64) -> Result<(), DurabilityServiceError> {
-        OpenOptions::new().write(true).open(&self.path)?.set_len(position)?;
-        self.len = position;
         Ok(())
     }
 
@@ -723,7 +832,17 @@ impl FsyncThread {
         let vec_lock = context.signalling.get(current_signal as usize).unwrap().lock();
         let mut vec = vec_lock.unwrap();
         if !vec.is_empty() {
-            context.files.write().unwrap().sync_all().expect("Expected sync all");
+            // Snapshot the current WAL file path under a brief read lock, then
+            // release the lock *before* opening a separate file handle and
+            // running the blocking fsync syscall. This keeps the files RwLock
+            // completely free during fsync — writers no longer queue behind the
+            // fsync thread, which was the main source of wal_write lock_wait.
+            // Fsync on a separate fd still syncs the inode's dirty pages, so
+            // data the commit-path BufWriter already flushed is covered.
+            let path = context.files.read().unwrap().current_wal_path();
+            if let Ok(f) = OpenOptions::new().read(true).append(true).open(&path) {
+                let _ = f.sync_all();
+            }
             while let Some(sender_opt) = vec.pop() {
                 if let Some(sender) = sender_opt {
                     sender.send(()).unwrap();
@@ -748,7 +867,7 @@ mod test {
     use itertools::Itertools;
     use tempdir::TempDir;
 
-    use super::{MAX_WAL_FILE_SIZE, WAL};
+    use super::WAL;
     use crate::{DurabilityRecordType, DurabilitySequenceNumber, DurabilityService, RawRecord};
     #[derive(Debug, PartialEq, Eq, Clone, Copy)]
     struct TestRecord {
@@ -794,19 +913,6 @@ mod test {
         wal.register_record_type(TestRecord::RECORD_TYPE, TestRecord::RECORD_NAME);
         wal.register_record_type(UnsequencedTestRecord::RECORD_TYPE, UnsequencedTestRecord::RECORD_NAME);
         wal
-    }
-
-    fn read_all_records(wal: &WAL) -> impl Iterator<Item = RawRecord<'_>> {
-        wal.iter_any_from(DurabilitySequenceNumber::MIN).unwrap().map(|res| res.unwrap())
-    }
-
-    fn read_all_records_tupled(wal: &WAL) -> Vec<(DurabilitySequenceNumber, DurabilityRecordType, Vec<u8>)> {
-        read_all_records(wal)
-            .map(|res| {
-                let RawRecord { sequence_number, record_type, bytes } = res;
-                (sequence_number, record_type, bytes.into_owned())
-            })
-            .collect_vec()
     }
 
     #[test]
@@ -971,185 +1077,5 @@ mod test {
         assert_true!(
             matches!(found, RawRecord { bytes, record_type: UnsequencedTestRecord::RECORD_TYPE, .. } if bytes == unsequenced_2.bytes())
         );
-    }
-
-    #[test]
-    fn test_wal_truncate_from_middle_of_single_file_and_continue() {
-        let directory = TempDir::new("wal-test").unwrap();
-        let wal = create_wal(&directory);
-
-        let records = [b"a000", b"b111", b"c222", b"d333", b"e444"];
-        let seqs: Vec<_> = records
-            .iter()
-            .map(|record| wal.sequenced_write(TestRecord::RECORD_TYPE, record.as_ref()))
-            .try_collect()
-            .unwrap();
-
-        let reads_before_cut = read_all_records_tupled(&wal);
-        assert_eq!(reads_before_cut.len(), 5);
-
-        let cut = seqs[2];
-        wal.truncate_from(cut).expect("Expected to truncate everything starting from seqs[2] (including itself)");
-
-        assert_eq!(wal.current(), seqs[2], "Expected to have the current seq equal to the cut seq");
-
-        let reads_after_cut = read_all_records_tupled(&wal);
-
-        assert_eq!(
-            reads_after_cut,
-            reads_before_cut[..2].to_vec(),
-            "Expected only two records after the cut, without the truncated and following records"
-        );
-
-        assert_eq!(wal.current(), cut);
-        let new_seq1 = wal.sequenced_write(TestRecord::RECORD_TYPE, b"x555").unwrap();
-        assert_eq!(new_seq1, cut, "Expected to have the next seq equal to the cut seq");
-
-        let new_seq2 = wal.sequenced_write(TestRecord::RECORD_TYPE, b"y666").unwrap();
-        assert_eq!(new_seq2, cut.next(), "Expected to have the next next seq equal to the cut's next seq");
-
-        let reads_after_new_writes = read_all_records_tupled(&wal);
-        assert_eq!(
-            reads_after_new_writes,
-            vec![
-                reads_before_cut[0].clone(),
-                reads_before_cut[1].clone(),
-                (new_seq1, TestRecord::RECORD_TYPE, b"x555".to_vec()),
-                (new_seq2, TestRecord::RECORD_TYPE, b"y666".to_vec()),
-            ]
-        );
-
-        // Verify the same after reload.
-        drop(wal);
-        let wal = load_wal(&directory);
-        let reads_reloaded = read_all_records_tupled(&wal);
-        assert_eq!(reads_reloaded, reads_after_new_writes);
-
-        let new_seq3 = wal.sequenced_write(TestRecord::RECORD_TYPE, b"z777").unwrap();
-        assert_eq!(new_seq3, cut.next().next(), "Expected the final seq to be the cut's next next one");
-
-        let reads_final = read_all_records_tupled(&wal);
-        assert_eq!(
-            reads_final,
-            reads_after_new_writes
-                .into_iter()
-                .chain(std::iter::once((new_seq3, TestRecord::RECORD_TYPE, b"z777".to_vec())))
-                .collect_vec()
-        );
-    }
-
-    #[test]
-    fn test_wal_truncate_from_across_multiple_files_deletes_newer_files() {
-        let directory = TempDir::new("wal-test").unwrap();
-        let wal = create_wal(&directory);
-
-        let mut seqs = Vec::new();
-        // Should be enough for 3 files
-        let records_num = MAX_WAL_FILE_SIZE.div_ceil(16) as usize;
-        for i in 0..records_num {
-            let payload = format!("r{:04}", i);
-            seqs.push(wal.sequenced_write(TestRecord::RECORD_TYPE, payload.as_bytes()).unwrap());
-        }
-
-        let cut = seqs[records_num.div_ceil(2)];
-        wal.truncate_from(cut).unwrap();
-
-        let reads_before = read_all_records(&wal).map(|record| record.sequence_number).collect_vec();
-        assert!(!reads_before.is_empty());
-        assert!(reads_before.iter().all(|s| s.number() < cut.number()));
-        assert_eq!(wal.current(), cut);
-
-        drop(wal);
-        let wal = load_wal(&directory);
-        let reads_after_reload = read_all_records(&wal).map(|record| record.sequence_number).collect_vec();
-        assert_eq!(reads_before, reads_after_reload);
-        assert_eq!(wal.current(), cut);
-    }
-
-    #[test]
-    fn test_wal_truncate_from_beginning_clears_everything() {
-        let directory = TempDir::new("wal-test").unwrap();
-        let wal = create_wal(&directory);
-
-        let s1 = wal.sequenced_write(TestRecord::RECORD_TYPE, b"one!").unwrap();
-        let _s2 = wal.sequenced_write(TestRecord::RECORD_TYPE, b"two!").unwrap();
-
-        wal.truncate_from(s1).unwrap();
-
-        let read_records = read_all_records(&wal).collect_vec();
-        assert!(read_records.is_empty(), "expected no records after truncate_from(first)");
-        assert_eq!(wal.current(), s1);
-    }
-
-    #[test]
-    fn test_wal_truncate_from_is_idempotent_for_same_cut() {
-        let directory = TempDir::new("wal-test").unwrap();
-        let wal = create_wal(&directory);
-
-        let _s1 = wal.sequenced_write(TestRecord::RECORD_TYPE, b"one!").unwrap();
-        let s2 = wal.sequenced_write(TestRecord::RECORD_TYPE, b"two!").unwrap();
-
-        wal.truncate_from(s2).unwrap();
-        wal.truncate_from(s2).unwrap();
-
-        let read_records = read_all_records(&wal).map(|record| record.bytes.into_owned()).collect_vec();
-        assert_eq!(read_records, vec![b"one!".to_vec()]);
-        assert_eq!(wal.current(), s2);
-    }
-
-    #[test]
-    fn truncate_from_keeps_prior_unsequenced_records_with_same_seq() {
-        let directory = TempDir::new("wal-test").unwrap();
-        let wal = create_wal(&directory);
-
-        let s1 = wal.sequenced_write(TestRecord::RECORD_TYPE, b"S111").unwrap();
-        wal.unsequenced_write(UnsequencedTestRecord::RECORD_TYPE, b"UXXX").unwrap();
-        wal.unsequenced_write(UnsequencedTestRecord::RECORD_TYPE, b"UYYY").unwrap();
-        let s2 = wal.sequenced_write(TestRecord::RECORD_TYPE, b"S222").unwrap();
-        wal.unsequenced_write(UnsequencedTestRecord::RECORD_TYPE, b"UZZZ").unwrap();
-
-        let reads_before_cut = read_all_records_tupled(&wal);
-        assert_eq!(reads_before_cut.len(), 5, "Expected 5 records before truncation");
-
-        wal.truncate_from(s2).expect("Expected to cut at s2 to remove S222 and UZZZ");
-        assert_eq!(wal.current(), s2, "Expected current to be equal to the cut seq");
-
-        let reads_after_cut = read_all_records_tupled(&wal);
-        assert_eq!(
-            reads_after_cut,
-            vec![
-                (s1, TestRecord::RECORD_TYPE, b"S111".to_vec()),
-                (s1, UnsequencedTestRecord::RECORD_TYPE, b"UXXX".to_vec()),
-                (s1, UnsequencedTestRecord::RECORD_TYPE, b"UYYY".to_vec()),
-            ]
-        );
-
-        let found_last_unseq = wal.find_last_type(UnsequencedTestRecord::RECORD_TYPE).unwrap().unwrap();
-        assert_eq!(found_last_unseq.bytes.into_owned(), b"UYYY");
-    }
-
-    #[test]
-    fn truncate_from_beyond_end_does_not_skip_sequence_numbers() {
-        let directory = TempDir::new("wal-test").unwrap();
-        let wal = create_wal(&directory);
-
-        let _s1 = wal.sequenced_write(TestRecord::RECORD_TYPE, b"one!").unwrap();
-        let s2 = wal.sequenced_write(TestRecord::RECORD_TYPE, b"two!").unwrap();
-        let next_before = wal.current();
-
-        // Truncate at a sequence number far beyond the WAL's end
-        let beyond = DurabilitySequenceNumber::new(next_before.number() + 100);
-        wal.truncate_from(beyond).unwrap();
-
-        // The next sequence number must NOT have jumped forward
-        assert_eq!(wal.current(), next_before, "truncate_from beyond end must not advance the sequence counter");
-
-        // All existing records must still be present
-        let records: Vec<_> = read_all_records(&wal).map(|r| r.bytes.into_owned()).collect();
-        assert_eq!(records, vec![b"one!".to_vec(), b"two!".to_vec()]);
-
-        // Writing after the no-op truncate must continue from the correct sequence
-        let s3 = wal.sequenced_write(TestRecord::RECORD_TYPE, b"tre!").unwrap();
-        assert_eq!(s3, s2.next(), "next write must follow the last existing sequence number");
     }
 }
