@@ -442,6 +442,7 @@ where
 {
     let total_transactions = total_ops / ops_per_tx;
     let next_batch = Arc::new(AtomicU64::new(0));
+    let ops_completed = Arc::new(AtomicU64::new(0));
     let thread_fn = Arc::new(thread_fn);
 
     let start_signal = Arc::new(RwLock::new(()));
@@ -455,6 +456,7 @@ where
             let thread_fn = thread_fn.clone();
             let next_batch = next_batch.clone();
             let total = total_transactions;
+            let ops_done = ops_completed.clone();
             thread::spawn(move || {
                 drop(signal.read().unwrap());
                 loop {
@@ -463,16 +465,60 @@ where
                         break;
                     }
                     thread_fn(&db, batch_id, ops_per_tx, &timings);
+                    ops_done.fetch_add(ops_per_tx as u64, Ordering::Relaxed);
                 }
             })
         })
         .collect();
+
+    // Optional progress reporter. Prints windowed ops/s every
+    // BENCH_PROGRESS_INTERVAL_MS milliseconds so we can see throughput
+    // degrade as RocksDB fills up and MVCC read depth grows.
+    let progress_stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let progress_handle: Option<JoinHandle<()>> = env::var("BENCH_PROGRESS_INTERVAL_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(|interval_ms| {
+            let stop = progress_stop.clone();
+            let ops_done = ops_completed.clone();
+            thread::spawn(move || {
+                // Wait for benchmark to actually start (signal release) by polling ops_done.
+                while ops_done.load(Ordering::Relaxed) == 0 && !stop.load(Ordering::Relaxed) {
+                    thread::sleep(std::time::Duration::from_millis(1));
+                }
+                let start = Instant::now();
+                let mut last_t = start;
+                let mut last_ops: u64 = 0;
+                while !stop.load(Ordering::Relaxed) {
+                    thread::sleep(std::time::Duration::from_millis(interval_ms));
+                    let now = Instant::now();
+                    let done = ops_done.load(Ordering::Relaxed);
+                    let delta_ops = done.saturating_sub(last_ops);
+                    let delta_s = (now - last_t).as_secs_f64();
+                    let cum_s = (now - start).as_secs_f64();
+                    eprintln!(
+                        "  [progress] t={:>6.1}s ops={:>10} window_ops/s={:>8} cum_ops/s={:>8}",
+                        cum_s,
+                        done,
+                        (delta_ops as f64 / delta_s) as u64,
+                        (done as f64 / cum_s) as u64,
+                    );
+                    last_t = now;
+                    last_ops = done;
+                }
+            })
+        });
 
     let start = Instant::now();
     drop(write_guard);
 
     for handle in join_handles {
         handle.join().unwrap();
+    }
+
+    progress_stop.store(true, Ordering::Relaxed);
+    if let Some(h) = progress_handle {
+        h.join().unwrap();
     }
 
     start.elapsed()
