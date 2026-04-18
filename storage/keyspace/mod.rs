@@ -10,10 +10,13 @@ use rocksdb::{DB, DBRawIterator};
 
 use crate::snapshot::pool::{PoolRecycleGuard, Poolable, SinglePool};
 
+mod attribute_bloom;
 mod constants;
 pub mod iterator;
 mod keyspace;
 mod raw_iterator;
+
+pub use attribute_bloom::AttributeBloom;
 
 impl Poolable for DBRawIterator<'static> {}
 

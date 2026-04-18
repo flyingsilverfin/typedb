@@ -165,7 +165,29 @@ impl IsolationManager {
                     CommitStatus::Validated(commit_record) | CommitStatus::Applied(commit_record) => commit_record,
                     _ => panic!("get_commit_record called on uncommitted record"), // TODO: Do we want to be able to apply on pending?
                 };
-                Ok(ValidatedCommit::Write(WriteBatches::from_operations(sequence_number, commit_record.operations())))
+                // Collect bloom keys before we consume the operations into
+                // WriteBatches. Only Put / Insert keys go into the bloom
+                // (Delete is not tracked — see attribute_bloom.rs).
+                let mut bloom_keys: Vec<(crate::keyspace::KeyspaceId, Vec<BloomKey>)> = Vec::new();
+                for (index, buffer) in commit_record.operations().write_buffers().enumerate() {
+                    let writes = buffer.writes();
+                    if writes.is_empty() {
+                        continue;
+                    }
+                    let keys: Vec<BloomKey> = writes
+                        .iter()
+                        .filter_map(|(k, w)| match w {
+                            crate::snapshot::write::Write::Insert { .. }
+                            | crate::snapshot::write::Write::Put { .. } => Some(k.clone()),
+                            crate::snapshot::write::Write::Delete => None,
+                        })
+                        .collect();
+                    if !keys.is_empty() {
+                        bloom_keys.push((crate::keyspace::KeyspaceId(index as u8), keys));
+                    }
+                }
+                let batches = WriteBatches::from_operations(sequence_number, commit_record.operations());
+                Ok(ValidatedCommit::Write { batches, bloom_keys })
             }
         }
     }
@@ -306,8 +328,18 @@ impl IsolationManager {
 
 pub(crate) enum ValidatedCommit {
     Conflict(IsolationConflict),
-    Write(WriteBatches),
+    /// A validated commit that's ready to apply. `bloom_keys` carries the
+    /// per-keyspace Put/Insert keys so the caller can populate attribute
+    /// bloom filters after the RocksDB apply succeeds — we extract them here
+    /// (while we still borrow the CommitRecord from the timeline window)
+    /// to avoid having to retain the whole record or re-fetch it post-apply.
+    Write { batches: WriteBatches, bloom_keys: Vec<(crate::keyspace::KeyspaceId, Vec<BloomKey>)> },
 }
+
+/// Key bytes extracted for bloom population. Uses `ByteArray<BUFFER_KEY_INLINE>`
+/// so typical attribute keys stay on the stack; heap allocation only happens
+/// for longer keys.
+pub(crate) type BloomKey = bytes::byte_array::ByteArray<{ resource::constants::snapshot::BUFFER_KEY_INLINE }>;
 
 fn resolve_concurrent(
     commit_record: &CommitRecord,

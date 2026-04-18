@@ -338,7 +338,7 @@ impl<Durability> MVCCStorage<Durability> {
         let t_isolation = Instant::now();
 
         match validate_result {
-            Ok(ValidatedCommit::Write(write_batches)) => {
+            Ok(ValidatedCommit::Write { batches: write_batches, bloom_keys }) => {
                 sync_notifier.recv().unwrap(); // Ensure WAL is persisted before inserting to the KV store
                                                // Write to the k-v store
                 commit_profile.snapshot_durable_write_data_confirmed();
@@ -349,6 +349,20 @@ impl<Durability> MVCCStorage<Durability> {
                     .map_err(|error| Keyspace { name: self.name.clone(), source: Arc::new(error) })?;
                 commit_profile.snapshot_storage_written();
                 let t_storage = Instant::now();
+
+                // Populate per-keyspace attribute blooms with every Put/Insert
+                // key. Must happen AFTER storage.write succeeds (so the bloom
+                // never claims a key exists before it really does) and BEFORE
+                // `applied` advances the watermark (so any tx that opens past
+                // our seq sees the bloom entries for our writes). The lock-free
+                // bloom inserts (fetch_or on AtomicU64) don't contend; this
+                // adds on the order of microseconds per 1000-Put batch.
+                for (keyspace_id, keys) in &bloom_keys {
+                    let bloom = self.keyspaces.attribute_bloom(*keyspace_id);
+                    for k in keys {
+                        bloom.insert(k.as_ref());
+                    }
+                }
 
                 // Inform the isolation manager and increment the watermark
                 self.isolation_manager
@@ -445,11 +459,20 @@ impl<Durability> MVCCStorage<Durability> {
                 storage_counters.clone(),
             );
 
+            // Fast-path oracle: if the attribute bloom says a Put key is
+            // definitely absent from storage, we can skip the MVCC read
+            // entirely and set reinsert=true (genuinely-new key → needs to
+            // be written). A bloom hit means "maybe present", falling through
+            // to the existing iterator-based MVCC check. Bloom is populated
+            // at commit-apply time, so any key we actually find in storage
+            // will have produced a bloom hit on the way in — no false
+            // negatives (the bloom insert happens-before the corresponding
+            // watermark advance, see snapshot_commit).
+            let bloom = self.keyspaces.attribute_bloom(buffer.keyspace_id).clone();
+
             for (key, value, reinsert, known_to_exist) in puts {
                 let raw_key: &[u8] = key.as_ref();
                 if known_to_exist {
-                    // Debug-only sanity check: the expected-existing row must be
-                    // present at this MVCC snapshot.
                     #[cfg(debug_assertions)]
                     {
                         iterator.seek(raw_key);
@@ -460,6 +483,10 @@ impl<Durability> MVCCStorage<Durability> {
                         );
                     }
                     reinsert.store(false, Ordering::Release);
+                } else if !bloom.may_contain(raw_key) {
+                    // Bloom says definitely absent → genuinely-new Put,
+                    // needs a write. Skip MVCC read entirely.
+                    reinsert.store(true, Ordering::Release);
                 } else {
                     iterator.seek(raw_key);
                     let existing_stored = match iterator.peek() {

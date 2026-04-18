@@ -122,6 +122,13 @@ impl Keyspaces {
         Ok(())
     }
 
+    /// Fetches the attribute bloom for a keyspace. Used by
+    /// `MVCCStorage::set_initial_put_status` (consult before MVCC read) and
+    /// by `MVCCStorage::snapshot_commit` (insert after storage apply).
+    pub(crate) fn attribute_bloom(&self, keyspace_id: KeyspaceId) -> &Arc<super::AttributeBloom> {
+        self.get(keyspace_id).attribute_bloom()
+    }
+
     pub(crate) fn checkpoint(&self, current_checkpoint_dir: &Path) -> Result<(), KeyspaceCheckpointError> {
         for keyspace in &self.keyspaces {
             fail_point!(KEYSPACE_CHECKPOINT_FAIL);
@@ -206,6 +213,10 @@ pub(crate) struct Keyspace {
     read_options: ReadOptions,
     write_options: WriteOptions,
     prefix_length: Option<usize>,
+    /// Fast-path "definitely-absent" oracle for attribute-dedup Put reads in
+    /// the commit hot path. Populated on every successful commit apply; never
+    /// cleared (see attribute_bloom.rs — deletes intentionally unsupported).
+    attribute_bloom: Arc<super::AttributeBloom>,
 }
 
 impl Keyspace {
@@ -227,7 +238,26 @@ impl Keyspace {
         let mut write_options = WriteOptions::default();
         write_options.disable_wal(true);
         let prefix_length = keyspace.prefix_length();
-        Self { path, name: keyspace.name(), id: keyspace.id(), kv_storage, read_options, write_options, prefix_length }
+        let attribute_bloom = Arc::new(super::AttributeBloom::new());
+        Self {
+            path,
+            name: keyspace.name(),
+            id: keyspace.id(),
+            kv_storage,
+            read_options,
+            write_options,
+            prefix_length,
+            attribute_bloom,
+        }
+    }
+
+    /// Access the keyspace's attribute bloom. Only `DefaultOptimisedPrefix11`
+    /// and `OptimisedPrefix17` actually hold attribute vertices that get
+    /// `Put` writes, so other keyspaces' blooms stay mostly empty. The
+    /// extra memory is a cost we accept in exchange for not special-casing
+    /// the commit-apply and put_status paths per-keyspace.
+    pub(crate) fn attribute_bloom(&self) -> &Arc<super::AttributeBloom> {
+        &self.attribute_bloom
     }
 
     pub(super) fn new_read_options(&self) -> ReadOptions {
