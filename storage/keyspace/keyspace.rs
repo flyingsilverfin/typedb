@@ -68,7 +68,11 @@ impl Keyspaces {
     pub(crate) fn open<KS: KeyspaceSet>(storage_dir: impl AsRef<Path>) -> Result<Self, KeyspaceOpenError> {
         let path = storage_dir.as_ref();
 
-        let cache = rocksdb::Cache::new_lru_cache((ROCKSDB_CACHE_SIZE_MB * MB) as usize);
+        let cache_mb = std::env::var("TYPEDB_ROCKSDB_CACHE_MB")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(ROCKSDB_CACHE_SIZE_MB);
+        let cache = rocksdb::Cache::new_lru_cache((cache_mb * MB) as usize);
         let mut keyspaces = Keyspaces::new();
         for keyspace in KS::iter() {
             keyspaces
