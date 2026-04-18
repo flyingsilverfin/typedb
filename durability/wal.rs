@@ -901,7 +901,10 @@ impl FileReader {
     }
 
     fn peek_sequence_number(&mut self) -> io::Result<Option<DurabilitySequenceNumber>> {
-        if self.reader.stream_position()? == self.file.len() {
+        let pos = self.reader.stream_position()?;
+        // Only the sequence-number prefix of the header is needed. If it's
+        // not fully within the reader-visible prefix, treat as EOF.
+        if pos + (mem::size_of::<u64>() as u64) > self.file.len() {
             return Ok(None);
         }
         let mut buf = [0; mem::size_of::<u64>()];
@@ -911,19 +914,44 @@ impl FileReader {
     }
 
     fn skip_one_record(&mut self) -> Result<(), DurabilityServiceError> {
-        if self.reader.stream_position()? == self.file.len() {
+        let pos = self.reader.stream_position()?;
+        let limit = self.file.len();
+        if pos + (HEADER_LEN as u64) > limit {
             return Ok(());
         }
         let RecordHeader { len, .. } = self.read_header()?;
+        let body_end = pos + (HEADER_LEN as u64) + len;
+        if body_end > limit {
+            // Body not fully within the visible prefix yet. Rewind so the
+            // next iteration re-observes the header once the writer's
+            // fetch_max has advanced completed_end past the body.
+            self.reader.seek_relative(-(HEADER_LEN as i64))?;
+            return Ok(());
+        }
         self.reader.seek_relative(len as i64)?;
         Ok(())
     }
 
     fn read_one_record(&mut self) -> Result<Option<RawRecord<'static>>, DurabilityServiceError> {
-        if self.reader.stream_position()? == self.file.len() {
+        let pos = self.reader.stream_position()?;
+        // Snapshot the reader-visible prefix once. completed_end only grows,
+        // so a later observation is at least this large — snapshotting keeps
+        // our body-bounds check consistent with our header-bounds check even
+        // if the writer advances the watermark mid-read.
+        let limit = self.file.len();
+        if pos + (HEADER_LEN as u64) > limit {
             return Ok(None);
         }
         let RecordHeader { sequence_number, len, record_type } = self.read_header()?;
+        let body_end = pos + (HEADER_LEN as u64) + len;
+        if body_end > limit {
+            // Header was readable but the body isn't yet. Rewind the header
+            // read so the next call sees the same position; report EOF so the
+            // caller can decide to retry later (the stats-sync thread will
+            // pick this record up on its next tick).
+            self.reader.seek_relative(-(HEADER_LEN as i64))?;
+            return Ok(None);
+        }
 
         let mut decompressed_bytes = Vec::new();
         lz4::Decoder::new((&mut self.reader).take(len))
