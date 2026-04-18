@@ -6,7 +6,7 @@
 
 use std::{
     borrow::Cow,
-    collections::{BTreeSet, HashMap},
+    collections::HashMap,
     error::Error,
     ffi::OsStr,
     fmt,
@@ -668,6 +668,40 @@ struct File {
     state: Arc<FileWriteState>,
 }
 
+/// Number of in-flight-write slots in the lock-free tracking array. Must be
+/// larger than peak concurrency; at 10T we've never seen more than a handful
+/// in-flight. 256 gives headroom while keeping the `try_advance_completed`
+/// scan cheap (256 cache-line-aligned atomic loads on the completion path).
+const WAL_INFLIGHT_SLOTS: usize = 256;
+
+/// Slot states for `InFlightSlot.state`.
+const SLOT_FREE: u8 = 0;
+const SLOT_RESERVED: u8 = 1;
+const SLOT_COMPLETED: u8 = 2;
+
+/// One in-flight pwrite record. The three atomics let the completion-path
+/// scanner read `(state, offset, size)` without taking a lock. When a slot
+/// is `RESERVED`, `offset` and `size` describe the byte range currently being
+/// written; when `COMPLETED`, the write has returned but the slot hasn't been
+/// reaped yet; when `FREE`, the slot is available.
+#[repr(C, align(64))]
+#[derive(Debug)]
+struct InFlightSlot {
+    state: AtomicU8,
+    offset: AtomicU64,
+    size: AtomicU64,
+}
+
+impl InFlightSlot {
+    const fn new() -> Self {
+        Self {
+            state: AtomicU8::new(SLOT_FREE),
+            offset: AtomicU64::new(0),
+            size: AtomicU64::new(0),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct FileWriteState {
     handle: StdFile,
@@ -678,10 +712,12 @@ struct FileWriteState {
     /// been written. Advances only across contiguous completed reservations —
     /// guarantees the existing sequential reader never sees a hole.
     completed_end: AtomicU64,
-    /// Start offsets of reservations that have not yet finished their pwrite.
-    /// When a reservation completes, it removes its start from the set and, if
-    /// the set was previously blocking `completed_end`, advances it.
-    in_flight: Mutex<BTreeSet<u64>>,
+    /// Rolling hint for the next slot to try on reservation. Avoids scanning
+    /// from zero every time — under steady-state the next slot after the last
+    /// claimed one is almost always free.
+    slot_hint: AtomicU64,
+    /// Fixed-size lock-free ring of in-flight writes. See `InFlightSlot`.
+    in_flight_slots: [InFlightSlot; WAL_INFLIGHT_SLOTS],
 }
 
 impl FileWriteState {
@@ -690,7 +726,77 @@ impl FileWriteState {
             handle,
             next_offset: AtomicU64::new(initial_len),
             completed_end: AtomicU64::new(initial_len),
-            in_flight: Mutex::new(BTreeSet::new()),
+            slot_hint: AtomicU64::new(0),
+            in_flight_slots: std::array::from_fn(|_| InFlightSlot::new()),
+        }
+    }
+
+    /// Claim a free slot for an in-flight reservation. Returns the slot index.
+    /// Linear-probes from `slot_hint`; in steady state the first probe succeeds.
+    /// Spins (with `spin_loop`) if every slot is busy — that would require
+    /// `WAL_INFLIGHT_SLOTS` concurrent writers, which doesn't happen in practice.
+    fn claim_slot(&self, offset: u64, size: u64) -> usize {
+        let start = self.slot_hint.fetch_add(1, Ordering::Relaxed) as usize;
+        loop {
+            for i in 0..WAL_INFLIGHT_SLOTS {
+                let idx = (start + i) % WAL_INFLIGHT_SLOTS;
+                let slot = &self.in_flight_slots[idx];
+                if slot
+                    .state
+                    .compare_exchange(SLOT_FREE, SLOT_RESERVED, Ordering::AcqRel, Ordering::Relaxed)
+                    .is_ok()
+                {
+                    slot.offset.store(offset, Ordering::Release);
+                    slot.size.store(size, Ordering::Release);
+                    return idx;
+                }
+            }
+            std::hint::spin_loop();
+        }
+    }
+
+    /// Mark a previously-claimed slot as completed, then try to advance
+    /// `completed_end`.
+    fn complete_slot(&self, slot_idx: usize) {
+        self.in_flight_slots[slot_idx].state.store(SLOT_COMPLETED, Ordering::Release);
+        self.try_advance_completed();
+    }
+
+    /// Scan all slots for the smallest still-reserved offset. Advance
+    /// `completed_end` via `fetch_max` up to that boundary (or up to the
+    /// current `next_offset` if no reservations are outstanding). Then reap
+    /// any `COMPLETED` slots whose writes now sit entirely below the new
+    /// watermark.
+    fn try_advance_completed(&self) {
+        let next_off = self.next_offset.load(Ordering::Acquire);
+        let mut smallest_reserved = next_off;
+        for slot in &self.in_flight_slots {
+            if slot.state.load(Ordering::Acquire) == SLOT_RESERVED {
+                let off = slot.offset.load(Ordering::Acquire);
+                // Re-verify state to avoid acting on a RESERVED read that
+                // the slot has since transitioned out of.
+                if slot.state.load(Ordering::Acquire) == SLOT_RESERVED && off < smallest_reserved {
+                    smallest_reserved = off;
+                }
+            }
+        }
+        let old_end = self.completed_end.fetch_max(smallest_reserved, Ordering::AcqRel);
+        let new_end = old_end.max(smallest_reserved);
+        if new_end > old_end {
+            for slot in &self.in_flight_slots {
+                if slot.state.load(Ordering::Acquire) == SLOT_COMPLETED {
+                    let off = slot.offset.load(Ordering::Acquire);
+                    let sz = slot.size.load(Ordering::Acquire);
+                    if off + sz <= new_end {
+                        let _ = slot.state.compare_exchange(
+                            SLOT_COMPLETED,
+                            SLOT_FREE,
+                            Ordering::AcqRel,
+                            Ordering::Relaxed,
+                        );
+                    }
+                }
+            }
         }
     }
 }
@@ -757,17 +863,17 @@ impl File {
     /// Try to write `bytes` to the next free range of this file. Returns
     /// `Overflow` if the reservation would have exceeded `MAX_WAL_FILE_SIZE`.
     ///
-    /// No user-space lock is held during the pwrite. The only synchronisation
-    /// is (a) a single atomic `fetch_add` to reserve the byte range and (b) a
-    /// tiny mutex-protected `BTreeSet` update on completion so the reader-facing
-    /// `completed_end` advances only across contiguous completed writes.
+    /// No user-space lock is held at any point. Synchronisation is entirely
+    /// via atomics: one `fetch_add` to reserve the byte range, one CAS to
+    /// claim an in-flight slot, pwrite, then atomic store + fetch_max to
+    /// publish the write and advance the reader-visible watermark.
     fn try_append(&self, bytes: &[u8]) -> Result<AppendResult, DurabilityServiceError> {
         let size = bytes.len() as u64;
         let offset = self.state.next_offset.fetch_add(size, Ordering::AcqRel);
         if offset + size > MAX_WAL_FILE_SIZE {
             return Ok(AppendResult::Overflow);
         }
-        self.state.in_flight.lock().unwrap().insert(offset);
+        let slot_idx = self.state.claim_slot(offset, size);
 
         // The actual write. On Linux this is a single `pwrite64` — no user-space
         // lock held. Kernel serialises inside the inode briefly but that cost is
@@ -777,17 +883,7 @@ impl File {
             .write_all_at(bytes, offset)
             .map_err(|err| DurabilityServiceError::IO { source: Arc::new(err) })?;
 
-        let mut in_flight = self.state.in_flight.lock().unwrap();
-        in_flight.remove(&offset);
-        // Advance completed_end to the smallest still-in-flight start offset, or
-        // to the current reservation tail if nothing else is pending. Using
-        // `fetch_max` keeps the field monotonic if two completions race.
-        let new_end = match in_flight.iter().next() {
-            Some(&next_start) => next_start,
-            None => self.state.next_offset.load(Ordering::Acquire),
-        };
-        drop(in_flight);
-        self.state.completed_end.fetch_max(new_end, Ordering::AcqRel);
+        self.state.complete_slot(slot_idx);
 
         Ok(AppendResult::Ok { offset })
     }
