@@ -913,18 +913,31 @@ impl File {
 struct FileReader {
     file: File,
     reader: BufReader<StdFile>,
+    /// Set when a read returned `None` because a record at the current
+    /// position isn't yet fully within the reader-visible prefix. The
+    /// outer `RecordIterator::next` checks this to decide whether to
+    /// advance to the next file (safe — this file is genuinely consumed)
+    /// or stop the iteration entirely (required — rolling to the next
+    /// file would skip the pending record and produce dangling
+    /// StatusRecord references in recovery).
+    partial_at_end: bool,
 }
 
 impl FileReader {
     fn new(file: File) -> io::Result<Self> {
-        Ok(Self { reader: BufReader::new(StdFile::open(&file.path)?), file })
+        Ok(Self { reader: BufReader::new(StdFile::open(&file.path)?), file, partial_at_end: false })
     }
 
     fn peek_sequence_number(&mut self) -> io::Result<Option<DurabilitySequenceNumber>> {
         let pos = self.reader.stream_position()?;
-        // Only the sequence-number prefix of the header is needed. If it's
-        // not fully within the reader-visible prefix, treat as EOF.
-        if pos + (mem::size_of::<u64>() as u64) > self.file.len() {
+        // The sequence-number prefix alone is readable with just 8 bytes,
+        // but peek is always paired with a subsequent skip or read that
+        // needs the full header and body. If the whole header isn't yet
+        // within the visible prefix, treat as EOF — returning `Some(seq)`
+        // here would let the caller commit to a record number it then
+        // can't actually advance past (skip_one_record no-ops on partial
+        // records), leaving `RecordIterator::new` stuck at a seq < start.
+        if pos + (HEADER_LEN as u64) > self.file.len() {
             return Ok(None);
         }
         let mut buf = [0; mem::size_of::<u64>()];
@@ -960,6 +973,13 @@ impl FileReader {
         // if the writer advances the watermark mid-read.
         let limit = self.file.len();
         if pos + (HEADER_LEN as u64) > limit {
+            // True EOF relative to the visible prefix iff position == limit
+            // AND position == next_offset (no reservation at all past here).
+            // If position < limit + HEADER_LEN but there IS a pending write,
+            // a later iteration will see the fully-flushed record; flag it.
+            if pos < limit {
+                self.partial_at_end = true;
+            }
             return Ok(None);
         }
         let RecordHeader { sequence_number, len, record_type } = self.read_header()?;
@@ -968,8 +988,10 @@ impl FileReader {
             // Header was readable but the body isn't yet. Rewind the header
             // read so the next call sees the same position; report EOF so the
             // caller can decide to retry later (the stats-sync thread will
-            // pick this record up on its next tick).
+            // pick this record up on its next tick). Flag so the outer
+            // iterator doesn't roll onto the next file and skip this record.
             self.reader.seek_relative(-(HEADER_LEN as i64))?;
+            self.partial_at_end = true;
             return Ok(None);
         }
 
@@ -1027,6 +1049,7 @@ impl<'a> RecordIterator<'a> {
         let mut reader = FileReader::new(files.files[current].clone())?;
 
         while current_start < start {
+            let pos_before = reader.reader.stream_position().map_err(|err| DurabilityServiceError::IO { source: Arc::new(err) })?;
             match reader.peek_sequence_number().transpose() {
                 None => break, // sequence number is past the end of this file.
                 Some(Err(err)) => return Err(DurabilityServiceError::IO { source: Arc::new(err) }),
@@ -1034,6 +1057,16 @@ impl<'a> RecordIterator<'a> {
                 Some(Ok(sequence_number)) => {
                     current_start = sequence_number;
                     reader.skip_one_record()?;
+                    let pos_after = reader.reader.stream_position().map_err(|err| DurabilityServiceError::IO { source: Arc::new(err) })?;
+                    if pos_after == pos_before {
+                        // Record at this position isn't yet fully flushed —
+                        // skip_one_record no-ops on partial records. Stop
+                        // seeking; the partial record becomes the tail that
+                        // read_one_record will also defer, producing a clean
+                        // empty iterator rather than looping forever.
+                        reader.partial_at_end = true;
+                        break;
+                    }
                 }
             }
         }
@@ -1059,13 +1092,24 @@ impl Iterator for RecordIterator<'_> {
         let reader = self.reader.as_mut()?;
         match reader.read_one_record().transpose() {
             Some(item) => Some(item),
-            None => match self.advance_file().transpose()? {
-                Ok(()) => self.next(),
-                Err(error) => {
+            None => {
+                // If the current file stopped because a record at its tail
+                // isn't yet fully flushed, STOP the iteration. Rolling onto
+                // the next file here would skip a still-pending record and
+                // leave recovery with a dangling StatusRecord reference.
+                // The next tick's iter_from will pick it up.
+                if reader.partial_at_end {
                     self.reader = None;
-                    Some(Err(DurabilityServiceError::IO { source: Arc::new(error) }))
+                    return None;
                 }
-            },
+                match self.advance_file().transpose()? {
+                    Ok(()) => self.next(),
+                    Err(error) => {
+                        self.reader = None;
+                        Some(Err(DurabilityServiceError::IO { source: Arc::new(error) }))
+                    }
+                }
+            }
         }
     }
 }
@@ -1082,6 +1126,7 @@ impl<'a> FileRecordIterator<'a> {
 
         let mut current_start = file.start;
         while current_start < start {
+            let pos_before = reader.reader.stream_position().map_err(|err| DurabilityServiceError::IO { source: Arc::new(err) })?;
             match reader.peek_sequence_number().transpose() {
                 None => break, // sequence number is past the end of this file.
                 Some(Err(err)) => return Err(DurabilityServiceError::IO { source: Arc::new(err) }),
@@ -1089,6 +1134,11 @@ impl<'a> FileRecordIterator<'a> {
                 Some(Ok(sequence_number)) => {
                     current_start = sequence_number;
                     reader.skip_one_record()?;
+                    let pos_after = reader.reader.stream_position().map_err(|err| DurabilityServiceError::IO { source: Arc::new(err) })?;
+                    if pos_after == pos_before {
+                        reader.partial_at_end = true;
+                        break;
+                    }
                 }
             }
         }
