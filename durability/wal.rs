@@ -706,8 +706,17 @@ impl InFlightSlot {
 struct FileWriteState {
     handle: StdFile,
     /// Monotonic reservation pointer. Each writer does `fetch_add(record_size)`
-    /// to claim a unique byte range; the actual pwrite is lock-free.
+    /// to claim a unique byte range; the actual pwrite is lock-free. May grow
+    /// past `MAX_WAL_FILE_SIZE` because overflow-path writers still fetch_add
+    /// before discovering they've overshot — which is why `completed_end` is
+    /// bounded by `highest_completed_end` below, not by `next_offset`.
     next_offset: AtomicU64,
+    /// Max of (offset + size) across every write whose pwrite has completed.
+    /// `completed_end` is capped by this so the reader-visible prefix never
+    /// claims bytes that aren't actually on disk — the critical invariant
+    /// when overflow-path `fetch_add`s have pushed `next_offset` past the
+    /// highest successful pwrite.
+    highest_completed_end: AtomicU64,
     /// The largest offset such that every byte in `[0, completed_end)` has
     /// been written. Advances only across contiguous completed reservations —
     /// guarantees the existing sequential reader never sees a hole.
@@ -725,6 +734,7 @@ impl FileWriteState {
         Self {
             handle,
             next_offset: AtomicU64::new(initial_len),
+            highest_completed_end: AtomicU64::new(initial_len),
             completed_end: AtomicU64::new(initial_len),
             slot_hint: AtomicU64::new(0),
             in_flight_slots: std::array::from_fn(|_| InFlightSlot::new()),
@@ -758,18 +768,28 @@ impl FileWriteState {
     /// Mark a previously-claimed slot as completed, then try to advance
     /// `completed_end`.
     fn complete_slot(&self, slot_idx: usize) {
-        self.in_flight_slots[slot_idx].state.store(SLOT_COMPLETED, Ordering::Release);
+        let slot = &self.in_flight_slots[slot_idx];
+        let off = slot.offset.load(Ordering::Relaxed);
+        let sz = slot.size.load(Ordering::Relaxed);
+        // Publish this write's end so the next try_advance_completed can see
+        // it as the upper bound on safe advancement. Must happen BEFORE the
+        // state transition so try_advance observing COMPLETED also observes
+        // this fetch_max.
+        self.highest_completed_end.fetch_max(off + sz, Ordering::AcqRel);
+        slot.state.store(SLOT_COMPLETED, Ordering::Release);
         self.try_advance_completed();
     }
 
     /// Scan all slots for the smallest still-reserved offset. Advance
-    /// `completed_end` via `fetch_max` up to that boundary (or up to the
-    /// current `next_offset` if no reservations are outstanding). Then reap
-    /// any `COMPLETED` slots whose writes now sit entirely below the new
+    /// `completed_end` via `fetch_max` up to that boundary (or up to
+    /// `highest_completed_end` if no reservations are outstanding) — never
+    /// past actual file contents, even when overflow-path `fetch_add`s have
+    /// pushed `next_offset` into speculative territory. Then reap any
+    /// `COMPLETED` slots whose writes now sit entirely below the new
     /// watermark.
     fn try_advance_completed(&self) {
-        let next_off = self.next_offset.load(Ordering::Acquire);
-        let mut smallest_reserved = next_off;
+        let safe_upper = self.highest_completed_end.load(Ordering::Acquire);
+        let mut smallest_reserved = safe_upper;
         for slot in &self.in_flight_slots {
             if slot.state.load(Ordering::Acquire) == SLOT_RESERVED {
                 let off = slot.offset.load(Ordering::Acquire);
