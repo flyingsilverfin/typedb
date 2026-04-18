@@ -22,6 +22,7 @@ rust_test(
         "@crates//:rand",
         "@crates//:rand_core",
         "@crates//:xoshiro",
+        "@crates//:pprof",
     ],
     use_libtest_harness = False,
 )

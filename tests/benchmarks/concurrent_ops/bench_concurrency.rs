@@ -780,6 +780,41 @@ fn main() {
     );
     let show_dist = env::var("BENCH_DIST").is_ok();
 
+    // BENCH_PROFILE_HZ=99 BENCH_PROFILE_OUT=/tmp/bench.svg turns on a pprof
+    // sampler for the duration of main(). Writes a flamegraph SVG on exit.
+    // Uses SIGPROF/setitimer, no kernel perf_event_open needed (works in
+    // LinuxKit containers where perf/bpftrace are blocked).
+    // BENCH_PROFILE_HZ enables pprof-rs SIGPROF sampling for
+    // BENCH_PROFILE_SECS seconds. A background thread builds the report +
+    // writes the SVG when the window closes, then calls exit(0) —
+    // side-stepping storage/database teardown that would otherwise panic
+    // main and kill the profile thread before it can emit.
+    //
+    // NOTE: aarch64/Linux pprof-rs crashes at higher sampling rates when
+    // walking through RocksDB C++ frames. 19Hz seems stable; 49Hz+ SIGSEGVs.
+    let profile_window_secs: Option<u64> = env::var("BENCH_PROFILE_HZ").ok().and_then(|v| v.parse::<i32>().ok()).and_then(|hz| {
+        let out = env::var("BENCH_PROFILE_OUT").unwrap_or_else(|_| "/tmp/bench_flamegraph.svg".into());
+        let secs: u64 = env::var("BENCH_PROFILE_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(60);
+        eprintln!("Profiling enabled at {}Hz for {}s; SVG -> {}", hz, secs, out);
+        let guard = pprof::ProfilerGuard::new(hz).expect("pprof ProfilerGuard new");
+        thread::spawn(move || {
+            thread::sleep(std::time::Duration::from_secs(secs));
+            eprintln!("[profile] sampling window ended, building report...");
+            match guard.report().build() {
+                Ok(report) => match std::fs::File::create(&out) {
+                    Ok(file) => match report.flamegraph(file) {
+                        Ok(_) => eprintln!("[profile] wrote flamegraph: {}", out),
+                        Err(e) => eprintln!("[profile] flamegraph write failed: {e:?}"),
+                    },
+                    Err(e) => eprintln!("[profile] file create failed: {e:?}"),
+                },
+                Err(e) => eprintln!("[profile] report build failed: {e:?}"),
+            }
+            std::process::exit(0);
+        });
+        Some(secs)
+    });
+
     eprintln!("Concurrent Write Scalability Benchmark Suite (inputs-stage bulk-load)");
     eprintln!("=====================================================================");
     eprintln!("Total ops per write workload: {}", total_ops());
@@ -821,5 +856,13 @@ fn main() {
     }
     if run("read") {
         run_pure_read_benchmark(&thread_counts);
+    }
+
+    // Park main until the profile window closes. The profile thread will
+    // exit(0) the process when it's done writing the SVG; without this
+    // park, main would exit first and kill the profile thread mid-work.
+    if let Some(secs) = profile_window_secs {
+        eprintln!("[profile] workload complete, waiting for sampling window to close ({}s)", secs);
+        thread::sleep(std::time::Duration::from_secs(secs + 30));
     }
 }
