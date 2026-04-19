@@ -1196,14 +1196,24 @@ impl Iterator for RecordIterator<'_> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let reader = self.reader.as_mut()?;
+        // Check partial_at_end BEFORE attempting a read. If
+        // RecordIterator::new's seek loop broke early because a partial
+        // record was at the current position (skip_one_record no-opped),
+        // the reader is parked on a record with seq < start. If we tried
+        // to read it, and completed_end has since grown enough to cover
+        // the body, we'd return a record with a seq lower than what the
+        // caller asked for — producing a REC4 "missing initial records"
+        // panic in load_commit_data_from.
+        if reader.partial_at_end {
+            self.reader = None;
+            return None;
+        }
         match reader.read_one_record().transpose() {
             Some(item) => Some(item),
             None => {
-                // If the current file stopped because a record at its tail
-                // isn't yet fully flushed, STOP the iteration. Rolling onto
-                // the next file here would skip a still-pending record and
-                // leave recovery with a dangling StatusRecord reference.
-                // The next tick's iter_from will pick it up.
+                // Rechecked after the read in case the defer was hit
+                // inside read_one_record itself rather than during the
+                // initial seek — same rationale as above.
                 if reader.partial_at_end {
                     self.reader = None;
                     return None;
@@ -1257,6 +1267,14 @@ impl Iterator for FileRecordIterator<'_> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let reader = self.reader.as_mut()?;
+        // Same partial_at_end check as RecordIterator — see the comment
+        // there. Without this, a seek-loop-deferred partial record can
+        // become readable between the seek and the first next() call,
+        // producing a seq < start.
+        if reader.partial_at_end {
+            self.reader = None;
+            return None;
+        }
         reader.read_one_record().transpose()
     }
 }
