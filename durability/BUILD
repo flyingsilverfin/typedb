@@ -20,6 +20,7 @@ rust_library(
 
         "@crates//:itertools",
         "@crates//:lz4",
+        "@crates//:parking_lot",
         "@crates//:serde",
         "@crates//:tracing",
     ]

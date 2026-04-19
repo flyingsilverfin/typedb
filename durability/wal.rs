@@ -198,7 +198,7 @@ pub struct WAL {
     /// up at a higher offset — or worse, land in a post-rotation file whose
     /// name keys a higher seq range. Pwrite runs AFTER this lock is
     /// released, so the expensive syscall still happens in parallel.
-    allocation_lock: Mutex<()>,
+    allocation_lock: parking_lot::Mutex<()>,
 }
 
 /// Background worker that drains async unsequenced WAL writes. Sequenced writes
@@ -296,7 +296,7 @@ impl WAL {
             files,
             fsync_thread,
             async_writer,
-            allocation_lock: Mutex::new(()),
+            allocation_lock: parking_lot::Mutex::new(()),
         })
     }
 
@@ -326,7 +326,7 @@ impl WAL {
             files,
             fsync_thread,
             async_writer,
-            allocation_lock: Mutex::new(()),
+            allocation_lock: parking_lot::Mutex::new(()),
         })
     }
 
@@ -470,10 +470,6 @@ impl DurabilityService for WAL {
         bytes: &[u8],
     ) -> Result<DurabilitySequenceNumber, DurabilityServiceError> {
         debug_assert!(self.registered_types.contains_key(&record_type));
-        // Split timing: `compress` is the off-lock prep, `lock_wait` is time
-        // blocked on allocation_lock acquisition, and `lock_held` is time
-        // under allocation_lock (seq + offset + slot). The pwrite itself
-        // happens AFTER lock_held — lock-free.
         let t_start = Instant::now();
         let compressed = Files::compress_lz4(bytes)?;
 
@@ -488,8 +484,7 @@ impl DurabilityService for WAL {
         // Allocation section: single-threaded to guarantee seq order == file
         // position order. Held for the bare minimum — seq + offset + slot +
         // tiny in-place header write. Pwrite happens AFTER release.
-        let t_lock_wait_start = Instant::now();
-        let alloc_guard = self.allocation_lock.lock().unwrap();
+        let alloc_guard = self.allocation_lock.lock();
         let t_lock_acquired = Instant::now();
 
         let seq = DurabilitySequenceNumber::from(self.next_sequence_number_arc.fetch_add(1, Ordering::Relaxed));
@@ -537,7 +532,7 @@ impl DurabilityService for WAL {
         };
 
         drop(alloc_guard);
-        let t_end_alloc = Instant::now();
+        let t_released = Instant::now();
 
         // Lock-free pwrite. Multiple sequenced writers may be in this
         // section concurrently — they're writing to distinct, non-overlapping
@@ -550,10 +545,13 @@ impl DurabilityService for WAL {
 
         file_arc.state.complete_slot(slot_idx);
 
+        // `compress` = off-lock prep; `lock_wait` = time queueing on
+        // allocation_lock; `lock_held` = time under allocation_lock.
+        // The subsequent pwrite runs outside the lock and isn't billed here.
         WAL_WRITE_PHASE_STATS.record(
             t_compressed - t_start,
-            t_lock_acquired - t_lock_wait_start,
-            t_end_alloc - t_lock_acquired,
+            t_lock_acquired - t_compressed,
+            t_released - t_lock_acquired,
         );
         Ok(seq)
     }

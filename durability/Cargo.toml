@@ -50,6 +50,11 @@ features = {}
 	[dependencies.fail_point]
 		workspace = true
 
+	[dependencies.parking_lot]
+		features = []
+		version = "0.12.4"
+		default-features = false
+
 	[dependencies.error]
 		workspace = true
 
