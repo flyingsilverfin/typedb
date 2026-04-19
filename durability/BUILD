@@ -18,6 +18,7 @@ rust_library(
         "//common/logger",
         "//resource",
 
+        "@crates//:arc-swap",
         "@crates//:itertools",
         "@crates//:lz4",
         "@crates//:parking_lot",

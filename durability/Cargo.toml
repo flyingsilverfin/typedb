@@ -55,6 +55,11 @@ features = {}
 		version = "0.12.4"
 		default-features = false
 
+	[dependencies.arc-swap]
+		features = []
+		version = "1.7.1"
+		default-features = false
+
 	[dependencies.error]
 		workspace = true
 

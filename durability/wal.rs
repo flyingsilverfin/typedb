@@ -189,6 +189,13 @@ pub struct WAL {
     /// its background thread without a back-reference to the `WAL` struct itself.
     next_sequence_number_arc: Arc<AtomicU64>,
     files: Arc<RwLock<Files>>,
+    /// Fast-path hint to the "current active file" — the one sequenced_write
+    /// appends to unless rotation has just happened. Readable without
+    /// touching the `files: RwLock`, which saves the RwLock-read atomic
+    /// counter ops on the hot path. Rotation updates both this pointer
+    /// (under the allocation mutex) and the `files` Vec. None before the
+    /// first write creates the first segment.
+    active_file: arc_swap::ArcSwapOption<File>,
     fsync_thread: FsyncThread,
     async_writer: AsyncUnsequencedWriter,
     /// Serialises the (seq assignment, offset reservation, rotation, slot
@@ -290,10 +297,14 @@ impl WAL {
         let mut fsync_thread = FsyncThread::new(files.clone());
         FsyncThread::start(&mut fsync_thread.handle, fsync_thread.context.clone());
         let async_writer = AsyncUnsequencedWriter::new(files.clone(), next_sequence_number_arc.clone());
+        let active_file = arc_swap::ArcSwapOption::from(
+            files.read().unwrap().files.last().cloned().map(Arc::new),
+        );
         Ok(Self {
             registered_types: HashMap::new(),
             next_sequence_number_arc,
             files,
+            active_file,
             fsync_thread,
             async_writer,
             allocation_lock: parking_lot::Mutex::new(()),
@@ -320,10 +331,14 @@ impl WAL {
         let mut fsync_thread = FsyncThread::new(files.clone());
         FsyncThread::start(&mut fsync_thread.handle, fsync_thread.context.clone());
         let async_writer = AsyncUnsequencedWriter::new(files.clone(), next_sequence_number_arc.clone());
+        let active_file = arc_swap::ArcSwapOption::from(
+            files.read().unwrap().files.last().cloned().map(Arc::new),
+        );
         Ok(Self {
             registered_types: HashMap::new(),
             next_sequence_number_arc,
             files,
+            active_file,
             fsync_thread,
             async_writer,
             allocation_lock: parking_lot::Mutex::new(()),
@@ -501,32 +516,45 @@ impl DurabilityService for WAL {
         // allocation lock if we overflow. Because we hold allocation_lock,
         // no other sequenced writer can race us — so if WE see overflow, WE
         // own the rotation, not a half-committed peer.
+        //
+        // Hot path goes through `active_file` (an ArcSwap) to avoid the
+        // RwLock-read atomic-counter cost of `self.files.read()`. The
+        // `files` Vec is only consulted on rotation (cold path).
         let (file_arc, offset, slot_idx) = loop {
-            let files_read = self.files.read().unwrap();
-            let last = files_read.files.last().cloned();
-            match last {
+            let active = self.active_file.load_full();
+            match active {
                 None => {
-                    drop(files_read);
+                    // First write ever — take files write lock to create
+                    // the initial segment, then publish via active_file.
                     let mut files_write = self.files.write().unwrap();
                     if files_write.files.is_empty() {
                         files_write.open_new_file_at(seq)?;
                     }
+                    let new_active = files_write.files.last().cloned().map(Arc::new);
+                    drop(files_write);
+                    self.active_file.store(new_active);
                     continue;
                 }
                 Some(last) => {
                     let size = payload.len() as u64;
                     let attempted_offset = last.state.next_offset.fetch_add(size, Ordering::AcqRel);
                     if attempted_offset + size > MAX_WAL_FILE_SIZE {
-                        drop(files_read);
+                        // Rotate. Take files write lock; only do the
+                        // rotation if we're still observing the same active
+                        // file (someone else may have raced ahead, but
+                        // under allocation_lock that can only be the async
+                        // unsequenced writer).
                         let mut files_write = self.files.write().unwrap();
                         if files_write.files.last().map(|f| f.start == last.start).unwrap_or(false) {
                             files_write.open_new_file_at(seq)?;
                         }
+                        let new_active = files_write.files.last().cloned().map(Arc::new);
                         drop(files_write);
+                        self.active_file.store(new_active);
                         continue;
                     }
                     let slot_idx = last.state.claim_slot(attempted_offset, size);
-                    break (last, attempted_offset, slot_idx);
+                    break ((*last).clone(), attempted_offset, slot_idx);
                 }
             }
         };
@@ -1293,13 +1321,23 @@ impl FsyncThread {
 
     fn start(handle: &mut Option<JoinHandle<()>>, context: Arc<FsyncThreadContext>) {
         if handle.is_none() {
+            // TYPEDB_WAL_SYNC_INTERVAL_US allows overriding the compile-time
+            // WAL_SYNC_INTERVAL_MICROSECONDS (default 1ms). Longer intervals
+            // trade a bit of per-commit latency for much better fsync
+            // batching — useful for throughput-oriented sustained-load
+            // workloads where the 1ms default leaves the fsync thread
+            // running empty most of the time.
+            let interval_us = std::env::var("TYPEDB_WAL_SYNC_INTERVAL_US")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(WAL_SYNC_INTERVAL_MICROSECONDS);
             let mut context = context;
             let jh = thread::spawn(move || {
                 let mut last_sync = Instant::now();
                 while !context.shutting_down.load(Ordering::Relaxed) {
                     let micros_since_last_sync = (Instant::now() - last_sync).as_micros() as u64;
-                    if micros_since_last_sync < WAL_SYNC_INTERVAL_MICROSECONDS {
-                        sleep(Duration::from_micros(WAL_SYNC_INTERVAL_MICROSECONDS - micros_since_last_sync));
+                    if micros_since_last_sync < interval_us {
+                        sleep(Duration::from_micros(interval_us - micros_since_last_sync));
                     }
                     last_sync = Instant::now(); // Should we reset the timer before or after the sync completes?
                     Self::may_sync_and_update_state(&mut context);
