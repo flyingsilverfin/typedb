@@ -18,7 +18,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
-        mpsc, Arc, Mutex, RwLock, RwLockReadGuard,
+        mpsc, Arc, Condvar, Mutex, RwLock, RwLockReadGuard,
     },
     thread::{self, sleep, JoinHandle},
     time::{Duration, Instant},
@@ -1267,6 +1267,13 @@ pub struct FsyncThreadContext {
     shutting_down: AtomicBool,
     signalling: [Mutex<Vec<Option<mpsc::Sender<()>>>>; 2],
     current_signal: AtomicU8,
+    /// Condvar that commit threads signal when they become the FIRST
+    /// subscriber on an empty bucket. Lets the fsync thread sleep cheaply
+    /// when idle instead of waking every WAL_SYNC_INTERVAL only to find no
+    /// work. Paired with `pending_work` (guarded by `wake_mutex`) to give
+    /// a proper wait-until-notified pattern with a max-timeout fallback.
+    wake_mutex: Mutex<bool>,
+    wake_cv: Condvar,
     /// When set via `TYPEDB_DISABLE_FSYNC=1`, the fsync thread notifies
     /// subscribers *without* actually calling `sync_all`. Matches Postgres
     /// `synchronous_commit=off` / Mongo `j:false` semantics — data is still
@@ -1296,6 +1303,8 @@ impl FsyncThread {
             shutting_down: AtomicBool::new(false),
             signalling: [Mutex::new(Vec::new()), Mutex::new(Vec::new())],
             current_signal: AtomicU8::new(0),
+            wake_mutex: Mutex::new(false),
+            wake_cv: Condvar::new(),
             disable_fsync,
         };
         Self { handle: None, context: Arc::new(context) }
@@ -1303,43 +1312,83 @@ impl FsyncThread {
 
     fn schedule_next_sync_may_subscribe(&self, subscribe: bool) -> mpsc::Receiver<()> {
         let (sender, recv) = mpsc::channel();
-        let mut vec = self
-            .context
-            .signalling
-            .get(self.context.current_signal.load(Ordering::Relaxed) as usize)
-            .unwrap()
-            .lock()
-            .unwrap();
-        if subscribe {
-            vec.push(Some(sender));
-        } else {
-            vec.push(None);
-            sender.send(()).unwrap();
+        let was_empty = {
+            let mut vec = self
+                .context
+                .signalling
+                .get(self.context.current_signal.load(Ordering::Relaxed) as usize)
+                .unwrap()
+                .lock()
+                .unwrap();
+            let was_empty = vec.is_empty();
+            if subscribe {
+                vec.push(Some(sender));
+            } else {
+                vec.push(None);
+                sender.send(()).unwrap();
+            }
+            was_empty
+        };
+        // If we're the first subscriber into an empty bucket, wake the
+        // fsync thread so it doesn't sleep through our commit. Without
+        // this, the fsync thread loops at WAL_SYNC_INTERVAL regardless of
+        // load, wasting 80%+ of cycles on empty iterations.
+        if was_empty {
+            let mut pending = self.context.wake_mutex.lock().unwrap();
+            *pending = true;
+            self.context.wake_cv.notify_one();
         }
         recv
     }
 
     fn start(handle: &mut Option<JoinHandle<()>>, context: Arc<FsyncThreadContext>) {
         if handle.is_none() {
-            // TYPEDB_WAL_SYNC_INTERVAL_US allows overriding the compile-time
-            // WAL_SYNC_INTERVAL_MICROSECONDS (default 1ms). Longer intervals
-            // trade a bit of per-commit latency for much better fsync
-            // batching — useful for throughput-oriented sustained-load
-            // workloads where the 1ms default leaves the fsync thread
-            // running empty most of the time.
+            // TYPEDB_WAL_SYNC_INTERVAL_US (default 1ms) caps how long the
+            // fsync thread will wait between sync attempts. The fsync
+            // thread now wakes on Condvar notification from the first
+            // subscriber — the interval is a safety-net max-wait rather
+            // than the primary driver.
+            //
+            // TYPEDB_WAL_GROUP_COMMIT_WAIT_US (default 0) adds a brief
+            // settle delay AFTER waking before performing the fsync, to
+            // let a few followers accumulate. Tunable for
+            // throughput-vs-latency workload tradeoffs.
             let interval_us = std::env::var("TYPEDB_WAL_SYNC_INTERVAL_US")
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
                 .unwrap_or(WAL_SYNC_INTERVAL_MICROSECONDS);
+            let group_commit_wait_us: u64 = std::env::var("TYPEDB_WAL_GROUP_COMMIT_WAIT_US")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
             let mut context = context;
             let jh = thread::spawn(move || {
-                let mut last_sync = Instant::now();
                 while !context.shutting_down.load(Ordering::Relaxed) {
-                    let micros_since_last_sync = (Instant::now() - last_sync).as_micros() as u64;
-                    if micros_since_last_sync < interval_us {
-                        sleep(Duration::from_micros(interval_us - micros_since_last_sync));
+                    // Wait for a wake-up or timeout. Wake-up signals that
+                    // at least one subscriber arrived; timeout gives us a
+                    // safety-net in case we missed a signal (or shutdown
+                    // wants to break us out).
+                    {
+                        let mut pending = context.wake_mutex.lock().unwrap();
+                        while !*pending && !context.shutting_down.load(Ordering::Relaxed) {
+                            let res = context
+                                .wake_cv
+                                .wait_timeout(pending, Duration::from_micros(interval_us))
+                                .unwrap();
+                            pending = res.0;
+                            if res.1.timed_out() {
+                                break;
+                            }
+                        }
+                        *pending = false;
                     }
-                    last_sync = Instant::now(); // Should we reset the timer before or after the sync completes?
+                    // Optionally wait a tiny bit to let more subscribers
+                    // pile into the bucket before fsync fires. This is
+                    // the actual group-commit knob — higher values mean
+                    // bigger batches, higher per-commit latency.
+                    if group_commit_wait_us > 0 {
+                        sleep(Duration::from_micros(group_commit_wait_us));
+                    }
                     Self::may_sync_and_update_state(&mut context);
                 }
             });
@@ -1380,6 +1429,9 @@ impl FsyncThread {
 impl Drop for FsyncThread {
     fn drop(&mut self) {
         self.context.shutting_down.store(true, Ordering::Relaxed);
+        // Wake the fsync thread so it notices shutdown without waiting
+        // out its interval timeout.
+        self.context.wake_cv.notify_all();
         if let Some(handle) = self.handle.take() {
             handle.join().unwrap_or_log();
         }
