@@ -191,6 +191,14 @@ pub struct WAL {
     files: Arc<RwLock<Files>>,
     fsync_thread: FsyncThread,
     async_writer: AsyncUnsequencedWriter,
+    /// Serialises the (seq assignment, offset reservation, rotation, slot
+    /// claim) tuple for sequenced writes. Without this, the two separate
+    /// atomics (`next_sequence_number_arc.fetch_add` and each file's
+    /// `next_offset.fetch_add`) could interleave such that a lower seq ends
+    /// up at a higher offset — or worse, land in a post-rotation file whose
+    /// name keys a higher seq range. Pwrite runs AFTER this lock is
+    /// released, so the expensive syscall still happens in parallel.
+    allocation_lock: Mutex<()>,
 }
 
 /// Background worker that drains async unsequenced WAL writes. Sequenced writes
@@ -288,6 +296,7 @@ impl WAL {
             files,
             fsync_thread,
             async_writer,
+            allocation_lock: Mutex::new(()),
         })
     }
 
@@ -317,6 +326,7 @@ impl WAL {
             files,
             fsync_thread,
             async_writer,
+            allocation_lock: Mutex::new(()),
         })
     }
 
@@ -461,19 +471,89 @@ impl DurabilityService for WAL {
     ) -> Result<DurabilitySequenceNumber, DurabilityServiceError> {
         debug_assert!(self.registered_types.contains_key(&record_type));
         // Split timing: `compress` is the off-lock prep, `lock_wait` is time
-        // blocked on the files RwLock + inside the per-segment mutex, and
-        // `lock_held` captures the actual pwrite call.
+        // blocked on allocation_lock acquisition, and `lock_held` is time
+        // under allocation_lock (seq + offset + slot). The pwrite itself
+        // happens AFTER lock_held — lock-free.
         let t_start = Instant::now();
         let compressed = Files::compress_lz4(bytes)?;
+
+        // Pre-allocate the payload buffer OUTSIDE the mutex. Heap alloc +
+        // memcpy under a contended mutex otherwise serialises malloc work
+        // that has nothing to do with ordering. We leave the header bytes
+        // as zeros and patch them in place once we have the seq.
+        let mut payload = vec![0u8; HEADER_LEN + compressed.len()];
+        payload[HEADER_LEN..].copy_from_slice(&compressed);
         let t_compressed = Instant::now();
-        let seq = self.increment();
-        let t_locked = Instant::now();
-        self.append_record(seq, record_type, &compressed)?;
-        let t_end = Instant::now();
+
+        // Allocation section: single-threaded to guarantee seq order == file
+        // position order. Held for the bare minimum — seq + offset + slot +
+        // tiny in-place header write. Pwrite happens AFTER release.
+        let t_lock_wait_start = Instant::now();
+        let alloc_guard = self.allocation_lock.lock().unwrap();
+        let t_lock_acquired = Instant::now();
+
+        let seq = DurabilitySequenceNumber::from(self.next_sequence_number_arc.fetch_add(1, Ordering::Relaxed));
+
+        // Patch the header in-place with the now-known seq.
+        let header = encode_header(RecordHeader {
+            sequence_number: seq,
+            len: compressed.len() as u64,
+            record_type,
+        });
+        payload[..HEADER_LEN].copy_from_slice(&header);
+
+        // Reserve offset + slot on the active file, rotating under the same
+        // allocation lock if we overflow. Because we hold allocation_lock,
+        // no other sequenced writer can race us — so if WE see overflow, WE
+        // own the rotation, not a half-committed peer.
+        let (file_arc, offset, slot_idx) = loop {
+            let files_read = self.files.read().unwrap();
+            let last = files_read.files.last().cloned();
+            match last {
+                None => {
+                    drop(files_read);
+                    let mut files_write = self.files.write().unwrap();
+                    if files_write.files.is_empty() {
+                        files_write.open_new_file_at(seq)?;
+                    }
+                    continue;
+                }
+                Some(last) => {
+                    let size = payload.len() as u64;
+                    let attempted_offset = last.state.next_offset.fetch_add(size, Ordering::AcqRel);
+                    if attempted_offset + size > MAX_WAL_FILE_SIZE {
+                        drop(files_read);
+                        let mut files_write = self.files.write().unwrap();
+                        if files_write.files.last().map(|f| f.start == last.start).unwrap_or(false) {
+                            files_write.open_new_file_at(seq)?;
+                        }
+                        drop(files_write);
+                        continue;
+                    }
+                    let slot_idx = last.state.claim_slot(attempted_offset, size);
+                    break (last, attempted_offset, slot_idx);
+                }
+            }
+        };
+
+        drop(alloc_guard);
+        let t_end_alloc = Instant::now();
+
+        // Lock-free pwrite. Multiple sequenced writers may be in this
+        // section concurrently — they're writing to distinct, non-overlapping
+        // offsets so the kernel handles the ordering.
+        file_arc
+            .state
+            .handle
+            .write_all_at(&payload, offset)
+            .map_err(|err| DurabilityServiceError::IO { source: Arc::new(err) })?;
+
+        file_arc.state.complete_slot(slot_idx);
+
         WAL_WRITE_PHASE_STATS.record(
             t_compressed - t_start,
-            t_locked - t_compressed,
-            t_end - t_locked,
+            t_lock_acquired - t_lock_wait_start,
+            t_end_alloc - t_lock_acquired,
         );
         Ok(seq)
     }
