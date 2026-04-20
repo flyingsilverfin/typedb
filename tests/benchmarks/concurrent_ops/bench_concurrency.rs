@@ -9,8 +9,8 @@
 use std::{
     env,
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex, RwLock,
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread,
     thread::JoinHandle,
@@ -18,31 +18,20 @@ use std::{
 };
 
 use database::{
+    Database,
     database_manager::DatabaseManager,
     query::{execute_schema_query, execute_write_query_in_write},
-    transaction::{TransactionRead, TransactionSchema, TransactionWrite},
-    Database,
+    transaction::{CommitIntent, TransactionRead, TransactionSchema, TransactionWrite},
 };
-use executor::{pipeline::stage::StageIterator, ExecutionInterrupt};
+use executor::{ExecutionInterrupt, pipeline::stage::StageIterator};
 use options::{QueryOptions, TransactionOptions};
-use query::query_manager::PipelinePayload;
 use rand_core::RngCore;
-use storage::{durability_client::WALClient, COMMIT_PHASE_STATS, FSYNC_PHASE_STATS, WAL_WRITE_PHASE_STATS};
-use test_utils::{create_tmp_dir, TempDir};
+use storage::durability_client::WALClient;
+use test_utils::{TempDir, create_tmp_storage_dir};
 use xoshiro::Xoshiro256Plus;
 
-// Total operations per write workload. Can be overridden at runtime with
-// BENCH_TOTAL_OPS=N env var for quicker smoke runs.
-const DEFAULT_TOTAL_OPS: usize = 300_000;
-const DEFAULT_READ_OPS: usize = 100_000;
-
-fn total_ops() -> usize {
-    env::var("BENCH_TOTAL_OPS").ok().and_then(|v| v.parse().ok()).unwrap_or(DEFAULT_TOTAL_OPS)
-}
-
-fn read_ops() -> usize {
-    env::var("BENCH_READ_OPS").ok().and_then(|v| v.parse().ok()).unwrap_or(DEFAULT_READ_OPS)
-}
+const TOTAL_OPS: usize = 300_000;
+const READ_OPS: usize = 100_000;
 
 const DB_NAME: &str = "bench-concurrency";
 
@@ -54,34 +43,6 @@ const SCHEMA: &str = r#"define
     relation friendship relates friend @card(0..);
     person plays friendship:friend;
 "#;
-
-// Inputs-stage query strings: each is compiled once per transaction and executed
-// with N input rows, amortizing parse + compilation over the whole batch. The
-// typed inputs declaration prepends a `inputs $v: T;` stage that is evaluated
-// row-by-row against the pipeline body. Parenthesising input value references in
-// `has` clauses (e.g. `has name ($n)`) forces the parser to treat them as
-// expressions rather than attribute-variable aliases, avoiding a category
-// conflict with the Value category assigned by the inputs stage.
-const INSERT_QUERY: &str =
-    r#"inputs $n: string, $a: integer; insert $p isa person, has name == $n, has age == $a;"#;
-
-const UPDATE_QUERY: &str =
-    r#"inputs $n: string, $s: double; match $p isa person, has name == $n; insert $p has score == $s;"#;
-
-const RELATION_QUERY: &str =
-    r#"inputs $an: string, $bn: string; match $a isa person, has name == $an; $b isa person, has name == $bn; insert friendship (friend: $a, friend: $b);"#;
-
-fn quoted_string_literal(value: &str) -> String {
-    // Inputs rows are parsed server-side via `typeql::parse_value(&str)`. String
-    // values therefore need their quotes preserved; the schema-generated names
-    // here never contain quotes or backslashes so we skip escaping.
-    format!(r#""{value}""#)
-}
-
-fn make_payload(query: &str, inputs: Vec<Vec<Option<String>>>) -> PipelinePayload {
-    let parsed = typeql::parse_query(query).unwrap().into_structure().into_pipeline();
-    PipelinePayload { parsed, inputs: Some(inputs) }
-}
 
 struct TxSample {
     open_ns: u64,
@@ -177,7 +138,7 @@ impl TimingAnalysis {
 // --- Database setup helpers ---
 
 fn create_database(schema: &str) -> (TempDir, Arc<Database<WALClient>>) {
-    let tmp_dir = create_tmp_dir();
+    let tmp_dir = create_tmp_storage_dir();
     let dbm = DatabaseManager::new(&tmp_dir).unwrap();
     dbm.put_database(DB_NAME).unwrap();
     let database = dbm.database(DB_NAME).unwrap();
@@ -186,7 +147,8 @@ fn create_database(schema: &str) -> (TempDir, Arc<Database<WALClient>>) {
     let tx = TransactionSchema::open(database.clone(), TransactionOptions::default()).unwrap();
     let (tx, result) = execute_schema_query(tx, schema_query, schema.to_string());
     result.unwrap();
-    tx.commit().1.unwrap();
+    let (mut profile, intent) = tx.finalise();
+    intent.unwrap().commit(profile.commit_profile()).unwrap();
 
     (tmp_dir, database)
 }
@@ -197,35 +159,28 @@ fn seed_persons(database: &Arc<Database<WALClient>>, count: usize) {
     while offset < count {
         let n = std::cmp::min(batch_size, count - offset);
         let mut tx = TransactionWrite::open(database.clone(), TransactionOptions::default()).unwrap();
-        let inputs: Vec<Vec<Option<String>>> = (0..n)
-            .map(|i| {
-                let id = offset + i;
-                let age: u32 = (id % 100) as u32;
-                vec![Some(quoted_string_literal(&format!("person_{id}"))), Some(age.to_string())]
-            })
-            .collect();
-        let payload = make_payload(INSERT_QUERY, inputs);
-        let (returned_tx, result) = execute_write_query_in_write(
-            tx,
-            QueryOptions::default_grpc(),
-            payload,
-            INSERT_QUERY.to_string(),
-            ExecutionInterrupt::new_uninterruptible(),
-        );
-        result.unwrap();
-        tx = returned_tx;
-        tx.commit().1.unwrap();
+        for i in 0..n {
+            let id = offset + i;
+            let age: u32 = (id % 100) as u32;
+            let query_str = format!(r#"insert $p isa person, has name "person_{id}", has age {age};"#);
+            let pipeline = typeql::parse_query(&query_str).unwrap().into_structure().into_pipeline();
+            let (returned_tx, result) = execute_write_query_in_write(
+                tx,
+                QueryOptions::default_grpc(),
+                pipeline,
+                query_str,
+                ExecutionInterrupt::new_uninterruptible(),
+            );
+            result.unwrap();
+            tx = returned_tx;
+        }
+        let (mut profile, intent) = tx.finalise();
+        intent.unwrap().commit(profile.commit_profile()).unwrap();
         offset += n;
     }
 }
 
 // --- Write transaction helpers ---
-//
-// Each helper opens one write transaction, submits a single inputs-stage query
-// containing `ops_per_tx` input rows, commits, and records the open / exec /
-// commit timing split. Bulk loading therefore pays parse + compile costs once
-// per batch instead of once per row, which is the hot path krishnan's
-// add-inputs-stage patch was designed to accelerate.
 
 fn execute_insert_batch(
     database: &Arc<Database<WALClient>>,
@@ -234,29 +189,29 @@ fn execute_insert_batch(
     timings: &PhaseTimings,
 ) {
     let t0 = Instant::now();
-    let tx = TransactionWrite::open(database.clone(), TransactionOptions::default()).unwrap();
+    let mut tx = TransactionWrite::open(database.clone(), TransactionOptions::default()).unwrap();
     let t1 = Instant::now();
 
     let mut rng = Xoshiro256Plus::from_seed_u64(rand::random());
-    let inputs: Vec<Vec<Option<String>>> = (0..ops_per_tx)
-        .map(|i| {
-            let age: u32 = rng.next_u64() as u32;
-            let name_id = batch_id * ops_per_tx + i;
-            vec![Some(quoted_string_literal(&format!("person_{name_id}"))), Some(age.to_string())]
-        })
-        .collect();
-    let payload = make_payload(INSERT_QUERY, inputs);
-    let (tx, result) = execute_write_query_in_write(
-        tx,
-        QueryOptions::default_grpc(),
-        payload,
-        INSERT_QUERY.to_string(),
-        ExecutionInterrupt::new_uninterruptible(),
-    );
-    result.unwrap();
+    for i in 0..ops_per_tx {
+        let age: u32 = rng.next_u64() as u32;
+        let name_id = batch_id * ops_per_tx + i;
+        let query_str = format!(r#"insert $p isa person, has name "person_{name_id}", has age {age};"#);
+        let pipeline = typeql::parse_query(&query_str).unwrap().into_structure().into_pipeline();
+        let (returned_tx, result) = execute_write_query_in_write(
+            tx,
+            QueryOptions::default_grpc(),
+            pipeline,
+            query_str,
+            ExecutionInterrupt::new_uninterruptible(),
+        );
+        result.unwrap();
+        tx = returned_tx;
+    }
     let t2 = Instant::now();
 
-    tx.commit().1.unwrap();
+    let (mut profile, intent) = tx.finalise();
+    intent.unwrap().commit(profile.commit_profile()).unwrap();
     let t3 = Instant::now();
 
     timings.record((t1 - t0).as_nanos() as u64, (t2 - t1).as_nanos() as u64, (t3 - t2).as_nanos() as u64);
@@ -270,30 +225,29 @@ fn execute_update_batch(
     timings: &PhaseTimings,
 ) {
     let t0 = Instant::now();
-    let tx = TransactionWrite::open(database.clone(), TransactionOptions::default()).unwrap();
+    let mut tx = TransactionWrite::open(database.clone(), TransactionOptions::default()).unwrap();
     let t1 = Instant::now();
 
     let mut rng = Xoshiro256Plus::from_seed_u64(rand::random());
-    let inputs: Vec<Vec<Option<String>>> = (0..ops_per_tx)
-        .map(|i| {
-            let person_id = (batch_id * ops_per_tx + i) % seed_count;
-            let score: f64 = rng.next_u64() as u32 as f64 / 100.0;
-            // Force a decimal point so the literal is parsed as double, not integer.
-            vec![Some(quoted_string_literal(&format!("person_{person_id}"))), Some(format!("{score:.6}"))]
-        })
-        .collect();
-    let payload = make_payload(UPDATE_QUERY, inputs);
-    let (tx, result) = execute_write_query_in_write(
-        tx,
-        QueryOptions::default_grpc(),
-        payload,
-        UPDATE_QUERY.to_string(),
-        ExecutionInterrupt::new_uninterruptible(),
-    );
-    result.unwrap();
+    for i in 0..ops_per_tx {
+        let person_id = (batch_id * ops_per_tx + i) % seed_count;
+        let score: f64 = rng.next_u64() as u32 as f64 / 100.0;
+        let query_str = format!(r#"match $p isa person, has name "person_{person_id}"; insert $p has score {score};"#);
+        let pipeline = typeql::parse_query(&query_str).unwrap().into_structure().into_pipeline();
+        let (returned_tx, result) = execute_write_query_in_write(
+            tx,
+            QueryOptions::default_grpc(),
+            pipeline,
+            query_str,
+            ExecutionInterrupt::new_uninterruptible(),
+        );
+        result.unwrap();
+        tx = returned_tx;
+    }
     let t2 = Instant::now();
 
-    tx.commit().1.unwrap();
+    let (mut profile, intent) = tx.finalise();
+    intent.unwrap().commit(profile.commit_profile()).unwrap();
     let t3 = Instant::now();
 
     timings.record((t1 - t0).as_nanos() as u64, (t2 - t1).as_nanos() as u64, (t3 - t2).as_nanos() as u64);
@@ -307,32 +261,31 @@ fn execute_relation_batch(
     timings: &PhaseTimings,
 ) {
     let t0 = Instant::now();
-    let tx = TransactionWrite::open(database.clone(), TransactionOptions::default()).unwrap();
+    let mut tx = TransactionWrite::open(database.clone(), TransactionOptions::default()).unwrap();
     let t1 = Instant::now();
 
-    let inputs: Vec<Vec<Option<String>>> = (0..ops_per_tx)
-        .map(|i| {
-            let idx = batch_id * ops_per_tx + i;
-            let a_id = idx % seed_count;
-            let b_id = (idx + 1) % seed_count;
-            vec![
-                Some(quoted_string_literal(&format!("person_{a_id}"))),
-                Some(quoted_string_literal(&format!("person_{b_id}"))),
-            ]
-        })
-        .collect();
-    let payload = make_payload(RELATION_QUERY, inputs);
-    let (tx, result) = execute_write_query_in_write(
-        tx,
-        QueryOptions::default_grpc(),
-        payload,
-        RELATION_QUERY.to_string(),
-        ExecutionInterrupt::new_uninterruptible(),
-    );
-    result.unwrap();
+    for i in 0..ops_per_tx {
+        let idx = batch_id * ops_per_tx + i;
+        let a_id = idx % seed_count;
+        let b_id = (idx + 1) % seed_count;
+        let query_str = format!(
+            r#"match $a isa person, has name "person_{a_id}"; $b isa person, has name "person_{b_id}"; insert friendship (friend: $a, friend: $b);"#
+        );
+        let pipeline = typeql::parse_query(&query_str).unwrap().into_structure().into_pipeline();
+        let (returned_tx, result) = execute_write_query_in_write(
+            tx,
+            QueryOptions::default_grpc(),
+            pipeline,
+            query_str,
+            ExecutionInterrupt::new_uninterruptible(),
+        );
+        result.unwrap();
+        tx = returned_tx;
+    }
     let t2 = Instant::now();
 
-    tx.commit().1.unwrap();
+    let (mut profile, intent) = tx.finalise();
+    intent.unwrap().commit(profile.commit_profile()).unwrap();
     let t3 = Instant::now();
 
     timings.record((t1 - t0).as_nanos() as u64, (t2 - t1).as_nanos() as u64, (t3 - t2).as_nanos() as u64);
@@ -350,7 +303,7 @@ fn execute_read_query(database: &Arc<Database<WALClient>>, query_str: &str) {
             type_manager,
             thing_manager.clone(),
             function_manager,
-            PipelinePayload::from(query),
+            &query,
             query_str,
         )
         .unwrap();
@@ -442,7 +395,6 @@ where
 {
     let total_transactions = total_ops / ops_per_tx;
     let next_batch = Arc::new(AtomicU64::new(0));
-    let ops_completed = Arc::new(AtomicU64::new(0));
     let thread_fn = Arc::new(thread_fn);
 
     let start_signal = Arc::new(RwLock::new(()));
@@ -456,7 +408,6 @@ where
             let thread_fn = thread_fn.clone();
             let next_batch = next_batch.clone();
             let total = total_transactions;
-            let ops_done = ops_completed.clone();
             thread::spawn(move || {
                 drop(signal.read().unwrap());
                 loop {
@@ -465,49 +416,10 @@ where
                         break;
                     }
                     thread_fn(&db, batch_id, ops_per_tx, &timings);
-                    ops_done.fetch_add(ops_per_tx as u64, Ordering::Relaxed);
                 }
             })
         })
         .collect();
-
-    // Optional progress reporter. Prints windowed ops/s every
-    // BENCH_PROGRESS_INTERVAL_MS milliseconds so we can see throughput
-    // degrade as RocksDB fills up and MVCC read depth grows.
-    let progress_stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let progress_handle: Option<JoinHandle<()>> = env::var("BENCH_PROGRESS_INTERVAL_MS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .map(|interval_ms| {
-            let stop = progress_stop.clone();
-            let ops_done = ops_completed.clone();
-            thread::spawn(move || {
-                // Wait for benchmark to actually start (signal release) by polling ops_done.
-                while ops_done.load(Ordering::Relaxed) == 0 && !stop.load(Ordering::Relaxed) {
-                    thread::sleep(std::time::Duration::from_millis(1));
-                }
-                let start = Instant::now();
-                let mut last_t = start;
-                let mut last_ops: u64 = 0;
-                while !stop.load(Ordering::Relaxed) {
-                    thread::sleep(std::time::Duration::from_millis(interval_ms));
-                    let now = Instant::now();
-                    let done = ops_done.load(Ordering::Relaxed);
-                    let delta_ops = done.saturating_sub(last_ops);
-                    let delta_s = (now - last_t).as_secs_f64();
-                    let cum_s = (now - start).as_secs_f64();
-                    eprintln!(
-                        "  [progress] t={:>6.1}s ops={:>10} window_ops/s={:>8} cum_ops/s={:>8}",
-                        cum_s,
-                        done,
-                        (delta_ops as f64 / delta_s) as u64,
-                        (done as f64 / cum_s) as u64,
-                    );
-                    last_t = now;
-                    last_ops = done;
-                }
-            })
-        });
 
     let start = Instant::now();
     drop(write_guard);
@@ -516,42 +428,25 @@ where
         handle.join().unwrap();
     }
 
-    progress_stop.store(true, Ordering::Relaxed);
-    if let Some(h) = progress_handle {
-        h.join().unwrap();
-    }
-
     start.elapsed()
 }
 
 // --- W1: Pure Insert ---
 
 fn run_pure_insert_benchmark(thread_counts: &[usize], batch_size: usize, show_dist: bool) {
-    let show_phases = env::var("BENCH_COMMIT_PHASES").is_ok();
     print_header("PureInsert", batch_size);
     for &num_threads in thread_counts {
         let (_tmp_dir, database) = create_database(SCHEMA);
         let timings = Arc::new(PhaseTimings::new());
-        let total_transactions = total_ops() / batch_size;
+        let total_transactions = TOTAL_OPS / batch_size;
         let actual_ops = total_transactions * batch_size;
 
-        if show_phases {
-            COMMIT_PHASE_STATS.reset();
-            WAL_WRITE_PHASE_STATS.reset();
-            FSYNC_PHASE_STATS.reset();
-        }
-
         let elapsed =
-            run_write_threads(&database, num_threads, batch_size, total_ops(), &timings, |db, batch_id, ops, t| {
+            run_write_threads(&database, num_threads, batch_size, TOTAL_OPS, &timings, |db, batch_id, ops, t| {
                 execute_insert_batch(db, batch_id, ops, t);
             });
 
         print_result(num_threads, elapsed, actual_ops, &timings, show_dist);
-        if show_phases {
-            eprintln!("{}", COMMIT_PHASE_STATS.dump());
-            eprintln!("{}", WAL_WRITE_PHASE_STATS.dump());
-            eprintln!("{}", FSYNC_PHASE_STATS.dump());
-        }
     }
 }
 
@@ -568,12 +463,12 @@ fn run_pure_update_benchmark(thread_counts: &[usize], batch_size: usize, show_di
         let (_tmp_dir, database) = create_database(SCHEMA);
         seed_persons(&database, UPDATE_SEED_COUNT);
         let timings = Arc::new(PhaseTimings::new());
-        let total_transactions = total_ops() / batch_size;
+        let total_transactions = TOTAL_OPS / batch_size;
         let actual_ops = total_transactions * batch_size;
 
         let seed_count = UPDATE_SEED_COUNT;
         let elapsed =
-            run_write_threads(&database, num_threads, batch_size, total_ops(), &timings, move |db, batch_id, ops, t| {
+            run_write_threads(&database, num_threads, batch_size, TOTAL_OPS, &timings, move |db, batch_id, ops, t| {
                 execute_update_batch(db, batch_id, ops, seed_count, t);
             });
 
@@ -594,12 +489,12 @@ fn run_insert_relation_benchmark(thread_counts: &[usize], batch_size: usize, sho
         let (_tmp_dir, database) = create_database(SCHEMA);
         seed_persons(&database, RELATION_SEED_COUNT);
         let timings = Arc::new(PhaseTimings::new());
-        let total_transactions = total_ops() / batch_size;
+        let total_transactions = TOTAL_OPS / batch_size;
         let actual_ops = total_transactions * batch_size;
 
         let seed_count = RELATION_SEED_COUNT;
         let elapsed =
-            run_write_threads(&database, num_threads, batch_size, total_ops(), &timings, move |db, batch_id, ops, t| {
+            run_write_threads(&database, num_threads, batch_size, TOTAL_OPS, &timings, move |db, batch_id, ops, t| {
                 execute_relation_batch(db, batch_id, ops, seed_count, t);
             });
 
@@ -631,7 +526,7 @@ fn run_mixed_benchmark(thread_counts: &[usize], batch_size: usize, write_ratio: 
         let read_ops_total = Arc::new(AtomicU64::new(0));
 
         let ops_per_write_tx = batch_size;
-        let total_write_txns = total_ops() / ops_per_write_tx;
+        let total_write_txns = TOTAL_OPS / ops_per_write_tx;
         let next_write_batch = Arc::new(AtomicU64::new(0));
 
         let running = Arc::new(AtomicBool::new(true));
@@ -715,7 +610,7 @@ fn run_pure_read_benchmark(thread_counts: &[usize]) {
         let (_tmp_dir, database) = create_database(SCHEMA);
         seed_persons(&database, READ_SEED_COUNT);
 
-        let ops_per_thread = read_ops() / num_threads;
+        let ops_per_thread = READ_OPS / num_threads;
         let actual_ops = ops_per_thread * num_threads;
 
         let start_signal = Arc::new(RwLock::new(()));
@@ -757,112 +652,44 @@ fn run_pure_read_benchmark(thread_counts: &[usize]) {
 
 // --- Main ---
 
-fn parse_csv_usize(var: &str, default: &[usize]) -> Vec<usize> {
-    match env::var(var) {
-        Ok(v) => v.split(',').filter_map(|s| s.trim().parse().ok()).collect(),
-        Err(_) => default.to_vec(),
-    }
-}
-
-fn parse_csv_str(var: &str, default: &[&str]) -> Vec<String> {
-    match env::var(var) {
-        Ok(v) => v.split(',').map(|s| s.trim().to_lowercase()).collect(),
-        Err(_) => default.iter().map(|s| s.to_string()).collect(),
-    }
-}
-
 fn main() {
-    let thread_counts = parse_csv_usize("BENCH_THREADS", &[1, 4, 8]);
-    let batch_sizes = parse_csv_usize("BENCH_BATCH_SIZES", &[1000, 100, 1]);
-    let workloads = parse_csv_str(
-        "BENCH_WORKLOADS",
-        &["insert", "update", "relation", "mixed50", "mixed20", "read"],
-    );
+    let thread_counts = [1, 4, 8];
     let show_dist = env::var("BENCH_DIST").is_ok();
 
-    // BENCH_PROFILE_HZ=99 BENCH_PROFILE_OUT=/tmp/bench.svg turns on a pprof
-    // sampler for the duration of main(). Writes a flamegraph SVG on exit.
-    // Uses SIGPROF/setitimer, no kernel perf_event_open needed (works in
-    // LinuxKit containers where perf/bpftrace are blocked).
-    // BENCH_PROFILE_HZ enables pprof-rs SIGPROF sampling for
-    // BENCH_PROFILE_SECS seconds. A background thread builds the report +
-    // writes the SVG when the window closes, then calls exit(0) —
-    // side-stepping storage/database teardown that would otherwise panic
-    // main and kill the profile thread before it can emit.
-    //
-    // NOTE: aarch64/Linux pprof-rs crashes at higher sampling rates when
-    // walking through RocksDB C++ frames. 19Hz seems stable; 49Hz+ SIGSEGVs.
-    let profile_window_secs: Option<u64> = env::var("BENCH_PROFILE_HZ").ok().and_then(|v| v.parse::<i32>().ok()).and_then(|hz| {
-        let out = env::var("BENCH_PROFILE_OUT").unwrap_or_else(|_| "/tmp/bench_flamegraph.svg".into());
-        let secs: u64 = env::var("BENCH_PROFILE_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(60);
-        eprintln!("Profiling enabled at {}Hz for {}s; SVG -> {}", hz, secs, out);
-        let guard = pprof::ProfilerGuard::new(hz).expect("pprof ProfilerGuard new");
-        thread::spawn(move || {
-            thread::sleep(std::time::Duration::from_secs(secs));
-            eprintln!("[profile] sampling window ended, building report...");
-            match guard.report().build() {
-                Ok(report) => match std::fs::File::create(&out) {
-                    Ok(file) => match report.flamegraph(file) {
-                        Ok(_) => eprintln!("[profile] wrote flamegraph: {}", out),
-                        Err(e) => eprintln!("[profile] flamegraph write failed: {e:?}"),
-                    },
-                    Err(e) => eprintln!("[profile] file create failed: {e:?}"),
-                },
-                Err(e) => eprintln!("[profile] report build failed: {e:?}"),
-            }
-            std::process::exit(0);
-        });
-        Some(secs)
-    });
-
-    eprintln!("Concurrent Write Scalability Benchmark Suite (inputs-stage bulk-load)");
-    eprintln!("=====================================================================");
-    eprintln!("Total ops per write workload: {}", total_ops());
-    eprintln!("Total ops for pure read:      {}", read_ops());
-    eprintln!("Threads:                      {:?}", thread_counts);
-    eprintln!("Batch sizes:                  {:?}", batch_sizes);
-    eprintln!("Workloads:                    {:?}", workloads);
+    eprintln!("Concurrent Write Scalability Benchmark Suite");
+    eprintln!("=============================================");
+    eprintln!("Total ops per write workload: {TOTAL_OPS}");
+    eprintln!("Total ops for pure read:      {READ_OPS}");
     if show_dist {
         eprintln!("Distribution output:          enabled (BENCH_DIST)");
     }
     eprintln!();
 
-    let run = |name: &str| workloads.iter().any(|w| w == name);
-
-    if run("insert") {
-        for &batch_size in &batch_sizes {
-            run_pure_insert_benchmark(&thread_counts, batch_size, show_dist);
-        }
-    }
-    if run("update") {
-        for &batch_size in &batch_sizes {
-            run_pure_update_benchmark(&thread_counts, batch_size, show_dist);
-        }
-    }
-    if run("relation") {
-        for &batch_size in &batch_sizes {
-            run_insert_relation_benchmark(&thread_counts, batch_size, show_dist);
-        }
-    }
-    if run("mixed50") {
-        for &batch_size in &batch_sizes {
-            run_mixed_benchmark(&thread_counts, batch_size, 0.5, show_dist);
-        }
-    }
-    if run("mixed20") {
-        for &batch_size in &batch_sizes {
-            run_mixed_benchmark(&thread_counts, batch_size, 0.2, show_dist);
-        }
-    }
-    if run("read") {
-        run_pure_read_benchmark(&thread_counts);
+    // W1: Pure Insert
+    for &batch_size in &[1000, 100, 1] {
+        run_pure_insert_benchmark(&thread_counts, batch_size, show_dist);
     }
 
-    // Park main until the profile window closes. The profile thread will
-    // exit(0) the process when it's done writing the SVG; without this
-    // park, main would exit first and kill the profile thread mid-work.
-    if let Some(secs) = profile_window_secs {
-        eprintln!("[profile] workload complete, waiting for sampling window to close ({}s)", secs);
-        thread::sleep(std::time::Duration::from_secs(secs + 30));
+    // W2: Pure Update (match-insert generating Puts)
+    for &batch_size in &[1000, 100, 1] {
+        run_pure_update_benchmark(&thread_counts, batch_size, show_dist);
     }
+
+    // W3: Insert Relations
+    for &batch_size in &[1000, 100, 1] {
+        run_insert_relation_benchmark(&thread_counts, batch_size, show_dist);
+    }
+
+    // W4: Mixed 50/50
+    for &batch_size in &[1000, 100, 1] {
+        run_mixed_benchmark(&thread_counts, batch_size, 0.5, show_dist);
+    }
+
+    // W5: Mixed 20/80
+    for &batch_size in &[1000, 100, 1] {
+        run_mixed_benchmark(&thread_counts, batch_size, 0.2, show_dist);
+    }
+
+    // W6: Pure Read
+    run_pure_read_benchmark(&thread_counts);
 }

@@ -59,11 +59,24 @@ pub trait KeyspaceSet: Copy {
 pub struct Keyspaces {
     keyspaces: Vec<Keyspace>,
     index: [Option<KeyspaceId>; KEYSPACE_MAXIMUM_COUNT],
+    /// Fast-path "definitely-absent" oracle for attribute-dedup Put reads
+    /// in the commit hot path. A single shared bloom across all keyspaces;
+    /// keys are globally unique (each carries the keyspace prefix byte), so
+    /// there's no cross-keyspace collision risk. Only attribute writes
+    /// actually query this — entity/edge writes use Insert semantics which
+    /// bypass `set_initial_put_status` — but all Put/Insert keys are
+    /// inserted here on commit apply so a future query for any previously-
+    /// written key will correctly bloom-hit.
+    attribute_bloom: Arc<super::AttributeBloom>,
 }
 
 impl Keyspaces {
     pub(crate) fn new() -> Self {
-        Self { keyspaces: Vec::new(), index: std::array::from_fn(|_| None) }
+        Self {
+            keyspaces: Vec::new(),
+            index: std::array::from_fn(|_| None),
+            attribute_bloom: Arc::new(super::AttributeBloom::new()),
+        }
     }
 
     pub(crate) fn open<KS: KeyspaceSet>(storage_dir: impl AsRef<Path>) -> Result<Self, KeyspaceOpenError> {
@@ -127,11 +140,96 @@ impl Keyspaces {
         Ok(())
     }
 
-    /// Fetches the attribute bloom for a keyspace. Used by
+    /// Fetches the shared attribute bloom. Used by
     /// `MVCCStorage::set_initial_put_status` (consult before MVCC read) and
     /// by `MVCCStorage::snapshot_commit` (insert after storage apply).
-    pub(crate) fn attribute_bloom(&self, keyspace_id: KeyspaceId) -> &Arc<super::AttributeBloom> {
-        self.get(keyspace_id).attribute_bloom()
+    /// Takes a keyspace_id for API compatibility with the previous per-
+    /// keyspace design; the id is ignored because the bloom is shared.
+    pub(crate) fn attribute_bloom(&self, _keyspace_id: KeyspaceId) -> &Arc<super::AttributeBloom> {
+        &self.attribute_bloom
+    }
+
+    /// Temporary startup task: the per-keyspace attribute bloom is in-memory
+    /// only and starts empty on every DB open. Without rebuilding it from the
+    /// on-disk data, post-open inserts for attributes that already exist
+    /// on-disk can't be deduplicated by the bloom — they fall through to the
+    /// MVCC iterator path, which is expensive at scale.
+    ///
+    /// This method scans each keyspace in parallel and re-hydrates its bloom
+    /// by inserting the logical (MVCC-suffix-stripped) key of every record.
+    /// Duplicates (multiple MVCC versions of the same logical key) are
+    /// idempotent — bloom insert is safe to repeat.
+    ///
+    /// The long-term fix is to persist the bloom at checkpoint time; this is
+    /// a fallback for reopened databases without a persisted bloom file.
+    /// Gated on `TYPEDB_REBUILD_ATTRIBUTE_BLOOM` so default/test paths don't
+    /// pay the scan cost.
+    pub fn rebuild_attribute_blooms_from_storage(&self) {
+        if std::env::var("TYPEDB_REBUILD_ATTRIBUTE_BLOOM").is_err() {
+            return;
+        }
+        use std::time::Instant;
+        // Only the keyspaces that actually hold attribute vertices have a
+        // bloom worth populating. Put-with-dedup only fires for attribute
+        // writes; entity/edge/type keyspaces use plain Insert, so their
+        // per-keyspace bloom is never queried. See
+        // encoding/graph/thing/vertex_attribute.rs::keyspace_for_is_short —
+        // short-encoded attributes (int, bool, etc.) live in
+        // `DefaultOptimisedPrefix11`; long-encoded ones (strings, structs)
+        // in `OptimisedPrefix17`.
+        // Names returned by `EncodingKeyspace::name()` — note the enum
+        // variant `DefaultOptimisedPrefix11` actually names itself
+        // "OptimisedPrefix11" on disk.
+        let attribute_keyspace_names: &[&str] =
+            &["OptimisedPrefix11", "OptimisedPrefix17"];
+        let to_scan: Vec<_> = self
+            .keyspaces
+            .iter()
+            .filter(|k| attribute_keyspace_names.contains(&k.name))
+            .collect();
+        let start = Instant::now();
+        eprintln!(
+            "[attribute-bloom] rebuilding from on-disk keys: {} attribute keyspaces (of {} total)",
+            to_scan.len(),
+            self.keyspaces.len(),
+        );
+        std::thread::scope(|s| {
+            for keyspace in &to_scan {
+                let bloom = self.attribute_bloom.clone();
+                s.spawn(move || {
+                    let t = Instant::now();
+                    let iter = keyspace.kv_storage.iterator(IteratorMode::Start);
+                    let mut inserted: u64 = 0;
+                    let mut skipped: u64 = 0;
+                    const MVCC_SUFFIX_LEN: usize = 9; // 8 bytes seq + 1 byte op
+                    for entry in iter {
+                        match entry {
+                            Ok((key, _value)) => {
+                                if key.len() > MVCC_SUFFIX_LEN {
+                                    let logical_key = &key[..key.len() - MVCC_SUFFIX_LEN];
+                                    bloom.insert(logical_key);
+                                    inserted += 1;
+                                } else {
+                                    skipped += 1;
+                                }
+                            }
+                            Err(err) => {
+                                eprintln!("[attribute-bloom] keyspace={} iterator error: {:?}", keyspace.name, err);
+                                break;
+                            }
+                        }
+                    }
+                    eprintln!(
+                        "[attribute-bloom] keyspace={} scanned {}M keys, {} skipped, {:.1}s",
+                        keyspace.name,
+                        inserted / 1_000_000,
+                        skipped,
+                        t.elapsed().as_secs_f64(),
+                    );
+                });
+            }
+        });
+        eprintln!("[attribute-bloom] rebuild complete in {:.1}s", start.elapsed().as_secs_f64());
     }
 
     pub(crate) fn checkpoint(&self, current_checkpoint_dir: &Path) -> Result<(), KeyspaceCheckpointError> {
@@ -218,10 +316,6 @@ pub(crate) struct Keyspace {
     read_options: ReadOptions,
     write_options: WriteOptions,
     prefix_length: Option<usize>,
-    /// Fast-path "definitely-absent" oracle for attribute-dedup Put reads in
-    /// the commit hot path. Populated on every successful commit apply; never
-    /// cleared (see attribute_bloom.rs — deletes intentionally unsupported).
-    attribute_bloom: Arc<super::AttributeBloom>,
 }
 
 impl Keyspace {
@@ -243,7 +337,6 @@ impl Keyspace {
         let mut write_options = WriteOptions::default();
         write_options.disable_wal(true);
         let prefix_length = keyspace.prefix_length();
-        let attribute_bloom = Arc::new(super::AttributeBloom::new());
         Self {
             path,
             name: keyspace.name(),
@@ -252,17 +345,7 @@ impl Keyspace {
             read_options,
             write_options,
             prefix_length,
-            attribute_bloom,
         }
-    }
-
-    /// Access the keyspace's attribute bloom. Only `DefaultOptimisedPrefix11`
-    /// and `OptimisedPrefix17` actually hold attribute vertices that get
-    /// `Put` writes, so other keyspaces' blooms stay mostly empty. The
-    /// extra memory is a cost we accept in exchange for not special-casing
-    /// the commit-apply and put_status paths per-keyspace.
-    pub(crate) fn attribute_bloom(&self) -> &Arc<super::AttributeBloom> {
-        &self.attribute_bloom
     }
 
     pub(super) fn new_read_options(&self) -> ReadOptions {

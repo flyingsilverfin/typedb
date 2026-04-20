@@ -35,7 +35,7 @@
 //! external locks. The tier-list itself is wrapped in `RwLock` for the rare
 //! "append a new tier" path; readers and inserters take it briefly.
 
-use std::sync::{atomic::{AtomicU64, Ordering}, Arc, Mutex, RwLock};
+use std::sync::{atomic::{AtomicU64, Ordering}, Arc};
 
 /// Number of hash positions per key. 2 gives ~1% FPR at 10 bits/key.
 const HASHES_PER_KEY: usize = 2;
@@ -44,16 +44,11 @@ const HASHES_PER_KEY: usize = 2;
 /// k=2 hash functions.
 const BITS_PER_KEY: u64 = 10;
 
-/// Maximum number of tiers we'll add before giving up and just accepting more
-/// false positives. 32 tiers at 2x growth covers ~4 billion × 2^31 ≈ 2e18
-/// attributes — effectively unlimited.
-const MAX_TIERS: usize = 32;
-
-/// The first tier's bit count must be a power of two so positions can use
-/// cheap AND-masking. 2^23 = 8 Mib = 1 MiB per tier ≈ 800K-attr capacity.
-/// Kept intentionally small so unit tests exercise the tier-growth path
-/// quickly; real deployments should size up via `AttributeBloom::with_initial_bit_count`.
-const DEFAULT_INITIAL_BIT_COUNT_LOG2: u32 = 30; // 2^30 bits = 128 MiB, ~100M attr capacity
+/// Bit-count log2 for the fixed-size bloom. 2^28 bits = 32 MiB RAM, fits
+/// ~26 M keys at 10 bits/key with ~1% FPR — a saner default for tests and
+/// modest databases. Production deployments and large-scale benchmarks should
+/// raise this via `TYPEDB_BLOOM_BITS_LOG2`. Each +1 doubles memory and capacity.
+const DEFAULT_INITIAL_BIT_COUNT_LOG2: u32 = 28;
 
 /// A single immutable-once-sized bloom. Bits can be flipped 0→1 by concurrent
 /// writers but the bit vector itself never grows; saturation triggers the
@@ -145,91 +140,66 @@ impl BloomTier {
     }
 }
 
-/// Scalable bloom composed of one or more `BloomTier`s. Reads consult all
-/// tiers; writes go into the active (newest) tier only. Appending a new
-/// tier is a rare, serialized event under `grow_mutex`.
+/// Fixed-size bloom filter (non-tiered). Sized at construction from the env
+/// var `TYPEDB_BLOOM_BITS_LOG2` (default 35, i.e. 2^35 bits = 4 GiB) so it
+/// doesn't grow at runtime. Trades up-front memory for much lower FPR at
+/// scale compared to the tiered growing design: a single bloom with k=2
+/// hashes and 10 bits/key holds its ~1% FPR up to `bits / 10` keys, where a
+/// tiered scaling bloom multiplies per-tier FPR by tier count (e.g. ~20%
+/// effective FPR at 7 tiers).
+///
+/// For a 4 GiB bloom at 10 bits/key, capacity is ~3.4 B keys with FPR ~1%.
+/// Set `TYPEDB_BLOOM_BITS_LOG2` higher for larger expected corpora (each
+/// +1 doubles both memory and capacity) or lower in tests.
 #[derive(Debug)]
 pub struct AttributeBloom {
-    /// Ordered oldest→newest. Readers snapshot this; we never mutate
-    /// existing entries, only append.
-    tiers: RwLock<Vec<Arc<BloomTier>>>,
-    /// Serialises the grow path so only one thread appends a tier at a time.
-    grow_mutex: Mutex<()>,
+    tier: Arc<BloomTier>,
 }
 
 impl AttributeBloom {
-    /// Create with the default initial tier size (128 MiB; ~100M attr
-    /// capacity). Later tiers double in bit count.
+    /// Create with a bit-count driven by `TYPEDB_BLOOM_BITS_LOG2` env var
+    /// (default 35 = 4 GiB). Clamped to [20, 40] to protect against
+    /// nonsense values.
     pub fn new() -> Self {
-        Self::with_initial_bit_count_log2(DEFAULT_INITIAL_BIT_COUNT_LOG2)
+        let log2 = std::env::var("TYPEDB_BLOOM_BITS_LOG2")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(DEFAULT_INITIAL_BIT_COUNT_LOG2)
+            .clamp(20, 40);
+        Self::with_bit_count_log2(log2)
     }
 
-    /// Create with a specific initial bit count (rounded up to a power of 2).
-    /// Kept public so tests / benchmarks can exercise the tier-growth path
-    /// with a much smaller starting size.
+    /// Create with a specific bit count log2. Public so tests and benchmarks
+    /// can exercise a smaller bloom cheaply.
+    pub fn with_bit_count_log2(log2_bits: u32) -> Self {
+        Self { tier: Arc::new(BloomTier::new(log2_bits, 0)) }
+    }
+
+    /// Back-compat wrapper for callers that used the old tiered API.
     pub fn with_initial_bit_count_log2(log2_bits: u32) -> Self {
-        let t0 = Arc::new(BloomTier::new(log2_bits, 0));
-        Self {
-            tiers: RwLock::new(vec![t0]),
-            grow_mutex: Mutex::new(()),
-        }
+        Self::with_bit_count_log2(log2_bits)
     }
 
     pub fn may_contain(&self, key: &[u8]) -> bool {
-        let tiers = self.tiers.read().unwrap();
-        tiers.iter().any(|t| t.may_contain(key))
+        self.tier.may_contain(key)
     }
 
     pub fn insert(&self, key: &[u8]) {
-        // Capture the currently-active tier under the read lock.
-        let should_grow = {
-            let tiers = self.tiers.read().unwrap();
-            let active = tiers.last().expect("bloom always has at least one tier");
-            active.insert(key);
-            active.should_grow() && tiers.len() < MAX_TIERS
-        };
-        if should_grow {
-            self.try_grow();
-        }
+        self.tier.insert(key);
     }
 
-    fn try_grow(&self) {
-        let _g = self.grow_mutex.lock().unwrap();
-        let need_grow_idx = {
-            let tiers = self.tiers.read().unwrap();
-            let active = tiers.last().unwrap();
-            if !active.should_grow() || tiers.len() >= MAX_TIERS {
-                return; // raced; another thread already grew, or hit cap
-            }
-            active.tier_index
-        };
-        let next_log2 = {
-            let tiers = self.tiers.read().unwrap();
-            let active = tiers.last().unwrap();
-            // bit_count = mask + 1; compute its log2.
-            let bit_count = active.mask + 1;
-            bit_count_log2(bit_count).saturating_add(1)
-        };
-        let new_tier = Arc::new(BloomTier::new(next_log2, need_grow_idx + 1));
-        self.tiers.write().unwrap().push(new_tier);
-    }
-
-    /// Total number of tiers currently in the filter. Useful for tests and
-    /// telemetry.
+    /// Always 1 for the fixed-size bloom. Kept for API compatibility with
+    /// the previous tiered design (tests used this for growth assertions).
     pub fn tier_count(&self) -> usize {
-        self.tiers.read().unwrap().len()
+        1
     }
 
-    /// Total bit capacity across all tiers (in bits). Mainly for telemetry.
     pub fn total_bits(&self) -> u64 {
-        let tiers = self.tiers.read().unwrap();
-        tiers.iter().map(|t| t.mask + 1).sum()
+        self.tier.mask + 1
     }
 
-    /// Total insert count across all tiers. Only exact for a quiescent bloom.
     pub fn insert_count(&self) -> u64 {
-        let tiers = self.tiers.read().unwrap();
-        tiers.iter().map(|t| t.insert_count()).sum()
+        self.tier.insert_count()
     }
 }
 
@@ -237,15 +207,6 @@ impl Default for AttributeBloom {
     fn default() -> Self {
         Self::new()
     }
-}
-
-fn bit_count_log2(mut n: u64) -> u32 {
-    let mut log = 0u32;
-    while n > 1 {
-        n >>= 1;
-        log += 1;
-    }
-    log
 }
 
 // -----------------------------------------------------------------------------
@@ -286,35 +247,31 @@ mod tests {
     }
 
     #[test]
-    fn tier_growth_fires_when_saturated() {
-        // Tiny initial tier: 2^10 = 1024 bits → 102-key nominal capacity
-        // → 0.9 × 102 = 92 keys to trigger grow.
-        let b = AttributeBloom::with_initial_bit_count_log2(10);
+    fn single_tier_never_grows() {
+        // The non-tiered bloom is fixed-size; tier_count always 1.
+        let b = AttributeBloom::with_initial_bit_count_log2(20);
         assert_eq!(b.tier_count(), 1);
         for i in 0..500u32 {
             b.insert(&i.to_le_bytes());
         }
-        // Should have grown at least once (from 1024 → 2048 → maybe more).
-        assert!(b.tier_count() > 1, "tier growth did not fire after 500 inserts, tier_count={}", b.tier_count());
+        assert_eq!(b.tier_count(), 1, "fixed-size bloom shouldn't grow");
     }
 
     #[test]
-    fn queries_hit_across_tiers() {
-        // After tier growth, keys inserted into tier 0 must still be found
-        // when a later tier exists.
-        let b = AttributeBloom::with_initial_bit_count_log2(10);
+    fn earlier_keys_stay_findable_after_many_inserts() {
+        // No tier growth, but we still want to verify earlier inserts stay
+        // queryable after lots of later inserts (smoke check against bit
+        // saturation).
+        let b = AttributeBloom::with_initial_bit_count_log2(22);
         let early_keys: Vec<_> = (0..50u32).map(|i| i.to_le_bytes()).collect();
         for k in &early_keys {
             b.insert(k);
         }
-        // Fill enough to trigger a tier grow.
-        for i in 100..500u32 {
+        for i in 100..50_000u32 {
             b.insert(&i.to_le_bytes());
         }
-        assert!(b.tier_count() > 1);
-        // Every early key should still test positive (in the old tier).
         for k in &early_keys {
-            assert!(b.may_contain(k), "lost key after tier grow: {:?}", k);
+            assert!(b.may_contain(k), "lost key after many later inserts: {:?}", k);
         }
     }
 
@@ -354,10 +311,11 @@ mod tests {
     }
 
     #[test]
-    fn key_absence_determines_all_tiers_report_no() {
-        // A key not inserted anywhere must return false across all tiers.
-        // Relies on the tier_index salt decorrelating positions.
-        let b = AttributeBloom::with_initial_bit_count_log2(10);
+    fn key_absence_usually_reports_no() {
+        // A key not inserted should typically return false; the fixed-size
+        // bloom has its own FPR but specific sentinel strings are unlikely
+        // to collide.
+        let b = AttributeBloom::with_initial_bit_count_log2(22);
         for i in 0..1_000u32 {
             b.insert(&i.to_le_bytes());
         }

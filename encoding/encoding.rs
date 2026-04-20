@@ -91,9 +91,21 @@ impl KeyspaceSet for EncodingKeyspace {
     fn rocks_configuration(&self, cache: &rocksdb::Cache) -> rocksdb::Options {
         let mut options = rocksdb::Options::default();
 
-        // Enable if we wanted to check bloom filter usage, cache hits, etc.
-        // options.enable_statistics();
-        // options.set_stats_dump_period_sec(100);
+        // TYPEDB_ROCKSDB_STATS=1 enables the RocksDB statistics histograms
+        // (bloom filter hit/miss counts, block cache hit/miss, read/write
+        // latency distributions, etc.) and dumps them to the RocksDB LOG
+        // file in the data dir every TYPEDB_ROCKSDB_STATS_DUMP_SEC seconds
+        // (default 60). Only the default level of stats is enabled to
+        // minimise overhead — the full "all" level logs every block
+        // access which is expensive.
+        if std::env::var("TYPEDB_ROCKSDB_STATS").is_ok() {
+            options.enable_statistics();
+            let dump_sec: u64 = std::env::var("TYPEDB_ROCKSDB_STATS_DUMP_SEC")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(60);
+            options.set_stats_dump_period_sec(dump_sec as u32);
+        }
 
         options.create_if_missing(true);
         options.create_missing_column_families(true);

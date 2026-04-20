@@ -178,10 +178,17 @@ pub(crate) fn apply_recovered(
                     .map_err(|error| DurabilityClientRead { typedb_source: error })?;
                 drop(read_guard);
                 match validated_commit {
-                    ValidatedCommit::Write { batches: write_batches, .. } => {
+                    ValidatedCommit::Write { batches, bloom_keys } => {
                         MVCCStorage::persist_commit_status(true, commit_sequence_number, durability_client)
                             .map_err(|error| DurabilityClientWrite { typedb_source: error })?;
-                        keyspaces.write(write_batches).map_err(|error| KeyspaceWrite { source: error })?;
+                        keyspaces.write(batches).map_err(|error| KeyspaceWrite { source: error })?;
+                        // Replay path: re-populate the attribute bloom for recovered writes.
+                        for (keyspace_id, keys) in &bloom_keys {
+                            let bloom = keyspaces.attribute_bloom(*keyspace_id);
+                            for k in keys {
+                                bloom.insert(k.as_ref());
+                            }
+                        }
                         fail_point!(RECOVERY_PARTIAL_WRITE);
                         isolation_manager.applied(commit_sequence_number).map_err(|error| Internal {
                             name: Arc::new(database_name.to_owned()),

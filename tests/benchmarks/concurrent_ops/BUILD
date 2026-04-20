@@ -12,7 +12,6 @@ rust_test(
         "//common/options",
         "//database",
         "//executor",
-        "//query",
         "//storage",
 
         "//util/test:test_utils",
@@ -22,24 +21,6 @@ rust_test(
         "@crates//:rand",
         "@crates//:rand_core",
         "@crates//:xoshiro",
-        "@crates//:pprof",
-    ],
-    use_libtest_harness = False,
-)
-
-rust_test(
-    name = "verify_inputs",
-    srcs = ["verify_inputs.rs"],
-    deps = [
-        "//common/options",
-        "//database",
-        "//executor",
-        "//query",
-        "//storage",
-
-        "//util/test:test_utils",
-
-        "@typeql//rust:typeql",
     ],
     use_libtest_harness = False,
 )
@@ -48,7 +29,6 @@ rustfmt_test(
     name = "rustfmt_test",
     targets = [
         ":bench_concurrency",
-        ":verify_inputs",
     ],
     size = "small",
 )

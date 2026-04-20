@@ -331,7 +331,7 @@ impl Database<WALClient> {
         event!(Level::TRACE, "Loading database '{}' WAL.", &name);
         let wal = match WAL::load(path) {
             Ok(wal) => wal,
-            Err(DurabilityServiceError::WAL { source: WALError::LoadDirectoryMissing { .. } }) => {
+            Err(DurabilityServiceError::WAL { source: WALError::LoadErrorDirectoryMissing { .. } }) => {
                 return Err(NotADatabase { name: name.to_owned() });
             }
             Err(source) => return Err(WALOpen { source }),

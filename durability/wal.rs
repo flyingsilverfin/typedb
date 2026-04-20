@@ -216,7 +216,7 @@ pub struct WAL {
 /// recovered correctly (revalidation is idempotent).
 #[derive(Debug)]
 struct AsyncUnsequencedWriter {
-    sender: mpsc::Sender<AsyncWriteRequest>,
+    sender: Option<mpsc::Sender<AsyncWriteRequest>>,
     handle: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -252,24 +252,27 @@ impl AsyncUnsequencedWriter {
                 WAL_WRITE_PHASE_STATS.record_async_batch(batch.len(), t_done - t_start);
             }
         });
-        Self { sender, handle: Mutex::new(Some(handle)) }
+        Self { sender: Some(sender), handle: Mutex::new(Some(handle)) }
     }
 
     fn submit(&self, req: AsyncWriteRequest) {
         // mpsc send only fails if the receiver is dropped (WAL shutting down).
         // In that case, silently drop — we're already in a cleanup path.
-        let _ = self.sender.send(req);
+        if let Some(sender) = self.sender.as_ref() {
+            let _ = sender.send(req);
+        }
     }
 }
 
 impl Drop for AsyncUnsequencedWriter {
     fn drop(&mut self) {
-        // Dropping the channel sender closes the channel; receiver's `recv`
-        // returns Err and the thread exits.
+        // Drop the sender so the receiver's `recv` returns Err and the thread
+        // exits its loop. Then JOIN — we need the thread's `Arc<RwLock<Files>>`
+        // clone released before WAL's own Arc<Files> is unwrapped in
+        // delete_durability.
+        self.sender.take();
         if let Some(handle) = self.handle.lock().unwrap().take() {
-            // Replace `sender` with a dummy then drop it so the channel closes.
-            // We don't need to wait for the handle — it'll finish soon.
-            let _ = handle;
+            let _ = handle.join();
         }
     }
 }
@@ -460,25 +463,6 @@ impl DurabilityService for WAL {
         self.append_record(self.previous(), record_type, &compressed)
     }
 
-    fn unsequenced_write_async(
-        &self,
-        record_type: DurabilityRecordType,
-        bytes: &[u8],
-    ) -> Result<(), DurabilityServiceError> {
-        debug_assert!(self.registered_types.contains_key(&record_type));
-        // Compress inline (cheap vs handing off an uncompressed buffer) then
-        // submit. The background writer still goes through the same lock-free
-        // append_record, so it competes with inline sequenced writes the same
-        // way any other writer does — not through a shared files lock.
-        let compressed = Files::compress_lz4(bytes)?;
-        self.async_writer.submit(AsyncWriteRequest {
-            record_type,
-            seq_at_submit: self.previous(),
-            compressed,
-        });
-        Ok(())
-    }
-
     fn sequenced_write(
         &self,
         record_type: DurabilityRecordType,
@@ -628,8 +612,17 @@ impl DurabilityService for WAL {
         Ok(None)
     }
 
+    fn truncate_from(&self, _sequence_number: DurabilitySequenceNumber) -> Result<(), DurabilityServiceError> {
+        // TODO: implement to support snapshot rollback. The branch's WAL Files struct
+        // doesn't yet have file_index_containing / sync_all helpers — implement when needed.
+        unimplemented!("truncate_from is not implemented on the attribute-bloom WAL")
+    }
+
     fn delete_durability(self) -> Result<(), DurabilityServiceError> {
+        // Drop background helpers that hold Arc<RwLock<Files>> clones BEFORE
+        // we try to claim exclusive ownership of the Arc.
         drop(self.fsync_thread);
+        drop(self.async_writer);
         let files = Arc::into_inner(self.files)
             .expect("cannot get exclusive ownership of WAL's Arc<Files>")
             .into_inner()
