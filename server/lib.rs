@@ -255,8 +255,29 @@ impl Server {
             );
             println!("**To allow driver connections, drivers must also be configured to *not* use TLS**")
         }
+        if let Some(http_address) = http_address {
+            println!();
+            println!(
+                "To connect with TypeDB Studio, open: {}",
+                Self::studio_connect_link(http_address, encryption_config.enabled)
+            );
+        }
         println!();
         info!("\nReady!");
+    }
+
+    fn studio_connect_link(http_address: SocketAddr, tls_enabled: bool) -> String {
+        let scheme = if tls_enabled { "https" } else { "http" };
+        let host = if http_address.ip().is_unspecified() {
+            "localhost".to_string()
+        } else {
+            match http_address.ip() {
+                std::net::IpAddr::V4(ip) => ip.to_string(),
+                std::net::IpAddr::V6(ip) => format!("[{}]", ip),
+            }
+        };
+        let address = format!("{scheme}://{host}:{}", http_address.port());
+        format!("https://studio.typedb.com/connect?username=admin&address={address}")
     }
 
     fn spawn_shutdown_handler(shutdown_sender: Sender<()>) {
