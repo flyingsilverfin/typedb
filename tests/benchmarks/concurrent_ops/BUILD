@@ -20,6 +20,8 @@ rust_test(
 
         "@crates//:rand",
         "@crates//:rand_core",
+        "@crates//:tracing",
+        "@crates//:tracing-subscriber",
         "@crates//:xoshiro",
     ],
     use_libtest_harness = False,

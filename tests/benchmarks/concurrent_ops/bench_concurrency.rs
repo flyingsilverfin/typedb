@@ -30,7 +30,7 @@ use storage::durability_client::WALClient;
 use test_utils::{TempDir, create_tmp_storage_dir};
 use xoshiro::Xoshiro256Plus;
 
-const TOTAL_OPS: usize = 300_000;
+const TOTAL_OPS: usize = 400_000;
 const READ_OPS: usize = 100_000;
 
 const DB_NAME: &str = "bench-concurrency";
@@ -653,43 +653,31 @@ fn run_pure_read_benchmark(thread_counts: &[usize]) {
 // --- Main ---
 
 fn main() {
-    let thread_counts = [1, 4, 8];
+    // Hard-coded narrow harness: pure inserts only, 1+2 threads, batch_size=1000,
+    // optional QueryProfile-via-tracing enable. Used for measuring the
+    // profile-collection cost in the improved-query-profiler refactor.
+    if env::var("BENCH_PROFILING").is_ok() {
+        // Install a global TRACE-level subscriber so `tracing::enabled!(Level::TRACE)`
+        // in query_manager returns true → QueryProfile collects step / pattern data.
+        // Output is discarded (io::sink) so we don't measure log-formatting cost.
+        use tracing::Level;
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(Level::TRACE)
+            .with_writer(std::io::sink)
+            .finish();
+        let _ = tracing::subscriber::set_global_default(subscriber);
+        eprintln!("BENCH_PROFILING=1 — QueryProfile collection ENABLED");
+    } else {
+        eprintln!("QueryProfile collection DISABLED (set BENCH_PROFILING=1 to enable)");
+    }
+
+    let thread_counts = [1, 2];
     let show_dist = env::var("BENCH_DIST").is_ok();
 
-    eprintln!("Concurrent Write Scalability Benchmark Suite");
-    eprintln!("=============================================");
-    eprintln!("Total ops per write workload: {TOTAL_OPS}");
-    eprintln!("Total ops for pure read:      {READ_OPS}");
-    if show_dist {
-        eprintln!("Distribution output:          enabled (BENCH_DIST)");
-    }
+    eprintln!("Pure-insert benchmark, batch_size=1000");
+    eprintln!("Total ops: {TOTAL_OPS}");
+    eprintln!("Thread counts: {thread_counts:?}");
     eprintln!();
 
-    // W1: Pure Insert
-    for &batch_size in &[1000, 100, 1] {
-        run_pure_insert_benchmark(&thread_counts, batch_size, show_dist);
-    }
-
-    // W2: Pure Update (match-insert generating Puts)
-    for &batch_size in &[1000, 100, 1] {
-        run_pure_update_benchmark(&thread_counts, batch_size, show_dist);
-    }
-
-    // W3: Insert Relations
-    for &batch_size in &[1000, 100, 1] {
-        run_insert_relation_benchmark(&thread_counts, batch_size, show_dist);
-    }
-
-    // W4: Mixed 50/50
-    for &batch_size in &[1000, 100, 1] {
-        run_mixed_benchmark(&thread_counts, batch_size, 0.5, show_dist);
-    }
-
-    // W5: Mixed 20/80
-    for &batch_size in &[1000, 100, 1] {
-        run_mixed_benchmark(&thread_counts, batch_size, 0.2, show_dist);
-    }
-
-    // W6: Pure Read
-    run_pure_read_benchmark(&thread_counts);
+    run_pure_insert_benchmark(&thread_counts, 1000, show_dist);
 }
