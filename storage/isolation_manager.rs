@@ -9,13 +9,14 @@
 
 use std::{
     cmp::max,
-    collections::{HashMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     error::Error,
     fmt,
     sync::{
-        Arc, OnceLock, RwLock,
+        Arc, Mutex, OnceLock, RwLock,
         atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
     },
+    thread::{self, Thread},
 };
 
 use logger::result::ResultExt;
@@ -254,6 +255,13 @@ impl IsolationManager {
         self.timeline.watermark()
     }
 
+    /// Block until the watermark reaches `target` and return the (possibly
+    /// later) watermark observed. Replaces the historical sleep-poll in
+    /// storage.rs::wait_for_watermark with targeted park/unpark.
+    pub(crate) fn wait_until_watermark_reaches(&self, target: SequenceNumber) -> SequenceNumber {
+        self.timeline.wait_until_watermark_reaches(target)
+    }
+
     pub fn reset(&mut self) {
         self.timeline = Timeline::new(self.initial_sequence_number);
     }
@@ -381,18 +389,99 @@ impl Error for ExpectedWindowError {}
 ///     2) when validation has finished, record into the Slot for its commit sequence number whether
 ///         it is sucessfully 'validated' or must be 'aborted'.
 ///
+/// A single waiter registered in `Timeline::waiters`. `target` is the sequence
+/// number the waiter needs the watermark to reach before it can proceed;
+/// `woken` guards against spurious `thread::park` wake-ups; `thread` is the
+/// handle used to `unpark` the waiter when its target becomes satisfied.
+#[derive(Debug)]
+struct WatermarkWaiter {
+    woken: AtomicBool,
+    thread: Thread,
+}
+
+#[derive(Debug)]
+struct WatermarkWaiters {
+    inner: Mutex<WatermarkWaitersInner>,
+}
+
+#[derive(Debug)]
+struct WatermarkWaitersInner {
+    /// Keyed by (target, unique_id) so waiters with the same target coexist.
+    /// Iteration is sorted by key, so `wake_through(new_watermark)` can drain
+    /// all entries whose target ≤ new_watermark in one forward pass.
+    waiters: BTreeMap<(u64, u64), Arc<WatermarkWaiter>>,
+    next_id: u64,
+}
+
+impl WatermarkWaiters {
+    fn new() -> Self {
+        Self { inner: Mutex::new(WatermarkWaitersInner { waiters: BTreeMap::new(), next_id: 0 }) }
+    }
+
+    fn wake_through(&self, new_watermark: SequenceNumber) {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.waiters.is_empty() {
+            return;
+        }
+        let threshold = new_watermark.number();
+        // Collect satisfied keys then remove + wake. Can't drain-while-iter
+        // on BTreeMap directly. At ≤tens of waiters this is cheap.
+        let satisfied: Vec<(u64, u64)> =
+            inner.waiters.range(..=(threshold, u64::MAX)).map(|(k, _)| *k).collect();
+        for k in satisfied {
+            if let Some(entry) = inner.waiters.remove(&k) {
+                entry.woken.store(true, Ordering::Release);
+                entry.thread.unpark();
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 struct Timeline {
     // We can adjust the Window size to amortise the cost of the read-write locks to maintain the timeline
     windows: RwLock<VecDeque<Arc<TimelineWindow<TIMELINE_WINDOW_SIZE>>>>,
     watermark: AtomicU64,
+    /// Targeted-wake replacement for the old sleep-poll. Each waiter registers
+    /// with its target sequence number and gets unparked exactly once, when
+    /// the watermark first reaches that target — no thundering herd of
+    /// spurious wake-ups when the watermark advances past unrelated targets.
+    waiters: WatermarkWaiters,
 }
 
 impl Timeline {
     // The whole of the timeline uses the underlying u64
     fn new(next_sequence_number: SequenceNumber) -> Timeline {
         let windows = VecDeque::from([Arc::new(TimelineWindow::new(next_sequence_number))]);
-        Timeline { windows: RwLock::new(windows), watermark: AtomicU64::new(next_sequence_number.number() - 1) }
+        Timeline {
+            windows: RwLock::new(windows),
+            watermark: AtomicU64::new(next_sequence_number.number() - 1),
+            waiters: WatermarkWaiters::new(),
+        }
+    }
+
+    fn wait_until_watermark_reaches(&self, target: SequenceNumber) -> SequenceNumber {
+        if self.watermark() >= target {
+            return self.watermark();
+        }
+        let entry = Arc::new(WatermarkWaiter { woken: AtomicBool::new(false), thread: thread::current() });
+        {
+            let mut inner = self.waiters.inner.lock().unwrap();
+            // Re-check under the mutex: closes the lost-wakeup race with
+            // wake_through, which takes the same mutex after advancing the
+            // atomic. If the watermark already passed our target, return.
+            if self.watermark() >= target {
+                return self.watermark();
+            }
+            let id = inner.next_id;
+            inner.next_id += 1;
+            inner.waiters.insert((target.number(), id), entry.clone());
+        }
+        // thread::park can return spuriously; re-check `woken` in a loop.
+        while !entry.woken.load(Ordering::Acquire) {
+            thread::park();
+        }
+        self.watermark()
     }
 
     fn may_free_windows(&self) {
@@ -412,6 +501,7 @@ impl Timeline {
             return;
         }
 
+        let start_watermark = self.watermark();
         let mut candidate_watermark = sequence_number;
         {
             let mut window = self.try_get_window(sequence_number);
@@ -441,7 +531,14 @@ impl Timeline {
             }
         }
 
-        let watermark = candidate_watermark - 1; // Invaraint
+        let watermark = candidate_watermark - 1; // Invariant
+        // Targeted wake: only unpark waiters whose target sequence number is
+        // now satisfied. The waiters mutex serialises against
+        // wait_until_watermark_reaches's registration path, closing the
+        // lost-wakeup race without paying for notify_all's thundering herd.
+        if watermark > start_watermark {
+            self.waiters.wake_through(watermark);
+        }
         if let Some(watermark_window_end) = { self.try_get_window(sequence_number - 1).map(|w| w.end()) } {
             if watermark >= watermark_window_end {
                 self.may_free_windows();

@@ -142,9 +142,15 @@ git_override(
 )
 
 bazel_dep(name = "typedb_dependencies", version = "0.0.0")
-local_path_override(
+# Branch tracks an attribute-bloom-deps fork of typedb/dependencies that adds
+# arc-swap and parking_lot to library/crates/Cargo.toml. Push the local
+# /home/user/typedb-dev/typedb-dependencies (branch attribute-bloom-deps,
+# sha 2f089b7912a1392b6b1384ed4b77dc250390f507) to flyingsilverfin/dependencies
+# before this branch can build on a fresh checkout.
+git_override(
     module_name = "typedb_dependencies",
-    path = "/home/user/typedb-dev/typedb-dependencies",
+    remote = "https://github.com/flyingsilverfin/dependencies",
+    commit = "2f089b7912a1392b6b1384ed4b77dc250390f507",
 )
 
 bazel_dep(name = "typeql", version = "0.0.0")

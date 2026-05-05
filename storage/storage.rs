@@ -16,8 +16,6 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
-    thread::sleep,
-    time::Duration,
 };
 
 use ::error::typedb_error;
@@ -30,10 +28,10 @@ use fail_point::{
 use isolation_manager::IsolationConflict;
 use iterator::MVCCReadError;
 use keyspace::KeyspaceDeleteError;
-use lending_iterator::LendingIterator;
+use lending_iterator::{LendingIterator, Seekable};
 use logger::{error, result::ResultExt};
 use resource::{
-    constants::{snapshot::BUFFER_VALUE_INLINE, storage::WATERMARK_WAIT_INTERVAL_MICROSECONDS},
+    constants::snapshot::{BUFFER_KEY_INLINE, BUFFER_VALUE_INLINE},
     profile::{CommitProfile, StorageCounters},
 };
 use tracing::trace;
@@ -43,7 +41,7 @@ use crate::{
     error::{MVCCStorageError, MVCCStorageErrorKind},
     isolation_manager::{IsolationManager, ValidatedCommit},
     iterator::MVCCRangeIterator,
-    key_range::KeyRange,
+    key_range::{KeyRange, RangeEnd, RangeStart},
     key_value::{StorageKey, StorageKeyReference},
     keyspace::{
         IteratorPool, Keyspace, KeyspaceError, KeyspaceId, KeyspaceOpenError, KeyspaceSet, Keyspaces,
@@ -246,14 +244,11 @@ impl<Durability> MVCCStorage<Durability> {
     }
 
     fn wait_for_watermark(&self, target: SequenceNumber) -> SequenceNumber {
-        // We can alternatively also block commits from returning until the watermark rises
-        // See detailed analysis at https://github.com/typedb/typedb/pull/7254/
-        let mut watermark = self.snapshot_watermark();
-        while watermark < target {
-            sleep(Duration::from_micros(WATERMARK_WAIT_INTERVAL_MICROSECONDS));
-            watermark = self.snapshot_watermark();
-        }
-        watermark
+        // Replaces the historical 50µs sleep-poll with targeted park/unpark
+        // through the isolation manager (see WatermarkWaiters there). Each
+        // waiter registers its target and gets unparked exactly once, when
+        // the watermark first reaches that target.
+        self.isolation_manager.wait_until_watermark_reaches(target)
     }
 
     pub fn snapshot_commit(
@@ -355,45 +350,78 @@ impl<Durability> MVCCStorage<Durability> {
     where
         Durability: DurabilityClient,
     {
+        // Per-Put MVCC reads previously created a fresh `MVCCRangeIterator`
+        // (and therefore a fresh RocksDB seek) for every Put in the commit
+        // buffer. For batched inserts that's 1000× the setup cost of the
+        // actual read, and it dominated the commit phase budget. Instead,
+        // build one iterator per keyspace that spans the full range of Put
+        // keys, then seek-forward through it in BTreeMap order. The iterator
+        // preserves position across seeks so consecutive reads amortise
+        // block-cache hits and avoid repeated RocksDB iterator construction.
+        // `writes()` returns a BTreeMap, so iteration is already key-sorted.
         for buffer in snapshot.operations() {
             let writes = buffer.writes();
-            let puts = writes.iter().filter_map(|(key, write)| match write {
-                Write::Put { value, reinsert, known_to_exist } => Some((key, value, reinsert, *known_to_exist)),
-                _ => None,
-            });
+            let mut puts: Vec<(&ByteArray<BUFFER_KEY_INLINE>, &ByteArray<BUFFER_VALUE_INLINE>, &std::sync::atomic::AtomicBool, bool)> =
+                Vec::new();
+            for (key, write) in writes.iter() {
+                if let Write::Put { value, reinsert, known_to_exist } = write {
+                    puts.push((key, value, reinsert, *known_to_exist));
+                }
+            }
+            if puts.is_empty() {
+                continue;
+            }
+
+            let first_key = puts.first().unwrap().0.as_ref();
+            let last_key = puts.last().unwrap().0.as_ref();
+            let range: KeyRange<StorageKey<'_, 0>> = KeyRange::new(
+                RangeStart::Inclusive(StorageKey::Reference(StorageKeyReference::new_raw(
+                    buffer.keyspace_id,
+                    first_key,
+                ))),
+                RangeEnd::EndPrefixInclusive(StorageKey::Reference(StorageKeyReference::new_raw(
+                    buffer.keyspace_id,
+                    last_key,
+                ))),
+                false,
+            );
+            let mut iterator = self.iterate_range(
+                snapshot.iterator_pool(),
+                &range,
+                snapshot.open_sequence_number(),
+                storage_counters.clone(),
+            );
+
             // Fast-path oracle: if the attribute bloom says a Put key is
-            // definitely absent, we can skip the MVCC read and mark for
-            // (re)insert directly. A bloom hit means "maybe present" and we
-            // fall through to the existing MVCC check.
+            // definitely absent, skip the MVCC read entirely and mark for
+            // (re)insert. A bloom hit means "maybe present" and we fall
+            // through to the iterator-based check. The bloom is populated
+            // at commit-apply time before the watermark advances, so any
+            // previously-written key is guaranteed to bloom-hit here.
             let bloom = self.keyspaces.attribute_bloom(buffer.keyspace_id).clone();
+
             for (key, value, reinsert, known_to_exist) in puts {
-                let wrapped = StorageKeyReference::new_raw(buffer.keyspace_id, key);
+                let raw_key: &[u8] = key.as_ref();
                 if known_to_exist {
-                    debug_assert!(
-                        self.get::<0>(
-                            snapshot.iterator_pool(),
-                            wrapped,
-                            snapshot.open_sequence_number(),
-                            storage_counters.clone()
-                        )
-                        .is_ok_and(|opt| opt.is_some())
-                    );
+                    #[cfg(debug_assertions)]
+                    {
+                        iterator.seek(raw_key);
+                        debug_assert!(
+                            matches!(iterator.peek(), Some(Ok((k, _))) if k.bytes() == raw_key),
+                            "known_to_exist Put {:?} not visible at snapshot",
+                            raw_key
+                        );
+                    }
                     reinsert.store(false, Ordering::Release);
-                } else if !bloom.may_contain(key.as_ref()) {
-                    // Definitely absent: skip the MVCC iterator. The
-                    // commit-apply path inserts every Put key into the bloom
-                    // before advancing the watermark, so a previously-written
-                    // key is guaranteed to bloom-hit here.
+                } else if !bloom.may_contain(raw_key) {
                     reinsert.store(true, Ordering::Release);
                 } else {
-                    let existing_stored = self
-                        .get::<BUFFER_VALUE_INLINE>(
-                            snapshot.iterator_pool(),
-                            wrapped,
-                            snapshot.open_sequence_number(),
-                            storage_counters.clone(),
-                        )?
-                        .is_some_and(|reference| &reference == value);
+                    iterator.seek(raw_key);
+                    let existing_stored = match iterator.peek() {
+                        Some(Ok((k, v))) if k.bytes() == raw_key => *v == value.as_ref(),
+                        Some(Err(err)) => return Err(err.clone()),
+                        _ => false,
+                    };
                     reinsert.store(!existing_stored, Ordering::Release);
                 }
             }
