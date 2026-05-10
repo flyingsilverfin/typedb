@@ -13,8 +13,9 @@ use std::{
     sync::Arc,
 };
 
-use answer::{Thing, Type, variable_value::VariableValue, Concept};
+use answer::{Concept, Thing, Type, variable_value::VariableValue};
 use compiler::{ExecutorVariable, executable::match_::instructions::thing::HasInstruction};
+use concept::thing::ThingAPI;
 use concept::{
     error::ConceptReadError,
     thing::{
@@ -27,7 +28,6 @@ use concept::{
 };
 use encoding::value::{value::Value, value_type::ValueTypeCategory};
 use itertools::Itertools;
-use concept::thing::ThingAPI;
 use lending_iterator::{LendingIterator, Peekable, kmerge::KMergeBy};
 use primitive::Bounds;
 use resource::{constants::traversal::CONSTANT_CONCEPT_LIMIT, profile::StorageCounters};
@@ -213,16 +213,18 @@ impl HasExecutor {
 
                 let owner_lower_bound = Object::min_bound_for_type_bound(&self.owner_type_range.0);
                 let owner_upper_bound = Object::max_bound_for_type_bound(&self.owner_type_range.1);
-                let attribute_lower_bound = Attribute::min_bound_for_type_and_value_bound(&self.attribute_type_range.0, &value_range.0);
-                let attribute_upper_bound = Attribute::max_bound_for_type_and_value_bound(&self.attribute_type_range.1, &value_range.1);
+                let attribute_lower_bound =
+                    Attribute::min_bound_for_type_and_value_bound(&self.attribute_type_range.0, &value_range.0);
+                let attribute_upper_bound =
+                    Attribute::max_bound_for_type_and_value_bound(&self.attribute_type_range.1, &value_range.1);
 
                 let owner_bounds = ComponentBound {
-                    lower: owner_lower_bound.map(|object| VariableValue::Thing(Thing::from(object))),
-                    upper: owner_upper_bound.map(|object| VariableValue::Thing(Thing::from(object))),
+                    lower: owner_lower_bound.map(|object| StorableConcept::Thing(Thing::from(object))),
+                    upper: owner_upper_bound.map(|object| StorableConcept::Thing(Thing::from(object))),
                 };
                 let attribute_bounds = ComponentBound {
-                    lower: attribute_lower_bound.map(|object| VariableValue::Thing(Thing::from(object))),
-                    upper: attribute_upper_bound.map(|object| VariableValue::Thing(Thing::from(object))),
+                    lower: attribute_lower_bound.map(|attribute| StorableConcept::Thing(Thing::from(attribute))),
+                    upper: attribute_upper_bound.map(|attribute| StorableConcept::Thing(Thing::from(attribute))),
                 };
                 let bounds_pair = ComponentBoundPair {
                     first_bound: owner_bounds,
@@ -238,7 +240,7 @@ impl HasExecutor {
                     //     attribute_type_lower_bound_inclusive,
                     //     value_range.0.clone().map(|v| v.into_owned()),
                     // ),
-                    bounds_pair
+                    bounds_pair,
                 );
                 Ok(TupleIterator::HasSingle(SortedTupleIterator::new(
                     as_tuples,
@@ -250,14 +252,16 @@ impl HasExecutor {
                 debug_assert!(self.owner_cache.is_some());
                 if let Some([owner]) = self.owner_cache.as_deref() {
                     let owner_bounds = ComponentBound {
-                        lower: Bound::Included(VariableValue::Thing(Thing::from(owner))),
-                        upper: Bound::Included(VariableValue::Thing(Thing::from(owner))),
+                        lower: Bound::Included(StorableConcept::Thing(Thing::from(owner))),
+                        upper: Bound::Included(StorableConcept::Thing(Thing::from(owner))),
                     };
-                    let attribute_lower_bound = Attribute::min_bound_for_type_and_value_bound(&self.attribute_type_range.0, &value_range.0);
-                    let attribute_upper_bound = Attribute::max_bound_for_type_and_value_bound(&self.attribute_type_range.1, &value_range.1);
+                    let attribute_lower_bound =
+                        Attribute::min_bound_for_type_and_value_bound(&self.attribute_type_range.0, &value_range.0);
+                    let attribute_upper_bound =
+                        Attribute::max_bound_for_type_and_value_bound(&self.attribute_type_range.1, &value_range.1);
                     let attribute_bounds = ComponentBound {
-                        lower: attribute_lower_bound.map(|object| VariableValue::Thing(Thing::from(object))),
-                        upper: attribute_upper_bound.map(|object| VariableValue::Thing(Thing::from(object))),
+                        lower: attribute_lower_bound.map(|attribute| StorableConcept::Thing(Thing::from(attribute))),
+                        upper: attribute_upper_bound.map(|attribute| StorableConcept::Thing(Thing::from(attribute))),
                     };
                     let bounds_pair = ComponentBoundPair {
                         first_bound: owner_bounds,
@@ -290,17 +294,19 @@ impl HasExecutor {
                     // TODO: we could create a reusable space for these temporarily held iterators
                     //       so we don't have allocate again before the merging iterator
                     let owners = self.owner_cache.as_ref().unwrap().iter();
-                    let attribute_lower_bound = Attribute::min_bound_for_type_and_value_bound(&self.attribute_type_range.0, &value_range.0);
-                    let attribute_upper_bound = Attribute::max_bound_for_type_and_value_bound(&self.attribute_type_range.1, &value_range.1);
+                    let attribute_lower_bound =
+                        Attribute::min_bound_for_type_and_value_bound(&self.attribute_type_range.0, &value_range.0);
+                    let attribute_upper_bound =
+                        Attribute::max_bound_for_type_and_value_bound(&self.attribute_type_range.1, &value_range.1);
                     let attribute_bounds = ComponentBound {
-                        lower: attribute_lower_bound.map(|object| VariableValue::Thing(Thing::from(object))),
-                        upper: attribute_upper_bound.map(|object| VariableValue::Thing(Thing::from(object))),
+                        lower: attribute_lower_bound.map(|attribute| StorableConcept::Thing(Thing::from(attribute))),
+                        upper: attribute_upper_bound.map(|attribute| StorableConcept::Thing(Thing::from(attribute))),
                     };
                     let mut iterators = Vec::new();
                     for owner in owners {
                         let owner_bounds = ComponentBound {
-                            lower: Bound::Included(VariableValue::Thing(Thing::from(owner))),
-                            upper: Bound::Included(VariableValue::Thing(Thing::from(owner))),
+                            lower: Bound::Included(StorableConcept::Thing(Thing::from(owner))),
+                            upper: Bound::Included(StorableConcept::Thing(Thing::from(owner))),
                         };
                         let bounds_pair = ComponentBoundPair {
                             first_bound: owner_bounds,
@@ -323,7 +329,7 @@ impl HasExecutor {
                             has_to_tuple_attribute_owner,
                             tuple_attribute_owner_to_has_canonical,
                             // FixedHasBounds::Owner(*owner),
-                            bounds_pair
+                            bounds_pair,
                         );
                         iterators.push(iterator);
                     }
@@ -343,14 +349,16 @@ impl HasExecutor {
             BinaryIterateMode::BoundFrom => {
                 let owner = self.has.owner().as_variable().unwrap().as_position().unwrap();
                 let owner_bounds = ComponentBound {
-                    lower: Bound::Included(VariableValue::Thing(Thing::from(owner))),
-                    upper: Bound::Included(VariableValue::Thing(Thing::from(owner))),
+                    lower: Bound::Included(StorableConcept::Thing(Thing::from(owner))),
+                    upper: Bound::Included(StorableConcept::Thing(Thing::from(owner))),
                 };
-                let attribute_lower_bound = Attribute::min_bound_for_type_and_value_bound(&self.attribute_type_range.0, &value_range.0);
-                let attribute_upper_bound = Attribute::max_bound_for_type_and_value_bound(&self.attribute_type_range.1, &value_range.1);
+                let attribute_lower_bound =
+                    Attribute::min_bound_for_type_and_value_bound(&self.attribute_type_range.0, &value_range.0);
+                let attribute_upper_bound =
+                    Attribute::max_bound_for_type_and_value_bound(&self.attribute_type_range.1, &value_range.1);
                 let attribute_bounds = ComponentBound {
-                    lower: attribute_lower_bound.map(|object| VariableValue::Thing(Thing::from(object))),
-                    upper: attribute_upper_bound.map(|object| VariableValue::Thing(Thing::from(object))),
+                    lower: attribute_lower_bound.map(|attribute| StorableConcept::Thing(Thing::from(attribute))),
+                    upper: attribute_upper_bound.map(|attribute| StorableConcept::Thing(Thing::from(attribute))),
                 };
                 let bounds_pair = ComponentBoundPair {
                     first_bound: owner_bounds,
@@ -386,7 +394,7 @@ impl HasExecutor {
                     has_to_tuple_attribute_owner,
                     tuple_attribute_owner_to_has_canonical,
                     // FixedHasBounds::Owner(row.get(owner).as_thing().as_object()),
-                    bounds_pair
+                    bounds_pair,
                 );
                 Ok(TupleIterator::HasSingle(SortedTupleIterator::new(
                     as_tuples,
@@ -417,15 +425,46 @@ enum HasComponentBounds {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ComponentBoundPair {
-    first_bound: ComponentBound,
-    second_bound: ComponentBound,
-    next_component_density: f64 // estimated number of second components per first
+    pub(crate) first_bound: ComponentBound,
+    pub(crate) second_bound: ComponentBound,
+    pub(crate) next_component_density: f64, // estimated number of second components per first
 }
 
 #[derive(Debug, Clone)]
-struct ComponentBound {
-    lower: Bound<VariableValue<'static>>,
-    upper: Bound<VariableValue<'static>>,
+pub(crate) struct ComponentBound {
+    pub(crate) lower: Bound<StorableConcept>,
+    pub(crate) upper: Bound<StorableConcept>,
+}
+
+#[derive(Debug, Clone, PartialOrd, Eq, PartialEq)]
+pub(crate) enum StorableConcept {
+    Type(Type),
+    Thing(Thing),
+}
+
+impl ComponentBound {
+    pub(crate) fn compare(&self, concept: StorableConcept) -> BoundsComparison {
+        let below = match &self.lower {
+            Bound::Unbounded => false,
+            Bound::Included(lower) => concept.partial_cmp(lower)?.is_lt(),
+            Bound::Excluded(lower) => !concept.partial_cmp(lower)?.is_gt(),
+        };
+        if below {
+            return BoundsComparison::Below;
+        }
+        let above = match &self.upper {
+            Bound::Unbounded => false,
+            Bound::Included(upper) => concept.partial_cmp(upper)?.is_gt(),
+            Bound::Excluded(upper) => !concept.partial_cmp(upper)?.is_lt(),
+        };
+        if above { BoundsComparison::Above } else { BoundsComparison::Within }
+    }
+}
+
+pub(crate) enum BoundsComparison {
+    Below,
+    Within,
+    Above,
 }
 
 pub(super) struct HasTupleIterator<Iter: LendingIterator> {
@@ -448,9 +487,15 @@ where
         to_tuple_fn: HasToTupleFn,
         from_tuple_fn: TupleToSeekTargetHasFn,
         // fixed_bounds: FixedHasBounds,
-        component_bounds: ComponentBoundPair
+        component_bounds: ComponentBoundPair,
     ) -> Self {
-        Self { inner: Peekable::new(inner), filter_map, to_tuple_fn, tuple_to_target_has_fn: from_tuple_fn, component_bounds }
+        Self {
+            inner: Peekable::new(inner),
+            filter_map,
+            to_tuple_fn,
+            tuple_to_target_has_fn: from_tuple_fn,
+            component_bounds,
+        }
     }
 }
 

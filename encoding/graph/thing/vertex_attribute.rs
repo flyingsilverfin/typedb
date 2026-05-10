@@ -315,11 +315,10 @@ impl AttributeID {
                 if StringAttributeID::is_inlineable(&encoded) {
                     StringAttributeID::write_deterministic_inline_id(&encoded, bytes)
                 } else {
-                    // write a 'hashed' version, but only return the shorter length
+                    // write a 'hashed' version that always hashes to 0 to be first in order
                     let _ = StringAttributeID::write_deterministic_prefix_hashed(
                         &encoded, & |_| 0, bytes
                     );
-                    StringAttributeID::HASHED_PREFIX_RANGE.end
                 }
             },
             ValueTypeCategory::Struct => 0, // ID does not match value order

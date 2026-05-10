@@ -34,7 +34,7 @@ use encoding::graph::{
 use lending_iterator::higher_order::Hkt;
 
 use crate::instruction::{has_executor::FixedHasBounds, links_executor::FixedLinksBounds};
-use crate::instruction::has_executor::ComponentBoundPair;
+use crate::instruction::has_executor::{BoundsComparison, ComponentBoundPair, StorableConcept};
 
 pub(crate) type TupleOrderingFn = for<'a, 'b> fn((&'a TupleResult<'static>, &'b TupleResult<'static>)) -> Ordering;
 
@@ -355,7 +355,7 @@ pub(crate) fn has_to_tuple_attribute_owner(result: Result<(Has, u64), Box<Concep
     Ok(Tuple::Pair([VariableValue::Thing(attribute.into()), VariableValue::Thing(owner.into())]))
 }
 
-pub(crate) fn tuple_attribute_owner_to_seek_target_has_canonical(tuple: &Tuple<'_>, bounds: &ComponentBoundPair) -> Has {
+pub(crate) fn tuple_attribute_owner_to_seek_target_has_canonical(tuple: &Tuple<'_>, bounds: &ComponentBoundPair) -> Option<Has> {
     let (tuple_attribute, tuple_owner) = tuple_attribute_owner_to_attribute_owner(tuple);
 
     // ordering: owner, attribute
@@ -363,6 +363,37 @@ pub(crate) fn tuple_attribute_owner_to_seek_target_has_canonical(tuple: &Tuple<'
     // we can 'raise' the lower bounds to seek 'further' using the bounds' lower bounds?
     // also, if the owner range isn't in the bounds owner range, we can return None (will fail = fail fast!)
     // CHECK: if owner is in range but attribute isn't, we can't use attribute to fail the entire iterator... but we can seek to [owner + 1][attribute lower bound] right?
+
+    let owner_comparison = bounds.first_bound.compare(StorableConcept::Thing(Thing::from(tuple_owner)));
+    match owner_comparison {
+        BoundsComparison::Below => {
+            // TODO: return lower bound owner, lower bound attribute
+        }
+        BoundsComparison::Within => {
+            let attribute_comparison = bounds.second_bound.compare(StorableConcept::Thing(Thing::from(tuple_attribute)));
+            match attribute_comparison {
+                BoundsComparison::Below => {
+                    // TODO; return tuple_owner, lower bound attribute
+                }
+                BoundsComparison::Within => {
+                    // TODO: return tuple owner, tuple attribute
+                }
+                BoundsComparison::Above => {
+                    // TODO: increment owner, recheck from the start
+                }
+            }
+        }
+        BoundsComparison::Above => return None,
+    }
+
+    // cases:
+    // 1. owner in bounds, attribute in bounds = convert
+    // 2. owner in bounds, attribute below bounds = set attribute to range lower bound
+    // 3. owner in bounds, attribute above bounds = increment owner + 1, then recheck if that owner is in range. If yes, set attribute to lower bound
+
+    // 4. owner below bounds, skip forward to lower bound
+    // 5. owner in bounds, (case above)
+    // 6. owner above bounds, short circuit
 
 
     // let (attribute, owner) = match fixed_has_bounds {
@@ -374,6 +405,7 @@ pub(crate) fn tuple_attribute_owner_to_seek_target_has_canonical(tuple: &Tuple<'
     // Has::Edge(ThingEdgeHas::new(owner.vertex(), attribute.vertex()))
     todo!()
 }
+
 
 // pub(crate) fn tuple_attribute_owner_to_has_canonical(tuple: &Tuple<'_>, fixed_has_bounds: &FixedHasBounds) -> Has {
 //     let (tuple_attribute, tuple_owner) = tuple_attribute_owner_to_attribute_owner(tuple);
