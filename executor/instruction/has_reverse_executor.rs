@@ -345,25 +345,3 @@ fn create_has_filter_owners(owner_types: Arc<BTreeSet<Type>>) -> Arc<HasFilterFn
         Err(err) => Err(err.clone()),
     })
 }
-
-fn compare_has_by_owner_then_attribute(
-    (left, right): (&Result<(Has, u64), Box<ConceptReadError>>, &Result<(Has, u64), Box<ConceptReadError>>),
-) -> Ordering {
-    if let (Ok((has_1, _)), Ok((has_2, _))) = (left, right) {
-        (has_1.owner(), has_1.attribute()).cmp(&(has_2.owner(), has_2.attribute()))
-    } else {
-        // arbitrary
-        Ordering::Equal
-    }
-}
-
-fn compare_has_by_attribute_then_owner(
-    (left, right): (&Result<(Has, u64), Box<ConceptReadError>>, &Result<(Has, u64), Box<ConceptReadError>>),
-) -> Ordering {
-    if let (Ok((has_1, _)), Ok((has_2, _))) = (left, right) {
-        (has_1.attribute(), has_1.owner()).cmp(&(has_2.attribute(), has_2.owner()))
-    } else {
-        // arbitrary
-        Ordering::Equal
-    }
-}

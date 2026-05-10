@@ -342,7 +342,7 @@ impl ThingVertexGenerator {
     where
         Snapshot: WritableSnapshot,
     {
-        let string_attribute_id = self.create_attribute_id_string(type_id, value.as_reference(), snapshot)?;
+        let string_attribute_id = self.create_attribute_id_string(type_id, value.copy(), snapshot)?;
         let vertex = AttributeVertex::new(type_id, AttributeID::String(string_attribute_id));
         snapshot.put_val(vertex.into_storage_key().into_owned_array(), ByteArray::from(value.bytes()));
         Ok(vertex)
@@ -357,8 +357,8 @@ impl ThingVertexGenerator {
     where
         Snapshot: WritableSnapshot,
     {
-        if StringAttributeID::is_inlineable(string.as_reference()) {
-            Ok(StringAttributeID::build_inline_id(string))
+        if StringAttributeID::is_inlineable(&string) {
+            Ok(StringAttributeID::build_inline_id(&string))
         } else {
             let id = StringAttributeID::build_hashed_id(type_id, string, snapshot, &self.large_value_hasher)?;
             let hash = id.get_hash_hash();
@@ -378,7 +378,7 @@ impl ThingVertexGenerator {
     where
         Snapshot: ReadableSnapshot,
     {
-        assert!(!StringAttributeID::is_inlineable(string.as_reference()));
+        assert!(!StringAttributeID::is_inlineable(&string));
         StringAttributeID::find_hashed_id(type_id, string, snapshot, &self.large_value_hasher)
     }
 

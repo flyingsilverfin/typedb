@@ -54,7 +54,7 @@ impl<const INLINE_LENGTH: usize> StringBytes<INLINE_LENGTH> {
         &self.bytes
     }
 
-    pub fn as_reference(&self) -> StringBytes<INLINE_LENGTH> {
+    pub fn copy(&self) -> StringBytes<INLINE_LENGTH> {
         StringBytes { bytes: ByteArray::copy(&self.bytes) }
     }
 }

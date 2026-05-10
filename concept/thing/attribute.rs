@@ -4,15 +4,8 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use std::{
-    cmp::Ordering,
-    collections::HashSet,
-    fmt,
-    hash::{Hash, Hasher},
-    sync::{Arc, OnceLock},
-};
-
 use bytes::Bytes;
+use encoding::graph::thing::vertex_object::ObjectID;
 use encoding::{
     AsBytes, Keyable,
     graph::{
@@ -31,8 +24,19 @@ use iterator::State;
 use itertools::Itertools;
 use lending_iterator::{LendingIterator, Peekable, Seekable, higher_order::Hkt};
 use resource::{constants::snapshot::BUFFER_KEY_INLINE, profile::StorageCounters};
+use std::borrow::Cow;
+use std::collections::Bound;
+use std::{
+    cmp::Ordering,
+    collections::HashSet,
+    fmt,
+    hash::{Hash, Hasher},
+    sync::{Arc, OnceLock},
+};
+use bytes::byte_array::ByteArray;
 use storage::snapshot::{ReadableSnapshot, WritableSnapshot};
 
+use crate::type_::TypeAPI;
 use crate::{
     ConceptAPI, ConceptStatus,
     error::{ConceptReadError, ConceptWriteError},
@@ -116,6 +120,62 @@ impl Attribute {
         bytes.increment().unwrap();
         Attribute::new(AttributeVertex::decode(&bytes))
     }
+
+    // TODO: resume in the morning, too tired!
+    pub fn min_bound_for_type_and_value_bound(
+        lower_type_bound: &Bound<<Attribute as ThingAPI>::TypeAPI>,
+        lower_value_bound: &Bound<Value<'_>>,
+    ) -> Bound<Self> {
+
+        // Lower value bound can be converted to either a complete AttributeID, or a prefix (lower bound)
+
+        // cases:
+        // 1) included lower bound type, unbounded value bound --> included(straight concat with 0's)
+        // 2) included lower bound type, included lower value type bound --> included (concat with [prefix]attribute id for value)
+        // 3) included lower bound type, excluded lower value type bound --> included (concat with [prefix]attribute id for value)
+              // TODO: if we wanted to be more precise, we would say [excluded] if it's the complete AttributeID and [included] if it is a prefix
+        //
+        // 1) excluded lower bound type, unbounded value lower bound --> excluded (lower bound type + max id)
+        // 2) excluded lower bound type, included lower value type bound --> included (increment and [prefix]attribute id for value)
+        // 3) excluded lower bound type, excluded lower value type bound --> included (increment and concat with [prefix]attribute id for value)
+              // TODO: if we wanted to be more precise, we would say [excluded] if it's the complete AttributeID and [included] if it is a prefix
+
+        // 1) unbounded lower bound type --> unbounded
+
+        let attribute_id_for_lower_bound = match lower_value_bound {
+            Bound::Included(lower_bound) | Bound::Excluded(lower_bound) => {
+                let mut bytes = [0; AttributeID::MAX_LENGTH];
+                let written = AttributeID::write_prefix_matching_value_order(&mut bytes, lower_bound.as_reference());
+                Some(ByteArray::inline(bytes, written))
+            }
+            Bound::Unbounded => None,
+        };
+
+        match lower_type_bound {
+            Bound::Included(type_) => {
+                Bound::Included(Self::new(AttributeVertex::new(type_.vertex().type_id_(), AttributeID::MIN)))
+            }
+            Bound::Excluded(type_) => {
+                Bound::Included(Self::new(AttributeVertex::new(type_.vertex().type_id_(), AttributeID::MAX)))
+            }
+            Bound::Unbounded => Bound::Unbounded,
+        }
+    }
+
+    pub fn max_bound_for_type_and_value_bound(
+        type_bound: &Bound<<Attribute as ThingAPI>::TypeAPI>,
+        value_bound: &Bound<Value<'_>>,
+    ) -> Bound<Self> {
+        match type_bound {
+            Bound::Included(type_) => {
+                Bound::Included(Self::new(AttributeVertex::new(type_.vertex().type_id_(), AttributeID::MAX)))
+            }
+            Bound::Excluded(type_) => {
+                Bound::Included(Self::new(AttributeVertex::new(type_.vertex().type_id_(), AttributeID::MIN)))
+            }
+            Bound::Unbounded => Bound::Unbounded,
+        }
+    }
 }
 
 impl ConceptAPI for Attribute {}
@@ -124,6 +184,7 @@ impl ThingAPI for Attribute {
     type Vertex = AttributeVertex;
     type TypeAPI = AttributeType;
     const MIN: Attribute = Attribute::new_const(Self::Vertex::new(TypeID::MIN, AttributeID::MIN));
+    const MAX: Attribute = Attribute::new_const(Self::Vertex::new(TypeID::MAX, AttributeID::MAX));
     const PREFIX_RANGE_INCLUSIVE: (Prefix, Prefix) = (Prefix::VertexAttribute, Prefix::VertexAttribute);
 
     fn new(vertex: Self::Vertex) -> Self {
@@ -177,6 +238,30 @@ impl ThingAPI for Attribute {
 
     fn prefix_for_type(_type: Self::TypeAPI) -> Prefix {
         Prefix::VertexAttribute
+    }
+
+    fn min_bound_for_type_bound(bound: &Bound<Self::TypeAPI>) -> Bound<Self> {
+        match bound {
+            Bound::Included(type_) => {
+                Bound::Included(Self::new(AttributeVertex::new(type_.vertex().type_id_(), AttributeID::MIN)))
+            }
+            Bound::Excluded(type_) => {
+                Bound::Included(Self::new(AttributeVertex::new(type_.vertex().type_id_(), AttributeID::MAX)))
+            }
+            Bound::Unbounded => Bound::Unbounded,
+        }
+    }
+
+    fn max_bound_for_type_bound(bound: &Bound<Self::TypeAPI>) -> Bound<Self> {
+        match bound {
+            Bound::Included(type_) => {
+                Bound::Included(Self::new(AttributeVertex::new(type_.vertex().type_id_(), AttributeID::MAX)))
+            }
+            Bound::Excluded(type_) => {
+                Bound::Included(Self::new(AttributeVertex::new(type_.vertex().type_id_(), AttributeID::MIN)))
+            }
+            Bound::Unbounded => Bound::Unbounded,
+        }
     }
 }
 

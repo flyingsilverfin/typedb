@@ -10,7 +10,7 @@ use std::{
     iter::Map,
     ops::RangeBounds,
 };
-
+use std::ops::Bound;
 use bytes::Bytes;
 use encoding::{
     Keyable, Prefixed,
@@ -47,6 +47,7 @@ use crate::{
         relation_type::RelationType, role_type::RoleType,
     },
 };
+use crate::type_::TypeAPI;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum Object {
@@ -81,6 +82,7 @@ impl ThingAPI for Object {
     type TypeAPI = ObjectType;
     type Vertex = ObjectVertex;
     const MIN: Object = Self::Entity(Entity::MIN);
+    const MAX: Object = Self::Relation(Relation::MAX);
     const PREFIX_RANGE_INCLUSIVE: (Prefix, Prefix) = (Prefix::VertexEntity, Prefix::VertexRelation);
 
     fn new(object_vertex: Self::Vertex) -> Self {
@@ -145,6 +147,60 @@ impl ThingAPI for Object {
         match type_ {
             ObjectType::Entity(entity) => Entity::prefix_for_type(entity),
             ObjectType::Relation(relation) => Relation::prefix_for_type(relation),
+        }
+    }
+
+    fn min_bound_for_type_bound(bound: &Bound<Self::TypeAPI>) -> Bound<Self> {
+        // passthrough
+        match bound {
+            Bound::Included(type_) => {
+                match type_ {
+                    ObjectType::Entity(entity) => {
+                        Entity::min_bound_for_type_bound(&Bound::Included(*entity)).map(|entity| Self::Entity(entity))
+                    },
+                    ObjectType::Relation(relation) => {
+                        Relation::min_bound_for_type_bound(&Bound::Included(*relation)).map(|relation| Self::Relation(relation))
+                    }
+                }
+            }
+            Bound::Excluded(type_) => {
+                match type_ {
+                    ObjectType::Entity(entity) => {
+                        Entity::min_bound_for_type_bound(&Bound::Excluded(*entity)).map(|entity| Self::Entity(entity))
+                    },
+                    ObjectType::Relation(relation) => {
+                        Relation::min_bound_for_type_bound(&Bound::Excluded(*relation)).map(|relation| Self::Relation(relation))
+                    }
+                }
+            }
+            Bound::Unbounded => Bound::Unbounded,
+        }
+    }
+
+    fn max_bound_for_type_bound(bound: &Bound<Self::TypeAPI>) -> Bound<Self> {
+        // passthrough
+        match bound {
+            Bound::Included(type_) => {
+                match type_ {
+                    ObjectType::Entity(entity) => {
+                        Entity::max_bound_for_type_bound(&Bound::Included(*entity)).map(|entity| Self::Entity(entity))
+                    },
+                    ObjectType::Relation(relation) => {
+                        Relation::max_bound_for_type_bound(&Bound::Included(*relation)).map(|relation| Self::Relation(relation))
+                    }
+                }
+            }
+            Bound::Excluded(type_) => {
+                match type_ {
+                    ObjectType::Entity(entity) => {
+                        Entity::max_bound_for_type_bound(&Bound::Excluded(*entity)).map(|entity| Self::Entity(entity))
+                    },
+                    ObjectType::Relation(relation) => {
+                        Relation::max_bound_for_type_bound(&Bound::Excluded(*relation)).map(|relation| Self::Relation(relation))
+                    }
+                }
+            }
+            Bound::Unbounded => Bound::Unbounded,
         }
     }
 }

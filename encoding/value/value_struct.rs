@@ -282,7 +282,7 @@ impl StructIndexEntry<'static> {
             Value::Duration(value) => buf.extend_from_slice(&DurationBytes::build(*value).bytes()),
             Value::String(value) => {
                 let string_bytes = StringBytes::<0>::build_ref(value);
-                Self::encode_string_into(snapshot, hasher, string_bytes.as_reference(), &mut buf)?;
+                Self::encode_string_into(snapshot, hasher, string_bytes.copy(), &mut buf)?;
             }
             Value::Struct(_) => unreachable!(),
         };
@@ -303,7 +303,7 @@ impl StructIndexEntry<'_> {
         string_bytes: StringBytes<INLINE_SIZE>,
         buf: &mut Vec<u8>,
     ) -> Result<(), Arc<SnapshotIteratorError>> {
-        if Self::is_string_inlineable(string_bytes.as_reference()) {
+        if Self::is_string_inlineable(string_bytes.copy()) {
             let mut inline_bytes: [u8; StructIndexEntry::STRING_FIELD_INLINE_LENGTH] =
                 [0; { StructIndexEntry::STRING_FIELD_INLINE_LENGTH }];
             inline_bytes[0..string_bytes.bytes().len()].copy_from_slice(string_bytes.bytes());

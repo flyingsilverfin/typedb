@@ -4,8 +4,6 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use std::{collections::HashMap, fmt};
-
 use bytes::Bytes;
 use encoding::{
     AsBytes, Keyable, Prefixed,
@@ -27,11 +25,14 @@ use resource::{
     constants::snapshot::{BUFFER_KEY_INLINE, BUFFER_VALUE_INLINE},
     profile::StorageCounters,
 };
+use std::ops::Bound;
+use std::{collections::HashMap, fmt};
 use storage::{
     key_value::StorageKey,
     snapshot::{ReadableSnapshot, WritableSnapshot},
 };
 
+use crate::type_::TypeAPI;
 use crate::{
     ConceptAPI, ConceptStatus, edge_iterator,
     error::{ConceptReadError, ConceptWriteError},
@@ -365,6 +366,7 @@ impl ThingAPI for Relation {
     type TypeAPI = RelationType;
     type Vertex = ObjectVertex;
     const MIN: Self = Self::new_const(Self::Vertex::MIN_RELATION);
+    const MAX: Self = Self::new_const(Self::Vertex::MAX_RELATION);
     const PREFIX_RANGE_INCLUSIVE: (Prefix, Prefix) = (Prefix::VertexRelation, Prefix::VertexRelation);
 
     fn new(vertex: Self::Vertex) -> Self {
@@ -462,6 +464,30 @@ impl ThingAPI for Relation {
 
     fn prefix_for_type(_type: Self::TypeAPI) -> Prefix {
         Prefix::VertexRelation
+    }
+
+    fn min_bound_for_type_bound(bound: &Bound<Self::TypeAPI>) -> Bound<Self> {
+        match bound {
+            Bound::Included(type_) => {
+                Bound::Included(Self::new(ObjectVertex::build_relation(type_.vertex().type_id_(), ObjectID::MIN)))
+            }
+            Bound::Excluded(type_) => {
+                Bound::Excluded(Self::new(ObjectVertex::build_relation(type_.vertex().type_id_(), ObjectID::MAX)))
+            }
+            Bound::Unbounded => Bound::Unbounded,
+        }
+    }
+
+    fn max_bound_for_type_bound(bound: &Bound<Self::TypeAPI>) -> Bound<Self> {
+        match bound {
+            Bound::Included(type_) => {
+                Bound::Included(Self::new(ObjectVertex::build_relation(type_.vertex().type_id_(), ObjectID::MAX)))
+            }
+            Bound::Excluded(type_) => {
+                Bound::Excluded(Self::new(ObjectVertex::build_relation(type_.vertex().type_id_(), ObjectID::MIN)))
+            },
+            Bound::Unbounded => Bound::Unbounded,
+        }
     }
 }
 

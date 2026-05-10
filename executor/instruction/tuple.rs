@@ -34,6 +34,7 @@ use encoding::graph::{
 use lending_iterator::higher_order::Hkt;
 
 use crate::instruction::{has_executor::FixedHasBounds, links_executor::FixedLinksBounds};
+use crate::instruction::has_executor::ComponentBoundPair;
 
 pub(crate) type TupleOrderingFn = for<'a, 'b> fn((&'a TupleResult<'static>, &'b TupleResult<'static>)) -> Ordering;
 
@@ -286,7 +287,9 @@ pub(crate) fn isa_to_tuple_type_thing(result: Result<(Thing, Type), Box<ConceptR
 }
 
 pub(crate) type HasToTupleFn = fn(Result<(Has, u64), Box<ConceptReadError>>) -> TupleResult<'static>;
-pub(crate) type TupleToHasFn = fn(&Tuple<'_>, &FixedHasBounds) -> Has;
+// pub(crate) type TupleToHasFn = fn(&Tuple<'_>, &FixedHasBounds) -> Has;
+pub(crate) type TupleToSeekTargetHasFn = fn(&Tuple<'_>, &ComponentBoundPair) -> Has;
+
 
 pub(crate) fn has_to_tuple_owner_attribute(result: Result<(Has, u64), Box<ConceptReadError>>) -> TupleResult<'static> {
     let (has, _count) = result?;
@@ -352,16 +355,37 @@ pub(crate) fn has_to_tuple_attribute_owner(result: Result<(Has, u64), Box<Concep
     Ok(Tuple::Pair([VariableValue::Thing(attribute.into()), VariableValue::Thing(owner.into())]))
 }
 
-pub(crate) fn tuple_attribute_owner_to_has_canonical(tuple: &Tuple<'_>, fixed_has_bounds: &FixedHasBounds) -> Has {
+pub(crate) fn tuple_attribute_owner_to_seek_target_has_canonical(tuple: &Tuple<'_>, bounds: &ComponentBoundPair) -> Has {
     let (tuple_attribute, tuple_owner) = tuple_attribute_owner_to_attribute_owner(tuple);
-    let (attribute, owner) = match fixed_has_bounds {
-        // note: this means attribute is given in tuple, so we can ignore constants
-        FixedHasBounds::NoneWithLowerBounds(_, _) => (tuple_attribute, &tuple_owner),
-        FixedHasBounds::Owner(fixed_owner) => (tuple_attribute, fixed_owner),
-        FixedHasBounds::Attribute(fixed_attribute) => (fixed_attribute, &tuple_owner),
-    };
-    Has::Edge(ThingEdgeHas::new(owner.vertex(), attribute.vertex()))
+
+    // ordering: owner, attribute
+    // we're given a target owner and target attribute
+    // we can 'raise' the lower bounds to seek 'further' using the bounds' lower bounds?
+    // also, if the owner range isn't in the bounds owner range, we can return None (will fail = fail fast!)
+    // CHECK: if owner is in range but attribute isn't, we can't use attribute to fail the entire iterator... but we can seek to [owner + 1][attribute lower bound] right?
+
+
+    // let (attribute, owner) = match fixed_has_bounds {
+    //     // note: this means attribute is given in tuple, so we can ignore constants
+    //     FixedHasBounds::NoneWithLowerBounds(_, _) => (tuple_attribute, &tuple_owner),
+    //     FixedHasBounds::Owner(fixed_owner) => (tuple_attribute, fixed_owner),
+    //     FixedHasBounds::Attribute(fixed_attribute) => (fixed_attribute, &tuple_owner),
+    // };
+    // Has::Edge(ThingEdgeHas::new(owner.vertex(), attribute.vertex()))
+    todo!()
 }
+
+// pub(crate) fn tuple_attribute_owner_to_has_canonical(tuple: &Tuple<'_>, fixed_has_bounds: &FixedHasBounds) -> Has {
+//     let (tuple_attribute, tuple_owner) = tuple_attribute_owner_to_attribute_owner(tuple);
+//     let (attribute, owner) = match fixed_has_bounds {
+//         // note: this means attribute is given in tuple, so we can ignore constants
+//         FixedHasBounds::NoneWithLowerBounds(_, _) => (tuple_attribute, &tuple_owner),
+//         FixedHasBounds::Owner(fixed_owner) => (tuple_attribute, fixed_owner),
+//         FixedHasBounds::Attribute(fixed_attribute) => (fixed_attribute, &tuple_owner),
+//     };
+//     Has::Edge(ThingEdgeHas::new(owner.vertex(), attribute.vertex()))
+// }
+//
 
 pub(crate) fn tuple_attribute_owner_to_has_reverse(tuple: &Tuple<'_>, fixed_has_bounds: &FixedHasBounds) -> Has {
     let (tuple_attribute, tuple_owner) = tuple_attribute_owner_to_attribute_owner(tuple);

@@ -3,7 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
-
+use std::collections::Bound;
 use bytes::{Bytes, byte_array::ByteArray};
 use encoding::{
     AsBytes,
@@ -38,6 +38,7 @@ pub trait ThingAPI: Sized + Clone {
     type Vertex: ThingVertex;
 
     const MIN: Self;
+    const MAX: Self;
     const PREFIX_RANGE_INCLUSIVE: (Prefix, Prefix);
 
     fn new(vertex: Self::Vertex) -> Self;
@@ -69,6 +70,10 @@ pub trait ThingAPI: Sized + Clone {
     ) -> Result<(), Box<ConceptWriteError>>;
 
     fn prefix_for_type(type_: Self::TypeAPI) -> Prefix;
+
+    fn min_bound_for_type_bound(bound: &Bound<Self::TypeAPI>) -> Bound<Self>;
+
+    fn max_bound_for_type_bound(bound: &Bound<Self::TypeAPI>) -> Bound<Self>;
 }
 
 pub trait HKInstance: ThingAPI {}

@@ -265,6 +265,10 @@ impl ValueTypeCategory {
             ValueTypeCategory::Struct => "struct",
         }
     }
+
+    pub const fn max_bytes(&self) -> [u8; ValueTypeBytes::CATEGORY_LENGTH] {
+        [u8::MAX]
+    }
 }
 
 impl fmt::Display for ValueTypeCategory {

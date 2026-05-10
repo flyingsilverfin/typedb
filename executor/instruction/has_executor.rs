@@ -13,7 +13,7 @@ use std::{
     sync::Arc,
 };
 
-use answer::{Thing, Type, variable_value::VariableValue};
+use answer::{Thing, Type, variable_value::VariableValue, Concept};
 use compiler::{ExecutorVariable, executable::match_::instructions::thing::HasInstruction};
 use concept::{
     error::ConceptReadError,
@@ -27,6 +27,7 @@ use concept::{
 };
 use encoding::value::{value::Value, value_type::ValueTypeCategory};
 use itertools::Itertools;
+use concept::thing::ThingAPI;
 use lending_iterator::{LendingIterator, Peekable, kmerge::KMergeBy};
 use primitive::Bounds;
 use resource::{constants::traversal::CONSTANT_CONCEPT_LIMIT, profile::StorageCounters};
@@ -39,7 +40,7 @@ use crate::{
         iterator::{SortedTupleIterator, TupleIterator, TupleSeekable},
         min_max_types,
         tuple::{
-            HasToTupleFn, Tuple, TupleOrderingFn, TuplePositions, TupleResult, TupleToHasFn,
+            HasToTupleFn, Tuple, TupleOrderingFn, TuplePositions, TupleResult, TupleToSeekTargetHasFn,
             has_to_tuple_attribute_owner, has_to_tuple_owner_attribute, tuple_attribute_owner_to_has_canonical,
             tuple_owner_attribute_to_has_canonical, unsafe_compare_result_tuple,
         },
@@ -206,18 +207,38 @@ impl HasExecutor {
                     &self.owner_type_range,
                     storage_counters,
                 );
-                let attribute_type_lower_bound_inclusive =
-                    ThingManager::start_type_bound_to_range_start_included_type(self.attribute_type_range.0.as_ref())
-                        .unwrap_or(AttributeType::MIN);
+                // let attribute_type_lower_bound_inclusive =
+                //     ThingManager::start_type_bound_to_range_start_included_type(self.attribute_type_range.0.as_ref())
+                //         .unwrap_or(AttributeType::MIN);
+
+                let owner_lower_bound = Object::min_bound_for_type_bound(&self.owner_type_range.0);
+                let owner_upper_bound = Object::max_bound_for_type_bound(&self.owner_type_range.1);
+                let attribute_lower_bound = Attribute::min_bound_for_type_and_value_bound(&self.attribute_type_range.0, &value_range.0);
+                let attribute_upper_bound = Attribute::max_bound_for_type_and_value_bound(&self.attribute_type_range.1, &value_range.1);
+
+                let owner_bounds = ComponentBound {
+                    lower: owner_lower_bound.map(|object| VariableValue::Thing(Thing::from(object))),
+                    upper: owner_upper_bound.map(|object| VariableValue::Thing(Thing::from(object))),
+                };
+                let attribute_bounds = ComponentBound {
+                    lower: attribute_lower_bound.map(|object| VariableValue::Thing(Thing::from(object))),
+                    upper: attribute_upper_bound.map(|object| VariableValue::Thing(Thing::from(object))),
+                };
+                let bounds_pair = ComponentBoundPair {
+                    first_bound: owner_bounds,
+                    second_bound: attribute_bounds,
+                    next_component_density: 0.0, // TODO
+                };
                 let as_tuples = HasTupleIterator::new(
                     has_iterator,
                     filter_for_row,
                     has_to_tuple_owner_attribute,
                     tuple_owner_attribute_to_has_canonical,
-                    FixedHasBounds::NoneWithLowerBounds(
-                        attribute_type_lower_bound_inclusive,
-                        value_range.0.clone().map(|v| v.into_owned()),
-                    ),
+                    // FixedHasBounds::NoneWithLowerBounds(
+                    //     attribute_type_lower_bound_inclusive,
+                    //     value_range.0.clone().map(|v| v.into_owned()),
+                    // ),
+                    bounds_pair
                 );
                 Ok(TupleIterator::HasSingle(SortedTupleIterator::new(
                     as_tuples,
@@ -228,14 +249,29 @@ impl HasExecutor {
             BinaryIterateMode::UnboundInverted => {
                 debug_assert!(self.owner_cache.is_some());
                 if let Some([owner]) = self.owner_cache.as_deref() {
+                    let owner_bounds = ComponentBound {
+                        lower: Bound::Included(VariableValue::Thing(Thing::from(owner))),
+                        upper: Bound::Included(VariableValue::Thing(Thing::from(owner))),
+                    };
+                    let attribute_lower_bound = Attribute::min_bound_for_type_and_value_bound(&self.attribute_type_range.0, &value_range.0);
+                    let attribute_upper_bound = Attribute::max_bound_for_type_and_value_bound(&self.attribute_type_range.1, &value_range.1);
+                    let attribute_bounds = ComponentBound {
+                        lower: attribute_lower_bound.map(|object| VariableValue::Thing(Thing::from(object))),
+                        upper: attribute_upper_bound.map(|object| VariableValue::Thing(Thing::from(object))),
+                    };
+                    let bounds_pair = ComponentBoundPair {
+                        first_bound: owner_bounds,
+                        second_bound: attribute_bounds,
+                        next_component_density: 0.0, // TODO: note - irrelevant here, unbound
+                    };
                     // no heap allocs needed if there is only 1 iterator
                     let iterator = owner.get_has_types_range_unordered_in_value_types(
                         snapshot,
                         thing_manager,
                         // TODO: this should be just the types owned by the one instance's type in the cache!
-                        &self.attribute_type_range,
+                        &self.attribute_type_range, // TODO: we should just seek inside the HasTupleIterator on construction
                         &self.ordered_value_type_categories,
-                        &value_range,
+                        &value_range, // TODO: we should just seek inside the HasTupleIterator on construction
                         storage_counters,
                     )?;
                     let as_tuples = HasTupleIterator::new(
@@ -243,7 +279,7 @@ impl HasExecutor {
                         filter_for_row,
                         has_to_tuple_attribute_owner,
                         tuple_attribute_owner_to_has_canonical,
-                        FixedHasBounds::Owner(*owner),
+                        bounds_pair,
                     );
                     Ok(TupleIterator::HasSingle(SortedTupleIterator::new(
                         as_tuples,
@@ -254,8 +290,24 @@ impl HasExecutor {
                     // TODO: we could create a reusable space for these temporarily held iterators
                     //       so we don't have allocate again before the merging iterator
                     let owners = self.owner_cache.as_ref().unwrap().iter();
+                    let attribute_lower_bound = Attribute::min_bound_for_type_and_value_bound(&self.attribute_type_range.0, &value_range.0);
+                    let attribute_upper_bound = Attribute::max_bound_for_type_and_value_bound(&self.attribute_type_range.1, &value_range.1);
+                    let attribute_bounds = ComponentBound {
+                        lower: attribute_lower_bound.map(|object| VariableValue::Thing(Thing::from(object))),
+                        upper: attribute_upper_bound.map(|object| VariableValue::Thing(Thing::from(object))),
+                    };
                     let mut iterators = Vec::new();
                     for owner in owners {
+                        let owner_bounds = ComponentBound {
+                            lower: Bound::Included(VariableValue::Thing(Thing::from(owner))),
+                            upper: Bound::Included(VariableValue::Thing(Thing::from(owner))),
+                        };
+                        let bounds_pair = ComponentBoundPair {
+                            first_bound: owner_bounds,
+                            second_bound: attribute_bounds.clone(),
+                            next_component_density: 0.0, // TODO
+                        };
+
                         let iterator = owner.get_has_types_range_unordered_in_value_types(
                             snapshot,
                             thing_manager,
@@ -270,7 +322,8 @@ impl HasExecutor {
                             filter,
                             has_to_tuple_attribute_owner,
                             tuple_attribute_owner_to_has_canonical,
-                            FixedHasBounds::Owner(*owner),
+                            // FixedHasBounds::Owner(*owner),
+                            bounds_pair
                         );
                         iterators.push(iterator);
                     }
@@ -289,6 +342,22 @@ impl HasExecutor {
             }
             BinaryIterateMode::BoundFrom => {
                 let owner = self.has.owner().as_variable().unwrap().as_position().unwrap();
+                let owner_bounds = ComponentBound {
+                    lower: Bound::Included(VariableValue::Thing(Thing::from(owner))),
+                    upper: Bound::Included(VariableValue::Thing(Thing::from(owner))),
+                };
+                let attribute_lower_bound = Attribute::min_bound_for_type_and_value_bound(&self.attribute_type_range.0, &value_range.0);
+                let attribute_upper_bound = Attribute::max_bound_for_type_and_value_bound(&self.attribute_type_range.1, &value_range.1);
+                let attribute_bounds = ComponentBound {
+                    lower: attribute_lower_bound.map(|object| VariableValue::Thing(Thing::from(object))),
+                    upper: attribute_upper_bound.map(|object| VariableValue::Thing(Thing::from(object))),
+                };
+                let bounds_pair = ComponentBoundPair {
+                    first_bound: owner_bounds,
+                    second_bound: attribute_bounds,
+                    next_component_density: 0.0, // TODO - irrelevant?
+                };
+
                 debug_assert!(row.len() > owner.as_usize());
                 let iterator = match row.get(owner) {
                     VariableValue::Thing(Thing::Entity(entity)) => entity
@@ -316,7 +385,8 @@ impl HasExecutor {
                     filter_for_row,
                     has_to_tuple_attribute_owner,
                     tuple_attribute_owner_to_has_canonical,
-                    FixedHasBounds::Owner(row.get(owner).as_thing().as_object()),
+                    // FixedHasBounds::Owner(row.get(owner).as_thing().as_object()),
+                    bounds_pair
                 );
                 Ok(TupleIterator::HasSingle(SortedTupleIterator::new(
                     as_tuples,
@@ -340,12 +410,31 @@ pub(crate) enum FixedHasBounds {
     Attribute(Attribute),
 }
 
+enum HasComponentBounds {
+    Canonical(ComponentBoundPair),
+    Reverse(ComponentBoundPair),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ComponentBoundPair {
+    first_bound: ComponentBound,
+    second_bound: ComponentBound,
+    next_component_density: f64 // estimated number of second components per first
+}
+
+#[derive(Debug, Clone)]
+struct ComponentBound {
+    lower: Bound<VariableValue<'static>>,
+    upper: Bound<VariableValue<'static>>,
+}
+
 pub(super) struct HasTupleIterator<Iter: LendingIterator> {
     inner: Peekable<Iter>,
     filter_map: Arc<HasFilterMapFn>,
     to_tuple_fn: HasToTupleFn,
-    from_tuple_fn: TupleToHasFn,
-    fixed_bounds: FixedHasBounds,
+    tuple_to_target_has_fn: TupleToSeekTargetHasFn,
+    // fixed_bounds: FixedHasBounds,
+    component_bounds: ComponentBoundPair,
 }
 
 impl<Iter> HasTupleIterator<Iter>
@@ -357,10 +446,11 @@ where
         inner: Iter,
         filter_map: Arc<HasFilterMapFn>,
         to_tuple_fn: HasToTupleFn,
-        from_tuple_fn: TupleToHasFn,
-        fixed_bounds: FixedHasBounds,
+        from_tuple_fn: TupleToSeekTargetHasFn,
+        // fixed_bounds: FixedHasBounds,
+        component_bounds: ComponentBoundPair
     ) -> Self {
-        Self { inner: Peekable::new(inner), filter_map, to_tuple_fn, from_tuple_fn, fixed_bounds }
+        Self { inner: Peekable::new(inner), filter_map, to_tuple_fn, tuple_to_target_has_fn: from_tuple_fn, component_bounds }
     }
 }
 
@@ -374,6 +464,7 @@ where
     fn next(&mut self) -> Option<Self::Item<'_>> {
         // TODO: can this be simplified with something like `.by_ref()` on iterators?
         while let Some(next) = self.inner.next() {
+            // TODO: check within each part's range?
             if let Some(filter_mapped) = (self.filter_map)(next) {
                 return Some((self.to_tuple_fn)(filter_mapped));
             }
@@ -388,7 +479,7 @@ where
         + for<'a> LendingIterator<Item<'a> = Result<(Has, u64), Box<ConceptReadError>>>,
 {
     fn seek(&mut self, target: &Tuple<'_>) -> Result<(), Box<ConceptReadError>> {
-        let target_has = (self.from_tuple_fn)(&target, &self.fixed_bounds);
+        let target_has = (self.tuple_to_target_has_fn)(&target, &self.component_bounds);
         let target_pair = (target_has, 0);
         lending_iterator::Seekable::seek(&mut self.inner, &Ok(target_pair.clone()));
         Ok(())

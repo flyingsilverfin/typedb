@@ -5,7 +5,7 @@
  */
 
 use std::fmt;
-
+use std::ops::Bound;
 use bytes::Bytes;
 use encoding::{
     AsBytes, Keyable, Prefixed,
@@ -17,6 +17,7 @@ use encoding::{
     layout::prefix::Prefix,
 };
 use itertools::Itertools;
+use encoding::graph::thing::vertex_object::ObjectID;
 use lending_iterator::higher_order::Hkt;
 use resource::{constants::snapshot::BUFFER_KEY_INLINE, profile::StorageCounters};
 use storage::snapshot::{ReadableSnapshot, WritableSnapshot};
@@ -31,6 +32,7 @@ use crate::{
     },
     type_::{ObjectTypeAPI, Ordering, OwnerAPI, entity_type::EntityType},
 };
+use crate::type_::TypeAPI;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct Entity {
@@ -60,6 +62,7 @@ impl ThingAPI for Entity {
     type Vertex = ObjectVertex;
     type TypeAPI = EntityType;
     const MIN: Entity = Self::new_const(ObjectVertex::MIN_ENTITY);
+    const MAX: Entity = Self::new_const(ObjectVertex::MAX_ENTITY);
     const PREFIX_RANGE_INCLUSIVE: (Prefix, Prefix) = (Prefix::VertexEntity, Prefix::VertexEntity);
 
     fn new(vertex: ObjectVertex) -> Self {
@@ -127,6 +130,30 @@ impl ThingAPI for Entity {
 
     fn prefix_for_type(_type: Self::TypeAPI) -> Prefix {
         Prefix::VertexEntity
+    }
+
+    fn min_bound_for_type_bound(bound: &Bound<Self::TypeAPI>) -> Bound<Self> {
+        match bound {
+            Bound::Included(type_) => {
+                Bound::Included(Self::new(ObjectVertex::build_entity(type_.vertex().type_id_(), ObjectID::MIN)))
+            }
+            Bound::Excluded(type_) => {
+                Bound::Excluded(Self::new(ObjectVertex::build_entity(type_.vertex().type_id_(), ObjectID::MAX)))
+            },
+            Bound::Unbounded => Bound::Unbounded,
+        }
+    }
+
+    fn max_bound_for_type_bound(bound: &Bound<Self::TypeAPI>) -> Bound<Self> {
+        match bound {
+            Bound::Included(type_) => {
+                Bound::Included(Self::new(ObjectVertex::build_entity(type_.vertex().type_id_(), ObjectID::MAX)))
+            }
+            Bound::Excluded(type_) => {
+                Bound::Excluded(Self::new(ObjectVertex::build_entity(type_.vertex().type_id_(), ObjectID::MIN)))
+            },
+            Bound::Unbounded => Bound::Unbounded,
+        }
     }
 }
 

@@ -50,8 +50,7 @@ pub struct AttributeVertex {
 
 impl AttributeVertex {
     pub const PREFIX: Prefix = Prefix::VertexAttribute;
-    pub const MAX_LENGTH: usize =
-        PrefixID::LENGTH + TypeID::LENGTH + ValueTypeBytes::CATEGORY_LENGTH + ValueEncodingLength::LONG_LENGTH;
+    pub const MAX_LENGTH: usize = PrefixID::LENGTH + TypeID::LENGTH + AttributeID::MAX_LENGTH;
 
     pub const fn new(type_id: TypeID, attribute_id: AttributeID) -> Self {
         Self { type_id, attribute_id }
@@ -197,6 +196,8 @@ pub enum ValueEncodingLength {
 impl ValueEncodingLength {
     const SHORT_LENGTH: usize = 8;
     const LONG_LENGTH: usize = 17;
+    // TODO: this is brittle - ideally we'd compute this over the max of the enum variants in a function
+    const MAX_LENGTH: usize = Self::LONG_LENGTH;
 
     pub(crate) const fn length(&self) -> usize {
         match self {
@@ -207,11 +208,6 @@ impl ValueEncodingLength {
 
     const fn is_short(&self) -> bool {
         matches!(self, Self::Short)
-    }
-
-    const fn max_length() -> usize {
-        // TODO: this is brittle - ideally we'd compute this over the max of the enum variants
-        Self::LONG_LENGTH
     }
 }
 
@@ -228,10 +224,15 @@ pub enum AttributeID {
     Duration(DurationAttributeID),
     String(StringAttributeID),
     Struct(StructAttributeID),
+
+    MaxIdMarker([u8; Self::max_length()]),
 }
 
 impl AttributeID {
+    pub const MAX_LENGTH: usize = ValueTypeBytes::CATEGORY_LENGTH + ValueEncodingLength::LONG_LENGTH;
+
     pub const MIN: AttributeID = Self::Boolean(BooleanAttributeID::MIN);
+    pub const MAX: AttributeID = Self::MaxIdMarker([u8::MAX; AttributeID::max_length()]);
 
     pub fn new(bytes: &[u8]) -> Self {
         let &[prefix, ..] = bytes else { unreachable!("empty value bytes") };
@@ -260,7 +261,7 @@ impl AttributeID {
             ValueType::DateTime => Self::DateTime(DateTimeAttributeID::build(value.encode_date_time())),
             ValueType::DateTimeTZ => Self::DateTimeTZ(DateTimeTZAttributeID::build(value.encode_date_time_tz())),
             ValueType::Duration => Self::Duration(DurationAttributeID::build(value.encode_duration())),
-            ValueType::String => Self::String(StringAttributeID::build_inline_id(value.encode_string::<256>())),
+            ValueType::String => Self::String(StringAttributeID::build_inline_id(&value.encode_string::<256>())),
             ValueType::Struct(_) => unimplemented_feature!(Structs),
         }
     }
@@ -281,7 +282,7 @@ impl AttributeID {
             ValueTypeCategory::DateTimeTZ => (DateTimeTZAttributeID::write(value.encode_date_time_tz(), bytes), true),
             ValueTypeCategory::Duration => (DurationAttributeID::write(value.encode_duration(), bytes), true),
             ValueTypeCategory::String => (
-                StringAttributeID::write_deterministic_prefix(value.encode_string::<64>(), large_value_hasher, bytes),
+                StringAttributeID::write_deterministic_prefix(&value.encode_string::<64>(), large_value_hasher, bytes),
                 false,
             ),
             ValueTypeCategory::Struct => (
@@ -292,6 +293,36 @@ impl AttributeID {
                 ),
                 false,
             ),
+        }
+    }
+
+    pub fn write_prefix_matching_value_order(
+        bytes: &mut [u8],
+        value: Value<'_>
+    ) -> usize {
+        debug_assert!(bytes.len() >= AttributeID::max_length());
+        match value.value_type().category() {
+            ValueTypeCategory::Boolean => BooleanAttributeID::write(value.encode_boolean(), bytes),
+            ValueTypeCategory::Integer => IntegerAttributeID::write(value.encode_integer(), bytes),
+            ValueTypeCategory::Double => DoubleAttributeID::write(value.encode_double(), bytes),
+            ValueTypeCategory::Decimal => DecimalAttributeID::write(value.encode_decimal(), bytes),
+            ValueTypeCategory::Date => DateAttributeID::write(value.encode_date(), bytes),
+            ValueTypeCategory::DateTime => DateTimeAttributeID::write(value.encode_date_time(), bytes),
+            ValueTypeCategory::DateTimeTZ => DateTimeTZAttributeID::write(value.encode_date_time_tz(), bytes),
+            ValueTypeCategory::Duration => DurationAttributeID::write(value.encode_duration(), bytes),
+            ValueTypeCategory::String => {
+                let encoded = value.encode_string::<64>();
+                if StringAttributeID::is_inlineable(&encoded) {
+                    StringAttributeID::write_deterministic_inline_id(&encoded, bytes)
+                } else {
+                    // write a 'hashed' version, but only return the shorter length
+                    let _ = StringAttributeID::write_deterministic_prefix_hashed(
+                        &encoded, & |_| 0, bytes
+                    );
+                    StringAttributeID::HASHED_PREFIX_RANGE.end
+                }
+            },
+            ValueTypeCategory::Struct => 0, // ID does not match value order
         }
     }
 
@@ -309,7 +340,7 @@ impl AttributeID {
             ValueType::DateTime => DateTimeAttributeID::is_inlineable(),
             ValueType::DateTimeTZ => DateTimeTZAttributeID::is_inlineable(),
             ValueType::Duration => DurationAttributeID::is_inlineable(),
-            ValueType::String => StringAttributeID::is_inlineable(value.encode_string::<256>()),
+            ValueType::String => StringAttributeID::is_inlineable(&value.encode_string::<256>()),
             ValueType::Struct(_) => StructAttributeID::is_inlineable(),
         }
     }
@@ -326,6 +357,7 @@ impl AttributeID {
             AttributeID::Duration(duration_id) => duration_id.bytes_ref(),
             AttributeID::String(string_id) => string_id.bytes_ref(),
             AttributeID::Struct(struct_id) => struct_id.bytes_ref(),
+            AttributeID::MaxIdMarker(bytes) => bytes,
         }
     }
 
@@ -403,7 +435,7 @@ impl AttributeID {
     }
 
     pub(crate) const fn max_length() -> usize {
-        ValueTypeBytes::CATEGORY_LENGTH + ValueEncodingLength::max_length()
+        ValueTypeBytes::CATEGORY_LENGTH + ValueEncodingLength::MAX_LENGTH
     }
 
     pub fn unwrap_boolean(self) -> BooleanAttributeID {
@@ -488,6 +520,8 @@ impl AttributeID {
             AttributeID::Duration(_) => ValueTypeCategory::Duration,
             AttributeID::String(_) => ValueTypeCategory::String,
             AttributeID::Struct(_) => ValueTypeCategory::Struct,
+
+            AttributeID::MaxIdMarker(_) => unreachable!("AttributeID::MaxIdMarker a only marker, never used for data")
         }
     }
 }
@@ -629,12 +663,12 @@ impl StringAttributeID {
         Self { bytes }
     }
 
-    pub(crate) fn is_inlineable<const INLINE_LENGTH: usize>(string: StringBytes<INLINE_LENGTH>) -> bool {
+    pub(crate) fn is_inlineable<const INLINE_LENGTH: usize>(string: &StringBytes<INLINE_LENGTH>) -> bool {
         string.len() <= Self::INLINE_OR_PREFIXED_HASH_LENGTH
     }
 
-    pub(crate) fn build_inline_id<const INLINE_LENGTH: usize>(string: StringBytes<INLINE_LENGTH>) -> Self {
-        debug_assert!(Self::is_inlineable(string.as_reference()));
+    pub(crate) fn build_inline_id<const INLINE_LENGTH: usize>(string: &StringBytes<INLINE_LENGTH>) -> Self {
+        debug_assert!(Self::is_inlineable(string));
         let mut bytes = [0u8; Self::LENGTH];
         Self::write_inline_id(&mut bytes, string);
         Self::new(bytes)
@@ -643,9 +677,9 @@ impl StringAttributeID {
     // write the string bytes to the byte slice, and set the last byte to the string length
     pub(crate) fn write_inline_id<const INLINE_LENGTH: usize>(
         bytes: &mut [u8; Self::LENGTH],
-        string: StringBytes<INLINE_LENGTH>,
+        string: &StringBytes<INLINE_LENGTH>,
     ) {
-        debug_assert!(Self::is_inlineable(string.as_reference()));
+        debug_assert!(Self::is_inlineable(string));
         let [prefix, value_bytes @ ..] = bytes;
         std::slice::from_mut(prefix).copy_from_slice(&ValueTypeCategory::String.to_bytes());
         value_bytes[..string.len()].copy_from_slice(string.bytes());
@@ -685,7 +719,7 @@ impl StringAttributeID {
     where
         Snapshot: ReadableSnapshot,
     {
-        debug_assert!(!Self::is_inlineable(string.as_reference()));
+        debug_assert!(!Self::is_inlineable(&string));
         match Self::build_or_find_hashed_id(type_id, string, snapshot, hasher)? {
             Either::First(hashed_id) => Ok(Some(hashed_id)),
             Either::Second(_) => Ok(None),
@@ -701,8 +735,7 @@ impl StringAttributeID {
     where
         Snapshot: ReadableSnapshot,
     {
-        debug_assert!(!Self::is_inlineable(string.as_reference()));
-
+        debug_assert!(!Self::is_inlineable(&string));
         let mut id_prefix = [0; Self::VALUE_TYPE_LENGTH + Self::HASHED_PREFIX_LENGTH];
         id_prefix[0..Self::VALUE_TYPE_LENGTH].copy_from_slice(&ValueTypeCategory::String.to_bytes());
         id_prefix[Self::HASHED_PREFIX_RANGE].copy_from_slice(&string.bytes()[0..{ Self::HASHED_PREFIX_LENGTH }]);
@@ -738,23 +771,40 @@ impl StringAttributeID {
         }
     }
 
-    // write the deterministic prefix of the hash ID, and return the length of the prefix written
+    // write the deterministic prefix of the hash or inline ID, and return the length of the prefix written
     pub(crate) fn write_deterministic_prefix<const INLINE_LENGTH: usize>(
-        string: StringBytes<INLINE_LENGTH>,
+        string: &StringBytes<INLINE_LENGTH>,
         hasher: &impl Fn(&[u8]) -> u64,
         bytes: &mut [u8],
     ) -> usize {
         debug_assert!(bytes.len() >= Self::LENGTH);
-        if Self::is_inlineable(string.as_reference()) {
-            let bytes_range = &mut bytes[0..Self::LENGTH];
-            Self::write_inline_id(bytes_range.try_into().unwrap(), string);
-            Self::LENGTH
+        if Self::is_inlineable(string) {
+            Self::write_deterministic_inline_id(string, bytes)
         } else {
-            bytes[0..Self::VALUE_TYPE_LENGTH].copy_from_slice(&ValueTypeCategory::String.to_bytes());
-            bytes[Self::HASHED_PREFIX_RANGE].copy_from_slice(&string.bytes()[0..{ Self::HASHED_PREFIX_LENGTH }]);
-            let hash_length = Self::write_hash(&mut bytes[Self::HASHED_HASH_RANGE], hasher, string.bytes());
-            Self::VALUE_TYPE_LENGTH + Self::HASHED_PREFIX_LENGTH + hash_length
+            Self::write_deterministic_prefix_hashed(string, hasher, bytes)
         }
+    }
+
+    pub(crate) fn write_deterministic_inline_id<const INLINE_LENGTH: usize>(
+        string: &StringBytes<INLINE_LENGTH>,
+        bytes: &mut [u8],
+    ) -> usize {
+        debug_assert!(Self::is_inlineable(string));
+        let bytes_range = &mut bytes[0..Self::LENGTH];
+        Self::write_inline_id(bytes_range.try_into().unwrap(), &string);
+        Self::LENGTH
+    }
+
+    pub(crate) fn write_deterministic_prefix_hashed<const INLINE_LENGTH: usize>(
+        string: &StringBytes<INLINE_LENGTH>,
+        hasher: &impl Fn(&[u8]) -> u64,
+        bytes: &mut [u8],
+    ) -> usize {
+        debug_assert!(bytes.len() >= Self::LENGTH && !Self::is_inlineable(string));
+        bytes[0..Self::VALUE_TYPE_LENGTH].copy_from_slice(&ValueTypeCategory::String.to_bytes());
+        bytes[Self::HASHED_PREFIX_RANGE].copy_from_slice(&string.bytes()[0..{ Self::HASHED_PREFIX_LENGTH }]);
+        let hash_length = Self::write_hash(&mut bytes[Self::HASHED_HASH_RANGE], hasher, string.bytes());
+        Self::VALUE_TYPE_LENGTH + Self::HASHED_PREFIX_LENGTH + hash_length
     }
 
     ///
