@@ -32,6 +32,7 @@ use crate::{
     layout::prefix::{Prefix, PrefixID},
     value::value_type::ValueTypeCategory,
 };
+use crate::value::value::Value;
 
 pub struct ThingEdgeHasSpec {
     owner_bounds: ComponentBound<ObjectVertex>,
@@ -40,7 +41,8 @@ pub struct ThingEdgeHasSpec {
     //       more information from the Value range!
     attribute_bounds: ComponentBound<AttributeVertex>, // simple attribute range
 
-    value_bounds:
+    // for merging with a attribute seek target in the middle of the type range
+    value_bounds: ComponentBound<Value<'static>>,
 }
 
 impl ThingEdgeHasSpec {
@@ -70,15 +72,26 @@ impl ThingEdgeHasSpec {
                             // overflow: exhausted all possible owners = no seek target can exist
                             return None;
                         }
-                        Some(owner_lower_bound) => owner_lower_bound
+                        Some(owner_lower_bound) =>{
+                            // TODO: technically we need to revalidate this against the range... but extremely unlikely to overflow the range right?
+                            owner_lower_bound
+                        }
                     },
                     Bound::Unbounded => unreachable!("Owner comparison cannot be below an unbounded lower bound"),
                 };
 
                 let attribute_lower_bound = match &self.attribute_bounds.lower {
-                    Bound::Included(_) => {}
-                    Bound::Excluded(_) => {}
+                    Bound::Included(attribute_lower_bound) => attribute_lower_bound,
+                    Bound::Excluded(attribute_lower_bound) => {
+                        match attribute_lower_bound.next_possible() {
+                            // TODO: now all attributes can be incremented! Just use the lower bound without incrementing if that happens!
+
+                            // TODO: don't conflate attribute can't be incremented and needing and hitting max and needing to roll over the owner!
+                        }
+
+                    }
                     Bound::Unbounded => {
+                        // TODO: steal MIN/MAX from other executor-key-rangs branch
                         AttributeVertex::MIN
                     }
                 };
