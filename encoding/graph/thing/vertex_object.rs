@@ -7,6 +7,7 @@
 use std::{fmt, mem, ops::Range};
 
 use bytes::{Bytes, byte_array::ByteArray, util::HexBytesFormatter};
+use bytes::util::BytesError;
 use resource::constants::snapshot::BUFFER_KEY_INLINE;
 use storage::{key_value::StorageKeyReference, keyspace::KeyspaceSet};
 
@@ -25,6 +26,16 @@ pub struct ObjectVertex {
     prefix: Prefix,
     type_id: TypeID,
     object_id: ObjectID,
+}
+
+impl ObjectVertex {
+    pub fn next_possible(&self) -> Option<ObjectVertex> {
+        let mut bytes = self.to_bytes().into_array();
+        if let Err(err) = bytes.increment() {
+            return None
+        };
+        Some(Self::decode(bytes.as_ref()))
+    }
 }
 
 impl ObjectVertex {

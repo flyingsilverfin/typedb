@@ -353,9 +353,8 @@ impl Relation {
     }
 
     pub fn next_possible(&self) -> Relation {
-        let mut bytes = self.vertex.to_bytes().into_array();
-        bytes.increment().unwrap();
-        Relation::new(ObjectVertex::decode(&bytes))
+        let mut bytes =
+        Relation::new(self.vertex.next_possible());
     }
 }
 

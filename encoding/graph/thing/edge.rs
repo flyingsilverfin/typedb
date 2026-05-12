@@ -35,40 +35,108 @@ use crate::{
 
 pub struct ThingEdgeHasSpec {
     owner_bounds: ComponentBound<ObjectVertex>,
-    attribute_type_bounds: ComponentBound<TypeVertex>,
-    attribute_id_bounds: ComponentBound<AttributeID>,
+    // NOTE: the value of having Type rang and Value range separately is that if we get a seek target that
+    //       is an attribute vertex of some T in the middle of the type range, we can augument it with
+    //       more information from the Value range!
+    attribute_bounds: ComponentBound<AttributeVertex>, // simple attribute range
+
+    value_bounds:
 }
 
 impl ThingEdgeHasSpec {
     pub fn update_for_seek(&self, initial_target: ThingEdgeHas) -> Option<ThingEdgeHas> {
-        let owner = initial_target.owner;
-        let attribute = initial_target.attribute;
+        let initial_owner = initial_target.owner;
+        let initial_attribute = initial_target.attribute;
 
-    }
+        // we're given a target owner and target attribute
+        // we can 'raise' the lower bounds to seek 'further' using the bounds' lower bounds?
+        // also, if the owner range isn't in the bounds owner range, we can return None (will fail = fail fast!)
+        // CHECK: if owner is in range but attribute isn't, we can't use attribute to fail the entire iterator... but we can seek to [owner + 1][attribute lower bound] right?
+
+        let owner_comparison = match self.owner_bounds.compare(initial_owner) {
+            None => {
+                // TODO: log error about unexpected incomparable bounds
+                return Some(initial_target)
+            },
+            Some(comparison) => comparison,
+        };
+        match owner_comparison {
+            BoundsComparison::Below => {
+                // use the spec lower bound
+                let owner_lower_bound = match &self.owner_bounds.lower {
+                    Bound::Included(owner_lower_bound) => *owner_lower_bound,
+                    Bound::Excluded(owner_lower_bound) => match owner_lower_bound.next_possible() {
+                        None => {
+                            // overflow: exhausted all possible owners = no seek target can exist
+                            return None;
+                        }
+                        Some(owner_lower_bound) => owner_lower_bound
+                    },
+                    Bound::Unbounded => unreachable!("Owner comparison cannot be below an unbounded lower bound"),
+                };
+
+                let attribute_lower_bound = match &self.attribute_bounds.lower {
+                    Bound::Included(_) => {}
+                    Bound::Excluded(_) => {}
+                    Bound::Unbounded => {
+                        AttributeVertex::MIN
+                    }
+                };
+
+
+
+            }
+            BoundsComparison::Within => {
+                let attribute_comparison = bounds.second_bound.compare(StorableConcept::Thing(Thing::from(tuple_attribute)));
+                match attribute_comparison {
+                    BoundsComparison::Below => {
+                        // TODO; return tuple_owner, lower bound attribute
+                    }
+                    BoundsComparison::Within => {
+                        // TODO: return tuple owner, tuple attribute
+                    }
+                    BoundsComparison::Above => {
+                        // TODO: increment owner, recheck from the start
+                    }
+                }
+            }
+            BoundsComparison::Above => return None,
+        }
+
+        // cases:
+        // 1. owner in bounds, attribute in bounds = convert
+        // 2. owner in bounds, attribute below bounds = set attribute to range lower bound
+        // 3. owner in bounds, attribute above bounds = increment owner + 1, then recheck if that owner is in range. If yes, set attribute to lower bound
+
+        // 4. owner below bounds, skip forward to lower bound
+        // 5. owner in bounds, (case above)
+        // 6. owner above bounds, short circuit
+        todo!()
+        }
 }
 
 #[derive(Debug, Clone)]
-pub struct ComponentBound<T: Ord> {
+pub struct ComponentBound<T: PartialOrd> {
     pub(crate) lower: Bound<T>,
     pub(crate) upper: Bound<T>,
 }
 
-impl<T: Ord> ComponentBound<T> {
-    pub fn compare(&self, other: T) -> BoundsComparison {
+impl<T: PartialOrd> ComponentBound<T> {
+    pub fn compare(&self, other: T) -> Option<BoundsComparison> {
         let below = match &self.lower {
             Bound::Unbounded => false,
-            Bound::Included(lower) => other.cmp(lower).is_lt(),
-            Bound::Excluded(lower) => !other.cmp(lower).is_gt(),
+            Bound::Included(lower) => other.partial_cmp(lower)?.is_lt(),
+            Bound::Excluded(lower) => !other.partial_cmp(lower)?.is_gt(),
         };
         if below {
-            return BoundsComparison::Below;
+            return Some(BoundsComparison::Below);
         }
         let above = match &self.upper {
             Bound::Unbounded => false,
-            Bound::Included(upper) => other.cmp(upper).is_gt(),
-            Bound::Excluded(upper) => !other.cmp(upper).is_lt(),
+            Bound::Included(upper) => other.partial_cmp(upper)?.is_gt(),
+            Bound::Excluded(upper) => !other.partial_cmp(upper)?.is_lt(),
         };
-        if above { BoundsComparison::Above } else { BoundsComparison::Within }
+        if above { Some(BoundsComparison::Above) } else { Some(BoundsComparison::Within) }
     }
 }
 

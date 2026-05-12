@@ -706,10 +706,8 @@ impl HasIteratorEncoded {
 
         if let Some(spec) = &self.spec {
             match spec.update_for_seek(edge_target) {
-                None => {
-                    todo!("Short circuit - no answers possibel")
-                }
-                Some(edge) => edge_target = edge;
+                None => todo!("Short circuit - no answers possible"),
+                Some(edge) => edge_target = edge
             }
         }
 
