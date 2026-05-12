@@ -9,7 +9,7 @@ use std::{
     fmt::{Display, Formatter},
     ops::Range,
 };
-
+use std::collections::Bound;
 use bytes::{Bytes, byte_array::ByteArray, util::HexBytesFormatter};
 use resource::constants::snapshot::BUFFER_KEY_INLINE;
 use storage::{
@@ -32,6 +32,51 @@ use crate::{
     layout::prefix::{Prefix, PrefixID},
     value::value_type::ValueTypeCategory,
 };
+
+pub struct ThingEdgeHasSpec {
+    owner_bounds: ComponentBound<ObjectVertex>,
+    attribute_type_bounds: ComponentBound<TypeVertex>,
+    attribute_id_bounds: ComponentBound<AttributeID>,
+}
+
+impl ThingEdgeHasSpec {
+    pub fn update_for_seek(&self, initial_target: ThingEdgeHas) -> Option<ThingEdgeHas> {
+        let owner = initial_target.owner;
+        let attribute = initial_target.attribute;
+
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ComponentBound<T: Ord> {
+    pub(crate) lower: Bound<T>,
+    pub(crate) upper: Bound<T>,
+}
+
+impl<T: Ord> ComponentBound<T> {
+    pub fn compare(&self, other: T) -> BoundsComparison {
+        let below = match &self.lower {
+            Bound::Unbounded => false,
+            Bound::Included(lower) => other.cmp(lower).is_lt(),
+            Bound::Excluded(lower) => !other.cmp(lower).is_gt(),
+        };
+        if below {
+            return BoundsComparison::Below;
+        }
+        let above = match &self.upper {
+            Bound::Unbounded => false,
+            Bound::Included(upper) => other.cmp(upper).is_gt(),
+            Bound::Excluded(upper) => !other.cmp(upper).is_lt(),
+        };
+        if above { BoundsComparison::Above } else { BoundsComparison::Within }
+    }
+}
+
+pub enum BoundsComparison {
+    Below,
+    Within,
+    Above,
+}
 
 ///
 /// [has][object][Attribute8|Attribute17]
@@ -182,7 +227,7 @@ impl Keyable<BUFFER_KEY_INLINE> for ThingEdgeHas {
 impl Display for ThingEdgeHas {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let byte_layout = format!(
-            r"(Reverse)
+            r"(Canonical)
             Prefix:             [0..{}] = {}
             Owner:              [{:?}] = {}
             Attribute:          [{:?}] = {}

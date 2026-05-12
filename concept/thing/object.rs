@@ -21,11 +21,13 @@ use encoding::{
     layout::prefix::Prefix,
     value::{decode_value_u64, value::Value, value_type::ValueTypeCategory},
 };
+use encoding::graph::thing::edge::ThingEdgeHasSpec;
 use lending_iterator::higher_order::Hkt;
 use resource::{
     constants::snapshot::{BUFFER_KEY_INLINE, BUFFER_VALUE_INLINE},
     profile::StorageCounters,
 };
+use resource::constants::concept;
 use storage::{
     key_value::StorageKey,
     snapshot::{ReadableSnapshot, WritableSnapshot},
@@ -47,6 +49,7 @@ use crate::{
         relation_type::RelationType, role_type::RoleType,
     },
 };
+use crate::error::ConceptReadError::SnapshotIterate;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum Object {
@@ -649,3 +652,116 @@ edge_iterator!(
     storage_key_has_reverse_edge_to_has,
     has_to_reverse_edge_storage_key
 );
+
+
+pub struct HasIteratorEncoded {
+    snapshot_iterator: Option<storage::snapshot::iterator::SnapshotRangeIterator>,
+    spec: Option<ThingEdgeHasSpec>,
+}
+
+fn storage_key_to_has_edge<'a>(
+    storage_key: StorageKey<'a, BUFFER_KEY_INLINE>,
+    value: Bytes<'a, BUFFER_VALUE_INLINE>,
+) -> (ThingEdgeHas, u64) {
+    (ThingEdgeHas::decode(storage_key.into_bytes()), decode_value_u64(&value))
+}
+
+fn has_edge_to_storage_key(edge_count: &(ThingEdgeHas, u64)) -> StorageKey<'static, BUFFER_KEY_INLINE> {
+    let (edge, _) = edge_count;
+    // let edge = ThingEdgeHas::new(has.owner().vertex(), has.attribute().vertex());
+    edge.into_storage_key()
+}
+
+#[allow(unused)]
+impl HasIteratorEncoded {
+    pub(crate) fn new(
+        snapshot_iterator: storage::snapshot::iterator::SnapshotRangeIterator,
+        spec: Option<ThingEdgeHasSpec>
+    ) -> Self {
+        HasIteratorEncoded { snapshot_iterator: Some(snapshot_iterator), spec }
+    }
+
+    pub fn new_empty() -> Self {
+        HasIteratorEncoded { snapshot_iterator: None, spec: None }
+    }
+
+    pub fn peek(&mut self) -> Option<Result<(Has, u64), Box<ConceptReadError>>> {
+        self.snapshot_iterator.as_mut()?.peek().map(|result| {
+            let (edge, count) = result
+                .map(|(storage_key, value_bytes)| {
+                    let edge = storage_key_to_has_edge(
+                        StorageKey::Reference(storage_key),
+                        Bytes::Reference(value_bytes),
+                    );
+                    edge
+                })
+                .map_err(|error| Box::new(SnapshotIterate { source: error }))?;
+
+            Ok((Has::new_from_edge(edge), count))
+        })
+    }
+
+    pub fn seek(&mut self, (has_target, count) : &(Has, u64)) {
+        let mut edge_target = ThingEdgeHas::new(has_target.owner().vertex(), has_target.attribute().vertex());
+
+        if let Some(spec) = &self.spec {
+            match spec.update_for_seek(edge_target) {
+                None => {
+                    todo!("Short circuit - no answers possibel")
+                }
+                Some(edge) => edge_target = edge;
+            }
+        }
+
+        let unmapped_target = has_edge_to_storage_key(&(edge_target, *count));
+        if let Some(iterator) = self.snapshot_iterator.as_mut() {
+            iterator.seek(unmapped_target.as_reference());
+        }
+    }
+}
+
+impl Iterator for HasIteratorEncoded {
+    type Item = Result<(Has, u64), Box<ConceptReadError>>;
+    fn next(&mut self) -> Option<Self::Item> {
+        use lending_iterator::LendingIterator;
+        use ConceptReadError::SnapshotIterate;
+        self.snapshot_iterator.as_mut()?.next().map(|result| {
+            result
+                .map(|(storage_key, value_bytes)| storage_key_has_edge_to_has(storage_key, value_bytes))
+                .map_err(|error| Box::new(SnapshotIterate { source: error }))
+        })
+    }
+}
+impl ::lending_iterator::LendingIterator for HasIteratorEncoded {
+    type Item<'a> = Result<(Has, u64), Box<ConceptReadError>>;
+    fn next(&mut self) -> Option<Self::Item<'_>> {
+        Iterator::next(self)
+    }
+}
+impl ::lending_iterator::Seekable<Result<(Has, u64), Box<ConceptReadError>>> for HasIteratorEncoded {
+    fn seek(&mut self, key: &Result<(Has, u64), Box<ConceptReadError>>) {
+        if let Ok(key) = key {
+            self.seek(key)
+        }
+    }
+
+    fn compare_key(
+        &self,
+        item: &Self::Item<'_>,
+        other_item: &Result<(Has, u64), Box<ConceptReadError>>,
+    ) -> std::cmp::Ordering {
+        if let Ok(item) = item {
+            if let Ok(other_item) = other_item {
+                let unmapped_item = has_to_edge_storage_key
+                    (item);
+                let other_unmapped_item = has_to_edge_storage_key
+                    (other_item);
+                unmapped_item.cmp(&other_unmapped_item)
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        } else {
+            std::cmp::Ordering::Equal
+        }
+    }
+}
