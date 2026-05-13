@@ -91,13 +91,11 @@ impl ThingEdgeHasSpec {
 
                     }
                     Bound::Unbounded => {
-                        // TODO: steal MIN/MAX from other executor-key-rangs branch
-                        AttributeVertex::MIN
+                        &AttributeVertex::MIN
                     }
                 };
 
-
-
+                Some(ThingEdgeHas::new(owner_lower_bound, attribute_lower_bound))
             }
             BoundsComparison::Within => {
                 let attribute_comparison = bounds.second_bound.compare(StorableConcept::Thing(Thing::from(tuple_attribute)));

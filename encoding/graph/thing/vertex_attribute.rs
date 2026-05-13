@@ -53,6 +53,8 @@ impl AttributeVertex {
     pub const MAX_LENGTH: usize =
         PrefixID::LENGTH + TypeID::LENGTH + ValueTypeBytes::CATEGORY_LENGTH + ValueEncodingLength::LONG_LENGTH;
 
+    pub const MIN: Self = Self::new(TypeID::MIN, AttributeID::MIN);
+
     pub const fn new(type_id: TypeID, attribute_id: AttributeID) -> Self {
         Self { type_id, attribute_id }
     }
@@ -228,10 +230,15 @@ pub enum AttributeID {
     Duration(DurationAttributeID),
     String(StringAttributeID),
     Struct(StructAttributeID),
+
+    MaxIdMarker([u8; Self::max_length()]),
 }
 
 impl AttributeID {
+    pub const MAX_LENGTH: usize = ValueTypeBytes::CATEGORY_LENGTH + ValueEncodingLength::LONG_LENGTH;
+
     pub const MIN: AttributeID = Self::Boolean(BooleanAttributeID::MIN);
+    pub const MAX: AttributeID = Self::MaxIdMarker([u8::MAX; AttributeID::max_length()]);
 
     pub fn new(bytes: &[u8]) -> Self {
         let &[prefix, ..] = bytes else { unreachable!("empty value bytes") };
@@ -326,6 +333,8 @@ impl AttributeID {
             AttributeID::Duration(duration_id) => duration_id.bytes_ref(),
             AttributeID::String(string_id) => string_id.bytes_ref(),
             AttributeID::Struct(struct_id) => struct_id.bytes_ref(),
+
+            AttributeID::MaxIdMarker(bytes) => bytes,
         }
     }
 
@@ -365,6 +374,8 @@ impl AttributeID {
             }
             AttributeID::String(string_id) => string_id.deterministic_bytes_ref(),
             AttributeID::Struct(struct_id) => struct_id.deterministic_bytes_ref(),
+
+            AttributeID::MaxIdMarker(bytes) => bytes,
         }
     }
 
@@ -488,6 +499,8 @@ impl AttributeID {
             AttributeID::Duration(_) => ValueTypeCategory::Duration,
             AttributeID::String(_) => ValueTypeCategory::String,
             AttributeID::Struct(_) => ValueTypeCategory::Struct,
+
+            AttributeID::MaxIdMarker(_) => unreachable!("Attribute max id marker not usable as real attribute"),
         }
     }
 }
