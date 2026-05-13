@@ -657,6 +657,8 @@ edge_iterator!(
 pub struct HasIteratorEncoded {
     snapshot_iterator: Option<storage::snapshot::iterator::SnapshotRangeIterator>,
     spec: Option<ThingEdgeHasSpec>,
+
+    // TODO: introduce Iterator state, and centralize the next() and peek() behaviour into compute_next_state
 }
 
 fn storage_key_to_has_edge<'a>(

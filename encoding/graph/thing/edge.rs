@@ -41,7 +41,7 @@ pub struct ThingEdgeHasSpec {
     //       more information from the Value range!
     attribute_bounds: ComponentBound<AttributeVertex>, // simple attribute range
 
-    // for merging with a attribute seek target in the middle of the type range
+    // TODO: for merging with ttribute seek target in the middle of the type range?
     value_bounds: ComponentBound<Value<'static>>,
 }
 
@@ -49,12 +49,6 @@ impl ThingEdgeHasSpec {
     pub fn update_for_seek(&self, initial_target: ThingEdgeHas) -> Option<ThingEdgeHas> {
         let initial_owner = initial_target.owner;
         let initial_attribute = initial_target.attribute;
-
-        // we're given a target owner and target attribute
-        // we can 'raise' the lower bounds to seek 'further' using the bounds' lower bounds?
-        // also, if the owner range isn't in the bounds owner range, we can return None (will fail = fail fast!)
-        // CHECK: if owner is in range but attribute isn't, we can't use attribute to fail the entire iterator... but we can seek to [owner + 1][attribute lower bound] right?
-
         let owner_comparison = match self.owner_bounds.compare(initial_owner) {
             None => {
                 // TODO: log error about unexpected incomparable bounds
@@ -64,66 +58,44 @@ impl ThingEdgeHasSpec {
         };
         match owner_comparison {
             BoundsComparison::Below => {
-                // use the spec lower bound
-                let owner_lower_bound = match &self.owner_bounds.lower {
-                    Bound::Included(owner_lower_bound) => *owner_lower_bound,
-                    Bound::Excluded(owner_lower_bound) => match owner_lower_bound.next_possible() {
-                        None => {
-                            // overflow: exhausted all possible owners = no seek target can exist
-                            return None;
-                        }
-                        Some(owner_lower_bound) =>{
-                            // TODO: technically we need to revalidate this against the range... but extremely unlikely to overflow the range right?
-                            owner_lower_bound
-                        }
-                    },
-                    Bound::Unbounded => unreachable!("Owner comparison cannot be below an unbounded lower bound"),
+                // use the spec lower bounds
+                let owner_lower_bound = match self.owner_bounds.seek_target_lower_bound() {
+                    TargetItem::Item(owner_lower_bound) => owner_lower_bound,
+                    TargetItem::Any => unreachable!("Unspecified lower bound cannot yield a 'below' comparison"),
+                    TargetItem::Unsatisfiable => return None, // no seek target can exit
                 };
-
-                let attribute_lower_bound = match &self.attribute_bounds.lower {
-                    Bound::Included(attribute_lower_bound) => attribute_lower_bound,
-                    Bound::Excluded(attribute_lower_bound) => {
-                        match attribute_lower_bound.next_possible() {
-                            // TODO: now all attributes can be incremented! Just use the lower bound without incrementing if that happens!
-
-                            // TODO: don't conflate attribute can't be incremented and needing and hitting max and needing to roll over the owner!
-                        }
-
-                    }
-                    Bound::Unbounded => {
-                        &AttributeVertex::MIN
-                    }
-                };
-
-                Some(ThingEdgeHas::new(owner_lower_bound, attribute_lower_bound))
+                let attribute_lower_bound = self.attribute_bounds.seek_target_lower_bound();
+                return Some(ThingEdgeHas::new(owner_lower_bound, attribute_lower_bound));
             }
             BoundsComparison::Within => {
-                let attribute_comparison = bounds.second_bound.compare(StorableConcept::Thing(Thing::from(tuple_attribute)));
+                let attribute_comparison = match self.attribute_bounds.compare(initial_attribute) {
+                    None => {
+                        // TODO: log error about unexpected incomparable bounds
+                        return Some(initial_target)
+                    },
+                    Some(comparison) => comparison,
+                };
                 match attribute_comparison {
                     BoundsComparison::Below => {
-                        // TODO; return tuple_owner, lower bound attribute
+                        return Some(ThingEdgeHas::new(initial_owner, self.attribute_bounds.seek_target_lower_bound()))
                     }
                     BoundsComparison::Within => {
-                        // TODO: return tuple owner, tuple attribute
+                        // TODO: we could compare value against value range and 'upgrade' the value if compatible?
+                        return Some(initial_target);
                     }
                     BoundsComparison::Above => {
-                        // TODO: increment owner, recheck from the start
+                        let next_owner = match initial_owner.next_possible() {
+                            None => return None,
+                            Some(next_owner) => next_owner,
+                        };
+                        let attribute_lower_bound = self.attribute_bounds.seek_target_lower_bound();
+                        return Some(ThingEdgeHas::new(next_owner, attribute_lower_bound));
                     }
                 }
             }
             BoundsComparison::Above => return None,
         }
-
-        // cases:
-        // 1. owner in bounds, attribute in bounds = convert
-        // 2. owner in bounds, attribute below bounds = set attribute to range lower bound
-        // 3. owner in bounds, attribute above bounds = increment owner + 1, then recheck if that owner is in range. If yes, set attribute to lower bound
-
-        // 4. owner below bounds, skip forward to lower bound
-        // 5. owner in bounds, (case above)
-        // 6. owner above bounds, short circuit
-        todo!()
-        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -155,6 +127,51 @@ pub enum BoundsComparison {
     Below,
     Within,
     Above,
+}
+
+impl ComponentBound<ObjectVertex> {
+   fn seek_target_lower_bound(&self) -> TargetItem<ObjectVertex> {
+       match &self.lower {
+           Bound::Included(owner_lower_bound) => TargetItem::Item(*owner_lower_bound),
+           Bound::Excluded(owner_lower_bound) => match owner_lower_bound.next_possible() {
+               None => {
+                   // overflow: exhausted all possible owners = no seek target can exist
+                   TargetItem::Unsatisfiable
+               }
+               Some(owner_lower_bound) =>{
+                   // TODO: technically we need to revalidate this against the range... but extremely unlikely to overflow the range right? Saves one cmp
+                   TargetItem::Item(owner_lower_bound)
+               }
+           },
+           Bound::Unbounded => TargetItem::Item(ObjectVertex::MIN)
+       }
+   }
+}
+
+impl ComponentBound<AttributeVertex> {
+    fn seek_target_lower_bound(&self) -> AttributeVertex {
+        match &self.lower {
+            Bound::Included(attribute_lower_bound) =>*attribute_lower_bound,
+            Bound::Excluded(attribute_lower_bound) => {
+                *attribute_lower_bound
+
+                // TODO: increment lower bound?
+                // match attribute_lower_bound.next_possible() {
+                // TODO: not all attributes can be incremented! Just use the lower bound without incrementing if that happens!
+                // TODO: don't conflate attribute can't be incremented and needing and hitting max and needing to roll over the owner!
+                // }
+            }
+            Bound::Unbounded => {
+                AttributeVertex::MIN
+            }
+        }
+    }
+}
+
+enum TargetItem<T> {
+    Item(T),
+    Any,
+    Unsatisfiable,
 }
 
 ///

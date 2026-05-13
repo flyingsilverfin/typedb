@@ -48,9 +48,7 @@ impl Entity {
     }
 
     pub fn next_possible(&self) -> Entity {
-        let mut bytes = self.vertex.to_bytes().into_array();
-        bytes.increment().unwrap();
-        Entity::new(ObjectVertex::decode(&bytes))
+        Entity::new(self.vertex.next_possible().expect("Exhausted all possible entity instances"))
     }
 }
 

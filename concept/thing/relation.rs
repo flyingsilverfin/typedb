@@ -353,8 +353,7 @@ impl Relation {
     }
 
     pub fn next_possible(&self) -> Relation {
-        let mut bytes =
-        Relation::new(self.vertex.next_possible());
+        Relation::new(self.vertex.next_possible().expect("Exhausted all possible relation instances"))
     }
 }
 
