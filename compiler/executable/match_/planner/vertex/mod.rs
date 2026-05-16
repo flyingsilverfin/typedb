@@ -171,6 +171,28 @@ impl<'a> fmt::Display for PlannerVertex<'a> {
     }
 }
 
+/// Per-output advance cost for one side of a sort-merge join, blended between the
+/// uniform-distribution expected value and the worst case driven by post-filter waste.
+///
+/// `expected = cost / io_ratio`: amortized advances per output assuming matches are
+/// uniformly distributed in the iterator's scan range (same value used by the existing
+/// model).
+///
+/// `worst = max(0, scan_size - io_ratio) * ADVANCE`: cost of advancing through the
+/// post-filter rejects between matches. Zero when the storage range is tight (no
+/// rejects), non-zero when there's a post-filter that can't be pushed into storage
+/// (e.g. owner-type filter when attribute-value is unbound).
+///
+/// `p_unmatched` is the fraction of the join variable's domain not covered by the bigger
+/// side; it gates how much to lean toward `worst` (literature: risk-aware optimization).
+/// Clamp ensures we never pull cost below `expected` when `worst < expected`.
+fn blended_out_cost(cost: f64, io_ratio: f64, p_unmatched: f64) -> f64 {
+    let expected = cost / io_ratio;
+    let scan_size = ((cost - OPEN_ITERATOR_RELATIVE_COST) / ADVANCE_ITERATOR_RELATIVE_COST).max(1.0);
+    let worst = (scan_size - io_ratio).max(0.0) * ADVANCE_ITERATOR_RELATIVE_COST;
+    expected + p_unmatched * (worst - expected).max(0.0)
+}
+
 impl Cost {
     const MIN_IO_RATIO: f64 = 0.000000001;
     const IN_MEM_COST_SIMPLE: f64 = 0.02;
@@ -202,10 +224,31 @@ impl Cost {
     pub(crate) fn join(self, other: Self, join_size: f64) -> Self {
         let io_ratio = f64::max(self.io_ratio * other.io_ratio / join_size, Cost::MIN_IO_RATIO);
         let num_seeks_each = f64::min(self.io_ratio, other.io_ratio); // FIXME detect when seeks can be replaced by advancing
-        let self_out_cost = self.cost / self.io_ratio; // if cost = Ci + Co * io, then cost / io ~ Co
-        let other_out_cost = other.cost / other.io_ratio;
+
+        // Uncertainty-weighted per-side advance cost.
+        //
+        // The "expected" per-output advance cost (cost / io_ratio) implicitly assumes uniform
+        // distribution: every seek lands on or near a match, advances are amortized over outputs.
+        // That's accurate for balanced merges and for selective lookups where the bigger side
+        // covers the join variable's full domain.
+        //
+        // It under-counts when (a) the bigger side has post-filter waste (scan_size > io_ratio:
+        // storage range covers rejected entries between matches) and (b) the smaller side may
+        // produce values past the bigger's coverage (bigger_io < join_size: failed probes that
+        // can't find a match must scan forward to confirm non-existence — storage can't bound
+        // such a scan when the value isn't bound and a post-filter is in play).
+        //
+        // Blend per-side: expected + p_unmatched × max(0, waste - expected), where p_unmatched
+        // is the fraction of the join domain the bigger side fails to cover. When either
+        // (a) coverage is full (p_unmatched = 0) or (b) no post-filter waste exists (waste ≤
+        // expected → clamp returns 0), the blend reduces to the existing model exactly.
+        let bigger_io = f64::max(self.io_ratio, other.io_ratio);
+        let p_unmatched = (1.0 - bigger_io / join_size).max(0.0);
+        let self_out_cost = blended_out_cost(self.cost, self.io_ratio, p_unmatched);
+        let other_out_cost = blended_out_cost(other.cost, other.io_ratio, p_unmatched);
         let cost_self = SEEK_ITERATOR_RELATIVE_COST + self_out_cost * num_seeks_each;
         let cost_other = SEEK_ITERATOR_RELATIVE_COST + other_out_cost * num_seeks_each;
+
         Self { cost: cost_self + cost_other, io_ratio }
     }
 

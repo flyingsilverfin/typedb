@@ -99,6 +99,16 @@ rust_test(
 )
 
 rust_test(
+    name = "test_pipeline_planner_repro",
+    crate_root = "pipeline_planner_repro.rs",
+    srcs = ["pipeline_planner_repro.rs"],
+    deps = deps + [
+        "//function",
+        "//query:query",
+    ],
+)
+
+rust_test(
     name = "test_functions",
     crate_root = "execute_function.rs",
     srcs = ["execute_function.rs"],
@@ -128,6 +138,7 @@ rustfmt_test(
         ":test_execute_relation_index",
         ":test_functions",
         ":test_pipelines",
+        ":test_pipeline_planner_repro",
         ":test_select",
         ":test_writes",
     ],
