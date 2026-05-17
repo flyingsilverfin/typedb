@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use encoding::graph::definition::definition_key_generator::DefinitionKeyGenerator;
 use function::function_manager::FunctionManager;
-use options::QueryOptions;
+use query::options::QueryOptions;
 use query::query_manager::QueryManager;
 use resource::profile::CommitProfile;
 use storage::snapshot::CommittableSnapshot;

@@ -46,7 +46,6 @@ use ir::{
         pipeline::{TranslatedGiven, TranslatedPipeline, TranslatedStage},
     },
 };
-use options::QueryOptions;
 use resource::{
     constants::query::MAX_PIPELINE_STAGES,
     perf_counters::{QUERY_CACHE_HITS, QUERY_CACHE_MISSES},
