@@ -25,7 +25,7 @@ use database::{
 };
 use diagnostics::diagnostics_manager::DiagnosticsManager;
 use executor::{ExecutionInterrupt, pipeline::stage::StageIterator};
-use options::{QueryOptions, TransactionOptions};
+use options::{InternalQueryOptions, QueryOptions, TransactionOptions};
 use query::given_rows::GivenRowsSimple;
 use rand_core::RngCore;
 use storage::durability_client::WALClient;
@@ -343,7 +343,7 @@ fn execute_read_query(database: &Arc<Database<WALClient>>, query_str: &str) {
             &query,
             None::<GivenRowsSimple>,
             query_str,
-            false,
+            QueryOptions::default(),
         )
         .unwrap();
     let (rows, _context) = pipeline.into_rows_iterator(ExecutionInterrupt::new_uninterruptible()).unwrap();

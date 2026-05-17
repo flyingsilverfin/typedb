@@ -132,6 +132,7 @@ pub mod query_util {
         pipeline::stage::{ExecutionContext, StageIterator},
     };
     use function::function_manager::FunctionManager;
+    use options::InternalQueryOptions;
     use query::{error::QueryError, given_rows::GivenRowsSimple, query_manager::QueryManager};
     use storage::{durability_client::WALClient, snapshot::WriteSnapshot};
     use typeql::query::Pipeline;
@@ -151,7 +152,7 @@ pub mod query_util {
             &pipeline,
             None::<GivenRowsSimple>,
             source_query,
-            false,
+            QueryOptions::default(),
         ) {
             Ok(pipeline) => pipeline,
             Err(err) => return (tx, Err(err)),
@@ -201,6 +202,7 @@ pub mod query_util {
             &pipeline,
             None::<GivenRowsSimple>,
             source_query,
+            QueryOptions::default(),
         ) {
             Ok(pipeline) => pipeline,
             Err((snapshot, err)) => return (Err(err), Arc::new(snapshot)),

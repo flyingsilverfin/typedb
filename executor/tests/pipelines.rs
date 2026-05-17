@@ -17,6 +17,7 @@ use executor::{
 };
 use function::function_manager::FunctionManager;
 use lending_iterator::LendingIterator;
+use options::InternalQueryOptions;
 use query::{given_rows::GivenRowsSimple, query_cache::QueryCache, query_manager::QueryManager};
 use resource::profile::{CommitProfile, StorageCounters};
 use storage::{MVCCStorage, durability_client::WALClient, snapshot::CommittableSnapshot};
@@ -54,7 +55,15 @@ fn setup_common() -> Context {
     let mut snapshot = storage.clone().open_snapshot_schema();
     let define = typeql::parse_query(schema).unwrap().into_structure().into_schema();
     query_manager
-        .execute_schema(&mut snapshot, &type_manager, &thing_manager, &function_manager, define, schema)
+        .execute_schema(
+            &mut snapshot,
+            &type_manager,
+            &thing_manager,
+            &function_manager,
+            define,
+            schema,
+            QueryOptions::default(),
+        )
         .unwrap();
     snapshot.commit(&mut CommitProfile::DISABLED).unwrap();
 
@@ -80,6 +89,7 @@ fn test_insert() {
             &query,
             None::<GivenRowsSimple>,
             query_str,
+            QueryOptions::default(),
         )
         .unwrap();
 
@@ -122,6 +132,7 @@ fn test_insert_insert() {
             &query,
             None::<GivenRowsSimple>,
             query_str,
+            QueryOptions::default(),
         )
         .unwrap();
 
@@ -160,6 +171,7 @@ fn test_match() {
             &query,
             None::<GivenRowsSimple>,
             query_str,
+            QueryOptions::default(),
         )
         .unwrap();
     let (iterator, ExecutionContext { snapshot, .. }) =
@@ -182,7 +194,7 @@ fn test_match() {
             &match_,
             None::<GivenRowsSimple>,
             query,
-            false,
+            QueryOptions::default(),
         )
         .unwrap();
     let (iterator, ExecutionContext { snapshot, .. }) =
@@ -202,7 +214,7 @@ fn test_match() {
             &match_,
             None::<GivenRowsSimple>,
             query,
-            false,
+            QueryOptions::default(),
         )
         .unwrap();
     let (iterator, ExecutionContext { .. }) =
@@ -232,6 +244,7 @@ fn test_match_match() {
             &query,
             None::<GivenRowsSimple>,
             query_str,
+            QueryOptions::default(),
         )
         .unwrap();
     let (iterator, ExecutionContext { snapshot, .. }) =
@@ -257,7 +270,7 @@ fn test_match_match() {
             &match_,
             None::<GivenRowsSimple>,
             query,
-            false,
+            QueryOptions::default(),
         )
         .unwrap();
     let (iterator, ExecutionContext { snapshot, .. }) =
@@ -277,7 +290,7 @@ fn test_match_match() {
             &match_,
             None::<GivenRowsSimple>,
             query,
-            false,
+            QueryOptions::default(),
         )
         .unwrap();
     let (iterator, ExecutionContext { .. }) =
@@ -302,6 +315,7 @@ fn test_match_delete_has() {
             &insert_query,
             None::<GivenRowsSimple>,
             insert_query_str,
+            QueryOptions::default(),
         )
         .unwrap();
     let (mut iterator, ExecutionContext { snapshot, .. }) =
@@ -340,6 +354,7 @@ fn test_match_delete_has() {
             &delete_query,
             None::<GivenRowsSimple>,
             delete_query_str,
+            QueryOptions::default(),
         )
         .unwrap();
 
@@ -383,6 +398,7 @@ fn test_insert_match_insert() {
             &query,
             None::<GivenRowsSimple>,
             query_str,
+            QueryOptions::default(),
         )
         .unwrap();
     let (iterator, ExecutionContext { snapshot, .. }) =
@@ -413,6 +429,7 @@ fn test_insert_match_insert() {
             &query,
             None::<GivenRowsSimple>,
             query_str,
+            QueryOptions::default(),
         )
         .unwrap();
 
@@ -446,6 +463,7 @@ fn test_match_sort() {
             &insert_query,
             None::<GivenRowsSimple>,
             insert_query_str,
+            QueryOptions::default(),
         )
         .unwrap();
     let (mut iterator, ExecutionContext { snapshot, .. }) =
@@ -469,7 +487,7 @@ fn test_match_sort() {
             &match_,
             None::<GivenRowsSimple>,
             query,
-            false,
+            QueryOptions::default(),
         )
         .unwrap();
     let named_outputs = pipeline.rows_positions().unwrap().clone();
@@ -512,6 +530,7 @@ fn test_select() {
             &insert_query,
             None::<GivenRowsSimple>,
             insert_query_str,
+            QueryOptions::default(),
         )
         .unwrap();
     let (mut iterator, ExecutionContext { snapshot, .. }) =
@@ -536,7 +555,7 @@ fn test_select() {
                 &match_,
                 None::<GivenRowsSimple>,
                 query,
-                false,
+                QueryOptions::default(),
             )
             .unwrap();
         let named_outputs = pipeline.rows_positions().unwrap();
@@ -557,7 +576,7 @@ fn test_select() {
                 &match_,
                 None::<GivenRowsSimple>,
                 query,
-                false,
+                QueryOptions::default(),
             )
             .unwrap();
         let named_outputs = pipeline.rows_positions().unwrap();
@@ -584,6 +603,7 @@ fn test_require() {
             &insert_query,
             None::<GivenRowsSimple>,
             insert_query_str,
+            QueryOptions::default(),
         )
         .unwrap();
     let (mut iterator, ExecutionContext { snapshot, .. }) =
@@ -608,7 +628,7 @@ fn test_require() {
                 &match_,
                 None::<GivenRowsSimple>,
                 query,
-                false,
+                QueryOptions::default(),
             )
             .unwrap();
         let named_outputs = pipeline.rows_positions().unwrap();
