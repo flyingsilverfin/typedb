@@ -181,16 +181,19 @@ impl<'a> fmt::Display for PlannerVertex<'a> {
 /// `worst = max(0, scan_size - io_ratio) * ADVANCE`: cost of advancing through the
 /// post-filter rejects between matches. Zero when the storage range is tight (no
 /// rejects), non-zero when there's a post-filter that can't be pushed into storage
-/// (e.g. owner-type filter when attribute-value is unbound).
+/// (e.g. owner-type filter when attribute-value is unbound). Clamped from below by
+/// `expected`: a probe cannot do better than the uniform-distribution amortized cost,
+/// so the "worst" case in the blend is at least `expected`.
 ///
-/// `p_unmatched` is the fraction of the join variable's domain not covered by the bigger
-/// side; it gates how much to lean toward `worst` (literature: risk-aware optimization).
-/// Clamp ensures we never pull cost below `expected` when `worst < expected`.
+/// `p_unmatched` is the fraction of this side's own coverage gap relative to the join
+/// variable's domain — i.e. how often the merge will ask this side for a value it
+/// doesn't have (literature: risk-aware optimization, Babcock & Chaudhuri 2005).
 fn blended_out_cost(cost: f64, io_ratio: f64, p_unmatched: f64) -> f64 {
     let expected = cost / io_ratio;
     let scan_size = ((cost - OPEN_ITERATOR_RELATIVE_COST) / ADVANCE_ITERATOR_RELATIVE_COST).max(1.0);
-    let worst = (scan_size - io_ratio).max(0.0) * ADVANCE_ITERATOR_RELATIVE_COST;
-    expected + p_unmatched * (worst - expected).max(0.0)
+    let worst = ((scan_size - io_ratio).max(0.0) * ADVANCE_ITERATOR_RELATIVE_COST).max(expected);
+    let p_match = 1.0 - p_unmatched;
+    p_match * expected + p_unmatched * worst
 }
 
 impl Cost {
@@ -238,14 +241,15 @@ impl Cost {
         // can't find a match must scan forward to confirm non-existence — storage can't bound
         // such a scan when the value isn't bound and a post-filter is in play).
         //
-        // Blend per-side: expected + p_unmatched × max(0, waste - expected), where p_unmatched
-        // is the fraction of the join domain the bigger side fails to cover. When either
-        // (a) coverage is full (p_unmatched = 0) or (b) no post-filter waste exists (waste ≤
-        // expected → clamp returns 0), the blend reduces to the existing model exactly.
-        let bigger_io = f64::max(self.io_ratio, other.io_ratio);
-        let p_unmatched = (1.0 - bigger_io / join_size).max(0.0);
-        let self_out_cost = blended_out_cost(self.cost, self.io_ratio, p_unmatched);
-        let other_out_cost = blended_out_cost(other.cost, other.io_ratio, p_unmatched);
+        // Per-side blend: each side's gate is its own coverage gap of the join domain. The
+        // probability that the merge asks side X for a value X doesn't have is
+        // `1 - X.io_ratio / join_size` — that's what triggers X's expensive scan past its
+        // post-filter waste. The cost of the trigger is bounded by X's own waste, so the
+        // penalty stays zero when X has no waste (waste ≤ expected → clamped to expected).
+        let p_unmatched_self = (1.0 - self.io_ratio / join_size).max(0.0);
+        let p_unmatched_other = (1.0 - other.io_ratio / join_size).max(0.0);
+        let self_out_cost = blended_out_cost(self.cost, self.io_ratio, p_unmatched_self);
+        let other_out_cost = blended_out_cost(other.cost, other.io_ratio, p_unmatched_other);
         let cost_self = SEEK_ITERATOR_RELATIVE_COST + self_out_cost * num_seeks_each;
         let cost_other = SEEK_ITERATOR_RELATIVE_COST + other_out_cost * num_seeks_each;
 
