@@ -23,7 +23,7 @@ use executor::{
 use itertools::{Either, Itertools};
 use lending_iterator::LendingIterator;
 use macro_rules_attribute::apply;
-use options::QueryOptions;
+use query::options::QueryOptions;
 use query::{analyse::AnalysedQuery, error::QueryError};
 use resource::profile::StorageCounters;
 use server::service::http::message::analyze::{

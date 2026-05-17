@@ -10,7 +10,7 @@ use concept::{thing::thing_manager::ThingManager, type_::type_manager::TypeManag
 use encoding::graph::definition::definition_key_generator::DefinitionKeyGenerator;
 use executor::ExecutionInterrupt;
 use function::function_manager::FunctionManager;
-use options::QueryOptions;
+use query::options::QueryOptions;
 use query::{query_cache::QueryCache, query_manager::QueryManager};
 use resource::profile::CommitProfile;
 use storage::{MVCCStorage, durability_client::WALClient, snapshot::CommittableSnapshot};

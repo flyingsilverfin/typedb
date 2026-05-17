@@ -12,6 +12,7 @@ rust_test(
         "//common/options",
         "//database",
         "//executor",
+        "//query",
         "//storage",
 
         "//util/test:test_utils",

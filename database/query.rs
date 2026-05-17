@@ -16,7 +16,8 @@ use executor::{
 use function::function_manager::FunctionManager;
 use ir::pipeline::ParameterRegistry;
 use itertools::{Either, Itertools};
-use options::{QueryOptions, ServerQueryOptions};
+use options::ServerQueryOptions;
+use query::options::QueryOptions;
 use query::{error::QueryError, query_manager::QueryManager};
 use storage::{durability_client::WALClient, snapshot::WritableSnapshot};
 use tracing::{Level, event};

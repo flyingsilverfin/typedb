@@ -24,7 +24,8 @@ use database::{
     transaction::{CommitIntent, TransactionRead, TransactionSchema, TransactionWrite},
 };
 use executor::{ExecutionInterrupt, pipeline::stage::StageIterator};
-use options::{QueryOptions, ServerQueryOptions, TransactionOptions};
+use options::{ServerQueryOptions, TransactionOptions};
+use query::options::QueryOptions;
 use rand_core::RngCore;
 use storage::durability_client::WALClient;
 use test_utils::{TempDir, create_tmp_storage_dir};

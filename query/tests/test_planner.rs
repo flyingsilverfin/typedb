@@ -41,7 +41,7 @@ use executor::{
     pipeline::stage::{ExecutionContext, StageIterator},
 };
 use function::function_manager::FunctionManager;
-use options::QueryOptions;
+use query::options::QueryOptions;
 use query::{query_cache::QueryCache, query_manager::QueryManager};
 use resource::profile::{CommitProfile, PatternProfile, QueryProfile, StepProfile, SubstepProfile};
 use storage::{MVCCStorage, durability_client::WALClient, snapshot::CommittableSnapshot};

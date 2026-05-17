@@ -27,7 +27,6 @@ use ir::{
     },
     translation::pipeline::{TranslatedPipeline, TranslatedStage},
 };
-use options::QueryOptions;
 use resource::{
     constants::query::MAX_PIPELINE_STAGES,
     perf_counters::{QUERY_CACHE_HITS, QUERY_CACHE_MISSES},
@@ -43,6 +42,7 @@ use crate::{
     },
     define,
     error::QueryError,
+    options::QueryOptions,
     query_cache::QueryCache,
     redefine, undefine,
 };

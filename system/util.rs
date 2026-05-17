@@ -132,7 +132,7 @@ pub mod query_util {
         pipeline::stage::{ExecutionContext, StageIterator},
     };
     use function::function_manager::FunctionManager;
-    use options::QueryOptions;
+    use query::options::QueryOptions;
     use query::{error::QueryError, query_manager::QueryManager};
     use storage::{durability_client::WALClient, snapshot::WriteSnapshot};
     use typeql::query::Pipeline;

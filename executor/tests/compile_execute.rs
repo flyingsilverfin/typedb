@@ -34,7 +34,7 @@ use ir::{
 };
 use itertools::Itertools;
 use lending_iterator::LendingIterator;
-use options::QueryOptions;
+use query::options::QueryOptions;
 use query::query_manager::QueryManager;
 use resource::profile::{CommitProfile, QueryProfile};
 use storage::{

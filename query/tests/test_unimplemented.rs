@@ -19,7 +19,7 @@ use function::function_manager::FunctionManager;
 use ir::RepresentationError;
 use itertools::Either;
 use lending_iterator::LendingIterator;
-use options::QueryOptions;
+use query::options::QueryOptions;
 use query::{error::QueryError, query_cache::QueryCache, query_manager::QueryManager};
 use resource::profile::CommitProfile;
 use storage::{MVCCStorage, durability_client::WALClient, snapshot::CommittableSnapshot};

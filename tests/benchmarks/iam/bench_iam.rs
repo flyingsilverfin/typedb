@@ -12,7 +12,8 @@ use database::{
     transaction::{CommitIntent, TransactionRead, TransactionSchema, TransactionWrite},
 };
 use executor::{ExecutionInterrupt, batch::Batch, pipeline::stage::StageIterator};
-use options::{QueryOptions, TransactionOptions};
+use options::TransactionOptions;
+use query::options::QueryOptions;
 use storage::durability_client::WALClient;
 use test_utils::create_tmp_storage_dir;
 

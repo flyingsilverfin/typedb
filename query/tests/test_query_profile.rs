@@ -12,7 +12,7 @@ use executor::ExecutionInterrupt;
 use function::function_manager::FunctionManager;
 use itertools::Itertools;
 use lending_iterator::LendingIterator;
-use options::QueryOptions;
+use query::options::QueryOptions;
 use query::{query_cache::QueryCache, query_manager::QueryManager};
 use resource::profile::{CommitProfile, PatternProfile, QueryProfile, StageProfile, SubstepProfile};
 use storage::{MVCCStorage, durability_client::WALClient, snapshot::CommittableSnapshot};

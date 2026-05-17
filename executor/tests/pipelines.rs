@@ -17,7 +17,7 @@ use executor::{
 };
 use function::function_manager::FunctionManager;
 use lending_iterator::LendingIterator;
-use options::QueryOptions;
+use query::options::QueryOptions;
 use query::{query_cache::QueryCache, query_manager::QueryManager};
 use resource::profile::{CommitProfile, StorageCounters};
 use storage::{MVCCStorage, durability_client::WALClient, snapshot::CommittableSnapshot};

@@ -19,7 +19,6 @@ rust_library(
         "//compiler",
         "//common/lending_iterator",
         "//common/error",
-        "//common/options",
         "//function",
         "//encoding",
         "//executor",

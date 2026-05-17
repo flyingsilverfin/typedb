@@ -12,6 +12,7 @@ mod definable_resolution;
 mod definable_status;
 mod define;
 pub mod error;
+pub mod options;
 pub mod query_cache;
 pub mod query_manager;
 mod redefine;
