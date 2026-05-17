@@ -16,7 +16,7 @@ use executor::{
 use function::function_manager::FunctionManager;
 use ir::pipeline::ParameterRegistry;
 use itertools::{Either, Itertools};
-use options::QueryOptions;
+use options::ServerQueryOptions;
 use query::{error::QueryError, query_manager::QueryManager};
 use storage::{durability_client::WALClient, snapshot::WritableSnapshot};
 use tracing::{Level, event};
@@ -34,16 +34,16 @@ pub type WriteQueryResult = Result<WriteQueryAnswer, Box<QueryError>>;
 
 #[derive(Debug)]
 pub struct WriteQueryAnswer {
-    pub query_options: QueryOptions,
+    pub query_options: ServerQueryOptions,
     pub answer: Either<WriteQueryBatchAnswer, WriteQueryDocumentsAnswer>,
 }
 
 impl WriteQueryAnswer {
-    fn new_batch(query_options: QueryOptions, answer: WriteQueryBatchAnswer) -> Self {
+    fn new_batch(query_options: ServerQueryOptions, answer: WriteQueryBatchAnswer) -> Self {
         Self { query_options, answer: Either::Left(answer) }
     }
 
-    fn new_documents(query_options: QueryOptions, answer: WriteQueryDocumentsAnswer) -> Self {
+    fn new_documents(query_options: ServerQueryOptions, answer: WriteQueryDocumentsAnswer) -> Self {
         Self { query_options, answer: Either::Right(answer) }
     }
 }
@@ -71,7 +71,7 @@ pub fn execute_schema_query(
 
 pub fn execute_write_query_in_schema(
     transaction: TransactionSchema<WALClient>,
-    query_options: QueryOptions,
+    query_options: ServerQueryOptions,
     pipeline: typeql::query::Pipeline,
     source_query: String,
     interrupt: ExecutionInterrupt,
@@ -115,7 +115,7 @@ pub fn execute_write_query_in_schema(
 
 pub fn execute_write_query_in_write(
     transaction: TransactionWrite<WALClient>,
-    query_options: QueryOptions,
+    query_options: ServerQueryOptions,
     pipeline: typeql::query::Pipeline,
     source_query: String,
     interrupt: ExecutionInterrupt,
@@ -163,7 +163,7 @@ pub(crate) fn execute_write_query_in<Snapshot: WritableSnapshot + 'static>(
     thing_manager: Arc<ThingManager>,
     function_manager: &FunctionManager,
     query_manager: &QueryManager,
-    query_options: QueryOptions,
+    query_options: ServerQueryOptions,
     pipeline: &typeql::query::Pipeline,
     source_query: &str,
     interrupt: ExecutionInterrupt,

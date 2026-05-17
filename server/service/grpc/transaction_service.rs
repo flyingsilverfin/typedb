@@ -30,7 +30,7 @@ use executor::{
 use ir::pipeline::ParameterRegistry;
 use itertools::{Either, Itertools};
 use lending_iterator::LendingIterator;
-use options::QueryOptions;
+use options::ServerQueryOptions;
 use query::error::QueryError;
 use resource::profile::{EncodingProfile, QueryProfile, StorageCounters};
 use storage::snapshot::ReadableSnapshot;
@@ -900,7 +900,7 @@ impl TransactionService {
     async fn run_write_query(
         &mut self,
         req_id: Uuid,
-        query_options: QueryOptions,
+        query_options: ServerQueryOptions,
         pipeline: typeql::query::Pipeline,
         source_query: String,
     ) {
@@ -942,7 +942,7 @@ impl TransactionService {
     fn run_and_activate_read_transmitter(
         &mut self,
         req_id: Uuid,
-        query_options: QueryOptions,
+        query_options: ServerQueryOptions,
         pipeline: typeql::query::Pipeline,
         source_query: String,
     ) {
@@ -961,7 +961,7 @@ impl TransactionService {
 
     fn spawn_blocking_execute_write_query(
         &mut self,
-        query_options: QueryOptions,
+        query_options: ServerQueryOptions,
         pipeline: typeql::query::Pipeline,
         source_query: String,
     ) -> Result<JoinHandle<(Transaction, WriteQueryResult)>, TransactionServiceError> {
@@ -1042,7 +1042,7 @@ impl TransactionService {
         type_manager: Arc<TypeManager>,
         thing_manager: Arc<ThingManager>,
         output_descriptor: StreamQueryOutputDescriptor,
-        query_options: QueryOptions,
+        query_options: ServerQueryOptions,
         batch: Batch,
         pipeline_structure: Option<&PipelineStructure>,
         sender: Sender<StreamQueryResponse>,
@@ -1170,7 +1170,7 @@ impl TransactionService {
     fn blocking_read_query_worker(
         &self,
         sender: Sender<StreamQueryResponse>,
-        query_options: QueryOptions,
+        query_options: ServerQueryOptions,
         pipeline: typeql::query::Pipeline,
         source_query: String,
     ) -> JoinHandle<()> {
@@ -1213,7 +1213,7 @@ impl TransactionService {
     }
 
     fn respond_read_query_sync<Snapshot: ReadableSnapshot>(
-        query_options: QueryOptions,
+        query_options: ServerQueryOptions,
         pipeline: Pipeline<Snapshot, ReadPipelineStage<Snapshot>>,
         source_query: &str,
         timeout_at: Instant,
@@ -1744,7 +1744,7 @@ impl QueryStreamTransmitter {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 enum QueueOptions {
-    Query(QueryOptions),
+    Query(ServerQueryOptions),
     Analyze,
 }
 

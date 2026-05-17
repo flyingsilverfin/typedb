@@ -14,7 +14,7 @@ use database::{
 };
 use encoding::graph::thing::vertex_attribute::StringAttributeID;
 use executor::ExecutionInterrupt;
-use options::{QueryOptions, TransactionOptions};
+use options::{ServerQueryOptions, TransactionOptions};
 use storage::{
     StorageCommitError, durability_client::WALClient, isolation_manager::IsolationConflict, snapshot::SnapshotError,
 };
@@ -55,7 +55,7 @@ fn run_write(tx: TransactionWrite<WALClient>, query: &str) -> TransactionWrite<W
     let pipeline = typeql::parse_query(query).unwrap().into_structure().into_pipeline();
     let (tx, result) = execute_write_query_in_write(
         tx,
-        QueryOptions::default_grpc(),
+        ServerQueryOptions::default_grpc(),
         pipeline,
         query.to_string(),
         ExecutionInterrupt::new_uninterruptible(),

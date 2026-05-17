@@ -24,7 +24,7 @@ use database::{
     transaction::{CommitIntent, TransactionRead, TransactionSchema, TransactionWrite},
 };
 use executor::{ExecutionInterrupt, pipeline::stage::StageIterator};
-use options::{QueryOptions, TransactionOptions};
+use options::{ServerQueryOptions, TransactionOptions};
 use rand_core::RngCore;
 use storage::durability_client::WALClient;
 use test_utils::{TempDir, create_tmp_storage_dir};
@@ -166,7 +166,7 @@ fn seed_persons(database: &Arc<Database<WALClient>>, count: usize) {
             let pipeline = typeql::parse_query(&query_str).unwrap().into_structure().into_pipeline();
             let (returned_tx, result) = execute_write_query_in_write(
                 tx,
-                QueryOptions::default_grpc(),
+                ServerQueryOptions::default_grpc(),
                 pipeline,
                 query_str,
                 ExecutionInterrupt::new_uninterruptible(),
@@ -200,7 +200,7 @@ fn execute_insert_batch(
         let pipeline = typeql::parse_query(&query_str).unwrap().into_structure().into_pipeline();
         let (returned_tx, result) = execute_write_query_in_write(
             tx,
-            QueryOptions::default_grpc(),
+            ServerQueryOptions::default_grpc(),
             pipeline,
             query_str,
             ExecutionInterrupt::new_uninterruptible(),
@@ -236,7 +236,7 @@ fn execute_update_batch(
         let pipeline = typeql::parse_query(&query_str).unwrap().into_structure().into_pipeline();
         let (returned_tx, result) = execute_write_query_in_write(
             tx,
-            QueryOptions::default_grpc(),
+            ServerQueryOptions::default_grpc(),
             pipeline,
             query_str,
             ExecutionInterrupt::new_uninterruptible(),
@@ -274,7 +274,7 @@ fn execute_relation_batch(
         let pipeline = typeql::parse_query(&query_str).unwrap().into_structure().into_pipeline();
         let (returned_tx, result) = execute_write_query_in_write(
             tx,
-            QueryOptions::default_grpc(),
+            ServerQueryOptions::default_grpc(),
             pipeline,
             query_str,
             ExecutionInterrupt::new_uninterruptible(),

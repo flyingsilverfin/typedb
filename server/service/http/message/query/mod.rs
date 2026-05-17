@@ -5,7 +5,7 @@
  */
 
 use axum::response::{IntoResponse, Response};
-use options::QueryOptions;
+use options::ServerQueryOptions;
 use resource::constants::server::{
     DEFAULT_ANSWER_COUNT_LIMIT_HTTP, DEFAULT_INCLUDE_INSTANCE_TYPES, DEFAULT_INCLUDE_STRUCTURE_HTTP,
     DEFAULT_PREFETCH_SIZE,
@@ -38,9 +38,9 @@ impl Default for QueryOptionsPayload {
     }
 }
 
-impl Into<QueryOptions> for QueryOptionsPayload {
-    fn into(self) -> QueryOptions {
-        QueryOptions {
+impl Into<ServerQueryOptions> for QueryOptionsPayload {
+    fn into(self) -> ServerQueryOptions {
+        ServerQueryOptions {
             include_instance_types: self.include_instance_types.unwrap_or(DEFAULT_INCLUDE_INSTANCE_TYPES),
             answer_count_limit: self
                 .answer_count_limit

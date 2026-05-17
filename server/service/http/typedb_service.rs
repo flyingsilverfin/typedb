@@ -15,7 +15,7 @@ use axum::{
 use concurrency::{IntervalTaskParameters, TokioTaskSpawner};
 use diagnostics::metrics::ActionKind;
 use http::StatusCode;
-use options::{QueryOptions, TransactionOptions};
+use options::{ServerQueryOptions, TransactionOptions};
 use resource::constants::common::SECONDS_IN_MINUTE;
 use system::concepts::{Credential, User};
 use tokio::{
@@ -148,7 +148,7 @@ impl HTTPTypeDBService {
 
     fn build_query_request(query_options_payload: Option<QueryOptionsPayload>, query: String) -> TransactionRequest {
         let query_options =
-            query_options_payload.map(|options| options.into()).unwrap_or_else(|| QueryOptions::default_http());
+            query_options_payload.map(|options| options.into()).unwrap_or_else(|| ServerQueryOptions::default_http());
         TransactionRequest::Query(query_options, query)
     }
 

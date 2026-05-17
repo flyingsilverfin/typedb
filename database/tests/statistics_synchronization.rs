@@ -19,7 +19,7 @@ use database::{
     transaction::{CommitIntent, TransactionSchema, TransactionWrite},
 };
 use executor::ExecutionInterrupt;
-use options::{QueryOptions, TransactionOptions};
+use options::{ServerQueryOptions, TransactionOptions};
 use storage::durability_client::WALClient;
 use test_utils::{create_tmp_storage_dir, init_logging};
 
@@ -93,7 +93,7 @@ fn run_insert_batch(database: &Arc<Database<WALClient>>, batch_id: usize) {
         let pipeline = typeql::parse_query(&query_str).unwrap().into_structure().into_pipeline();
         let (returned_tx, result) = execute_write_query_in_write(
             tx,
-            QueryOptions::default_grpc(),
+            ServerQueryOptions::default_grpc(),
             pipeline,
             query_str,
             ExecutionInterrupt::new_uninterruptible(),

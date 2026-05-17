@@ -122,9 +122,10 @@ impl QueryManager {
         function_manager: &FunctionManager,
         query: &typeql::query::Pipeline,
         source_query: &str,
+        force_query_profile: bool, // TODO: convert to QueryOptions, and add to the 3 main methods in this file
     ) -> Result<Pipeline<Snapshot, ReadPipelineStage<Snapshot>>, Box<QueryError>> {
         event!(Level::TRACE, "Running read query:\n{}", query);
-        let mut query_profile = QueryProfile::new(tracing::enabled!(Level::TRACE));
+        let mut query_profile = QueryProfile::new(tracing::enabled!(Level::TRACE)); // TODO OR if forced enabled in query profile
         let compile_profile = query_profile.compilation_profile();
         compile_profile.start();
         // 1: Translate
