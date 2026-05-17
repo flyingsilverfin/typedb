@@ -130,6 +130,7 @@ fn run_read(context: &Context, query_str: &str) -> (usize, Arc<QueryProfile>) {
             &context.function_manager,
             &query,
             query_str,
+            false,
         )
         .unwrap();
     let (iterator, ExecutionContext { profile, .. }) =

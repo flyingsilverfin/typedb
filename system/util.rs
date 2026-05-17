@@ -151,6 +151,7 @@ pub mod query_util {
             &pipeline,
             None::<GivenRowsSimple>,
             source_query,
+            false,
         ) {
             Ok(pipeline) => pipeline,
             Err(err) => return (tx, Err(err)),

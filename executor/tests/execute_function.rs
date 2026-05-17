@@ -127,6 +127,7 @@ fn run_read_query(
             &match_,
             None::<GivenRowsSimple>,
             query,
+            false,
         )
         .unwrap();
     let rows_positions = pipeline.rows_positions().unwrap().clone();

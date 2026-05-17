@@ -101,6 +101,7 @@ fn execute_read_query(
             &query.into_structure().into_pipeline(),
             given_rows,
             source_query,
+            false,
         )?;
         if pipeline.has_fetch() {
             match pipeline.into_documents_iterator(ExecutionInterrupt::new_uninterruptible()) {

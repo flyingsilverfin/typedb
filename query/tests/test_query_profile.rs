@@ -188,6 +188,7 @@ fn query_profile_tree_structure() {
             &query,
             None::<GivenRowsSimple>,
             query_str,
+            false,
         )
         .unwrap();
 

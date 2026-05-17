@@ -32,21 +32,21 @@ deps = [
 
 rust_test(
     name = "test_define",
-    crate_root = "test_define",
+    crate_root = "test_define.rs",
     srcs = ["test_define.rs"],
     deps = deps,
 )
 
 rust_test(
     name = "test_fetch",
-    crate_root = "test_fetch",
+    crate_root = "test_fetch.rs",
     srcs = ["test_fetch.rs"],
     deps = deps,
 )
 
 rust_test(
     name = "test_unimplemented",
-    crate_root = "test_unimplemented",
+    crate_root = "test_unimplemented.rs",
     srcs = ["test_unimplemented.rs"],
     deps = deps,
 )
@@ -60,7 +60,7 @@ rust_test(
 
 rust_test(
     name = "test_query_profile",
-    crate_root = "test_query_profile",
+    crate_root = "test_query_profile.rs",
     srcs = ["test_query_profile.rs"],
     deps = deps,
 )

@@ -137,6 +137,7 @@ fetch {
             &pipeline,
             None::<GivenRowsSimple>,
             query_str,
+            false,
         )
         .unwrap();
 

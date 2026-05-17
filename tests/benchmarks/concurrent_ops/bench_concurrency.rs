@@ -343,6 +343,7 @@ fn execute_read_query(database: &Arc<Database<WALClient>>, query_str: &str) {
             &query,
             None::<GivenRowsSimple>,
             query_str,
+            false,
         )
         .unwrap();
     let (rows, _context) = pipeline.into_rows_iterator(ExecutionInterrupt::new_uninterruptible()).unwrap();

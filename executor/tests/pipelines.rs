@@ -182,6 +182,7 @@ fn test_match() {
             &match_,
             None::<GivenRowsSimple>,
             query,
+            false,
         )
         .unwrap();
     let (iterator, ExecutionContext { snapshot, .. }) =
@@ -201,6 +202,7 @@ fn test_match() {
             &match_,
             None::<GivenRowsSimple>,
             query,
+            false,
         )
         .unwrap();
     let (iterator, ExecutionContext { .. }) =
@@ -255,6 +257,7 @@ fn test_match_match() {
             &match_,
             None::<GivenRowsSimple>,
             query,
+            false,
         )
         .unwrap();
     let (iterator, ExecutionContext { snapshot, .. }) =
@@ -274,6 +277,7 @@ fn test_match_match() {
             &match_,
             None::<GivenRowsSimple>,
             query,
+            false,
         )
         .unwrap();
     let (iterator, ExecutionContext { .. }) =
@@ -465,6 +469,7 @@ fn test_match_sort() {
             &match_,
             None::<GivenRowsSimple>,
             query,
+            false,
         )
         .unwrap();
     let named_outputs = pipeline.rows_positions().unwrap().clone();
@@ -531,6 +536,7 @@ fn test_select() {
                 &match_,
                 None::<GivenRowsSimple>,
                 query,
+                false,
             )
             .unwrap();
         let named_outputs = pipeline.rows_positions().unwrap();
@@ -551,6 +557,7 @@ fn test_select() {
                 &match_,
                 None::<GivenRowsSimple>,
                 query,
+                false,
             )
             .unwrap();
         let named_outputs = pipeline.rows_positions().unwrap();
@@ -601,6 +608,7 @@ fn test_require() {
                 &match_,
                 None::<GivenRowsSimple>,
                 query,
+                false,
             )
             .unwrap();
         let named_outputs = pipeline.rows_positions().unwrap();

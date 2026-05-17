@@ -66,6 +66,7 @@ fn pipeline_at_limit_is_accepted() {
         &pipeline,
         None::<GivenRowsSimple>,
         &query_str,
+        false,
     );
 
     assert!(result.is_ok());
@@ -89,6 +90,7 @@ fn pipeline_over_limit_is_rejected() {
         &pipeline,
         None::<GivenRowsSimple>,
         &query_str,
+        false,
     );
     let err = match result {
         Ok(_) => panic!("query with too many stages should fail"),
