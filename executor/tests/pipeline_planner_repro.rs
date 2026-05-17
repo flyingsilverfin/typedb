@@ -35,7 +35,7 @@ use executor::{
 use function::function_manager::FunctionManager;
 use lending_iterator::LendingIterator;
 use query::{query_cache::QueryCache, query_manager::QueryManager};
-use resource::profile::{CommitProfile, QueryProfile};
+use resource::profile::{CommitProfile, PatternProfile, QueryProfile, StepProfile, SubstepProfile};
 use storage::{MVCCStorage, durability_client::WALClient, snapshot::CommittableSnapshot};
 use test_utils::TempDir;
 use test_utils_concept::setup_concept_storage;
@@ -143,20 +143,38 @@ fn run_read(context: &Context, query_str: &str) -> (usize, Arc<QueryProfile>) {
 /// bug shows up as a single step with hundreds of advances per row (because the unbounded side
 /// has to linear-scan to end-of-range to prove no match exists for unmatched outer rows).
 fn worst_advances_per_row(profile: &QueryProfile) -> (f64, u64, u64, String) {
-    let stage_profiles = profile.stage_profiles().read().unwrap();
     let mut worst: (f64, u64, u64, String) = (0.0, 0, 0, String::new());
-    for (_id, stage) in stage_profiles.iter() {
-        let step_profiles = stage.step_profiles();
-        for step in step_profiles.read().unwrap().iter() {
-            let Some(advances) = step.storage_counters().get_raw_advance() else { continue };
-            let Some(rows) = step.rows() else { continue };
-            let ratio = advances as f64 / rows.max(1) as f64;
-            if ratio > worst.0 {
-                worst = (ratio, advances, rows, step.description().unwrap_or_default());
-            }
+    for (_id, stage) in profile.stage_profiles().read().unwrap().iter() {
+        if let Some(pattern) = stage.pattern_profile() {
+            visit_steps_in_pattern(&pattern, &mut |step| update_worst(step, &mut worst));
         }
     }
     worst
+}
+
+fn visit_steps_in_pattern(pattern: &PatternProfile, visit: &mut impl FnMut(&StepProfile)) {
+    for substep in pattern.substeps().read().unwrap().iter() {
+        match substep {
+            SubstepProfile::StepProfile(step) => visit(step),
+            SubstepProfile::PatternProfile(nested) => visit_steps_in_pattern(nested, visit),
+            SubstepProfile::QueryProfile { profile, .. } => {
+                for (_id, stage) in profile.stage_profiles().read().unwrap().iter() {
+                    if let Some(nested_pattern) = stage.pattern_profile() {
+                        visit_steps_in_pattern(&nested_pattern, visit);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn update_worst(step: &StepProfile, worst: &mut (f64, u64, u64, String)) {
+    let Some(advances) = step.storage_counters().get_raw_advance() else { return };
+    let Some(rows) = step.rows() else { return };
+    let ratio = advances as f64 / rows.max(1) as f64;
+    if ratio > worst.0 {
+        *worst = (ratio, advances, rows, step.description().unwrap_or_default());
+    }
 }
 
 fn schema() -> &'static str {
