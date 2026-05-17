@@ -57,7 +57,7 @@ fn run_write(tx: TransactionWrite<WALClient>, query: &str) -> TransactionWrite<W
     let pipeline = typeql::parse_query(query).unwrap().into_structure().into_pipeline();
     let (tx, result) = execute_write_query_in_write(
         tx,
-        QueryOptions::default_grpc(),
+        ServerQueryOptions::default_grpc(),
         pipeline,
         None::<GivenRowsSimple>,
         query.to_string(),

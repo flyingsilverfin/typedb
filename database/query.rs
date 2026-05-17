@@ -34,16 +34,16 @@ pub type WriteQueryResult = Result<WriteQueryAnswer, Box<QueryError>>;
 
 #[derive(Debug)]
 pub struct WriteQueryAnswer {
-    pub query_options: QueryOptions,
+    pub query_options: ServerQueryOptions,
     pub answer: Either<WriteQueryBatchAnswer, WriteQueryDocumentsAnswer>,
 }
 
 impl WriteQueryAnswer {
-    fn new_batch(query_options: QueryOptions, answer: WriteQueryBatchAnswer) -> Self {
+    fn new_batch(query_options: ServerQueryOptions, answer: WriteQueryBatchAnswer) -> Self {
         Self { query_options, answer: Either::Left(answer) }
     }
 
-    fn new_documents(query_options: QueryOptions, answer: WriteQueryDocumentsAnswer) -> Self {
+    fn new_documents(query_options: ServerQueryOptions, answer: WriteQueryDocumentsAnswer) -> Self {
         Self { query_options, answer: Either::Right(answer) }
     }
 }
@@ -71,7 +71,7 @@ pub fn execute_schema_query(
 
 pub fn execute_write_query_in_schema(
     transaction: TransactionSchema<WALClient>,
-    query_options: QueryOptions,
+    query_options: ServerQueryOptions,
     pipeline: typeql::query::Pipeline,
     given_rows: Option<impl GivenRows>,
     source_query: String,
@@ -117,7 +117,7 @@ pub fn execute_write_query_in_schema(
 
 pub fn execute_write_query_in_write(
     transaction: TransactionWrite<WALClient>,
-    query_options: QueryOptions,
+    query_options: ServerQueryOptions,
     pipeline: typeql::query::Pipeline,
     given_rows: Option<impl GivenRows>,
     source_query: String,

@@ -95,7 +95,7 @@ fn run_insert_batch(database: &Arc<Database<WALClient>>, batch_id: usize) {
         let pipeline = typeql::parse_query(&query_str).unwrap().into_structure().into_pipeline();
         let (returned_tx, result) = execute_write_query_in_write(
             tx,
-            QueryOptions::default_grpc(),
+            ServerQueryOptions::default_grpc(),
             pipeline,
             None::<GivenRowsSimple>,
             query_str,

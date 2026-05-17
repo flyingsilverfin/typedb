@@ -168,7 +168,7 @@ fn seed_persons(database: &Arc<Database<WALClient>>, count: usize) {
             let pipeline = typeql::parse_query(&query_str).unwrap().into_structure().into_pipeline();
             let (returned_tx, result) = execute_write_query_in_write(
                 tx,
-                QueryOptions::default_grpc(),
+                ServerQueryOptions::default_grpc(),
                 pipeline,
                 None::<GivenRowsSimple>,
                 query_str,
@@ -234,7 +234,7 @@ fn execute_insert_batch(
         let pipeline = typeql::parse_query(&query_str).unwrap().into_structure().into_pipeline();
         let (returned_tx, result) = execute_write_query_in_write(
             tx,
-            QueryOptions::default_grpc(),
+            ServerQueryOptions::default_grpc(),
             pipeline,
             None::<GivenRowsSimple>,
             query_str,
@@ -271,7 +271,7 @@ fn execute_update_batch(
         let pipeline = typeql::parse_query(&query_str).unwrap().into_structure().into_pipeline();
         let (returned_tx, result) = execute_write_query_in_write(
             tx,
-            QueryOptions::default_grpc(),
+            ServerQueryOptions::default_grpc(),
             pipeline,
             None::<GivenRowsSimple>,
             query_str,
@@ -310,7 +310,7 @@ fn execute_relation_batch(
         let pipeline = typeql::parse_query(&query_str).unwrap().into_structure().into_pipeline();
         let (returned_tx, result) = execute_write_query_in_write(
             tx,
-            QueryOptions::default_grpc(),
+            ServerQueryOptions::default_grpc(),
             pipeline,
             None::<GivenRowsSimple>,
             query_str,

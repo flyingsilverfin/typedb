@@ -15,7 +15,7 @@ use axum::{
 use concurrency::{IntervalTaskParameters, TokioTaskSpawner};
 use diagnostics::metrics::ActionKind;
 use http::StatusCode;
-use options::{QueryOptions, TransactionOptions};
+use options::{ServerQueryOptions, TransactionOptions};
 use resource::constants::common::SECONDS_IN_MINUTE;
 use system::concepts::{Credential, User};
 use tokio::{

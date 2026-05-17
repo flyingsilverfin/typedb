@@ -28,14 +28,14 @@ impl Default for TransactionOptions {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct QueryOptions {
+pub struct ServerQueryOptions {
     pub include_instance_types: bool,
     pub answer_count_limit: Option<usize>,
     pub prefetch_size: usize,
     pub include_query_structure: bool,
 }
 
-impl QueryOptions {
+impl ServerQueryOptions {
     pub fn default_grpc() -> Self {
         Self {
             include_instance_types: DEFAULT_INCLUDE_INSTANCE_TYPES,
