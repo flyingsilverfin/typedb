@@ -34,6 +34,7 @@ use executor::{
 };
 use function::function_manager::FunctionManager;
 use lending_iterator::LendingIterator;
+use options::QueryOptions;
 use query::{query_cache::QueryCache, query_manager::QueryManager};
 use resource::profile::{CommitProfile, PatternProfile, QueryProfile, StepProfile, SubstepProfile};
 use storage::{MVCCStorage, durability_client::WALClient, snapshot::CommittableSnapshot};
@@ -76,7 +77,15 @@ fn setup_schema(schema: &str) -> Context {
     let mut snapshot = storage.clone().open_snapshot_schema();
     let define = typeql::parse_query(schema).unwrap().into_structure().into_schema();
     query_manager
-        .execute_schema(&mut snapshot, &type_manager, &thing_manager, &function_manager, define, schema)
+        .execute_schema(
+            &mut snapshot,
+            &type_manager,
+            &thing_manager,
+            &function_manager,
+            define,
+            schema,
+            QueryOptions::default(),
+        )
         .unwrap();
     snapshot.commit(&mut CommitProfile::DISABLED).unwrap();
 
@@ -108,6 +117,7 @@ fn run_write(context: &Context, query_str: &str) {
             &context.function_manager,
             &query,
             query_str,
+            QueryOptions::default(),
         )
         .unwrap();
     let (iterator, ExecutionContext { snapshot, .. }) =
@@ -130,7 +140,7 @@ fn run_read(context: &Context, query_str: &str) -> (usize, Arc<QueryProfile>) {
             &context.function_manager,
             &query,
             query_str,
-            false,
+            QueryOptions::default(),
         )
         .unwrap();
     let (iterator, ExecutionContext { profile, .. }) =

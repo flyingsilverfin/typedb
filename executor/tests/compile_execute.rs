@@ -34,6 +34,7 @@ use ir::{
 };
 use itertools::Itertools;
 use lending_iterator::LendingIterator;
+use options::QueryOptions;
 use query::query_manager::QueryManager;
 use resource::profile::{CommitProfile, QueryProfile};
 use storage::{
@@ -66,7 +67,15 @@ fn setup(
     let mut snapshot = storage.clone().open_snapshot_schema();
     let define = typeql::parse_query(schema).unwrap().into_structure().into_schema();
     query_manager
-        .execute_schema(&mut snapshot, &type_manager, &thing_manager, &function_manager, define, schema)
+        .execute_schema(
+            &mut snapshot,
+            &type_manager,
+            &thing_manager,
+            &function_manager,
+            define,
+            schema,
+            QueryOptions::default(),
+        )
         .unwrap();
     snapshot.commit(&mut CommitProfile::DISABLED).unwrap();
 
@@ -80,6 +89,7 @@ fn setup(
             &FunctionManager::default(),
             &query,
             data,
+            QueryOptions::default(),
         )
         .unwrap();
     let (mut iterator, ExecutionContext { snapshot, .. }) =

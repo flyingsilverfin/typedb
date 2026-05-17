@@ -27,6 +27,17 @@ impl Default for TransactionOptions {
     }
 }
 
+/// Engine-internal options consumed by `QueryManager` when executing schema, read, or
+/// write queries. Distinct from `ServerQueryOptions` (which carries protocol-facing
+/// concerns like prefetch size and instance-type inclusion).
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+pub struct QueryOptions {
+    /// Force enable the runtime `QueryProfile` even when `tracing` is not at TRACE level.
+    /// Used by tests/benchmarks that need to inspect step-level profile data; production
+    /// callers leave this `false` and rely on the `tracing::enabled!(Level::TRACE)` gate.
+    pub force_query_profile: bool,
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ServerQueryOptions {
     pub include_instance_types: bool,

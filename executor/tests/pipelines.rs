@@ -17,6 +17,7 @@ use executor::{
 };
 use function::function_manager::FunctionManager;
 use lending_iterator::LendingIterator;
+use options::QueryOptions;
 use query::{query_cache::QueryCache, query_manager::QueryManager};
 use resource::profile::{CommitProfile, StorageCounters};
 use storage::{MVCCStorage, durability_client::WALClient, snapshot::CommittableSnapshot};
@@ -54,7 +55,15 @@ fn setup_common() -> Context {
     let mut snapshot = storage.clone().open_snapshot_schema();
     let define = typeql::parse_query(schema).unwrap().into_structure().into_schema();
     query_manager
-        .execute_schema(&mut snapshot, &type_manager, &thing_manager, &function_manager, define, schema)
+        .execute_schema(
+            &mut snapshot,
+            &type_manager,
+            &thing_manager,
+            &function_manager,
+            define,
+            schema,
+            QueryOptions::default(),
+        )
         .unwrap();
     snapshot.commit(&mut CommitProfile::DISABLED).unwrap();
 
@@ -79,6 +88,7 @@ fn test_insert() {
             &context.function_manager,
             &query,
             query_str,
+            QueryOptions::default(),
         )
         .unwrap();
 
@@ -120,6 +130,7 @@ fn test_insert_insert() {
             &context.function_manager,
             &query,
             query_str,
+            QueryOptions::default(),
         )
         .unwrap();
 
@@ -157,6 +168,7 @@ fn test_match() {
             &context.function_manager,
             &query,
             query_str,
+            QueryOptions::default(),
         )
         .unwrap();
     let (iterator, ExecutionContext { snapshot, .. }) =
@@ -178,7 +190,7 @@ fn test_match() {
             &context.function_manager,
             &match_,
             query,
-            false,
+            QueryOptions::default(),
         )
         .unwrap();
     let (iterator, ExecutionContext { snapshot, .. }) =
@@ -197,7 +209,7 @@ fn test_match() {
             &context.function_manager,
             &match_,
             query,
-            false,
+            QueryOptions::default(),
         )
         .unwrap();
     let (iterator, ExecutionContext { .. }) =
@@ -226,6 +238,7 @@ fn test_match_match() {
             &context.function_manager,
             &query,
             query_str,
+            QueryOptions::default(),
         )
         .unwrap();
     let (iterator, ExecutionContext { snapshot, .. }) =
@@ -250,7 +263,7 @@ fn test_match_match() {
             &context.function_manager,
             &match_,
             query,
-            false,
+            QueryOptions::default(),
         )
         .unwrap();
     let (iterator, ExecutionContext { snapshot, .. }) =
@@ -269,7 +282,7 @@ fn test_match_match() {
             &context.function_manager,
             &match_,
             query,
-            false,
+            QueryOptions::default(),
         )
         .unwrap();
     let (iterator, ExecutionContext { .. }) =
@@ -293,6 +306,7 @@ fn test_match_delete_has() {
             &context.function_manager,
             &insert_query,
             insert_query_str,
+            QueryOptions::default(),
         )
         .unwrap();
     let (mut iterator, ExecutionContext { snapshot, .. }) =
@@ -330,6 +344,7 @@ fn test_match_delete_has() {
             &context.function_manager,
             &delete_query,
             delete_query_str,
+            QueryOptions::default(),
         )
         .unwrap();
 
@@ -372,6 +387,7 @@ fn test_insert_match_insert() {
             &context.function_manager,
             &query,
             query_str,
+            QueryOptions::default(),
         )
         .unwrap();
     let (iterator, ExecutionContext { snapshot, .. }) =
@@ -401,6 +417,7 @@ fn test_insert_match_insert() {
             &context.function_manager,
             &query,
             query_str,
+            QueryOptions::default(),
         )
         .unwrap();
 
@@ -433,6 +450,7 @@ fn test_match_sort() {
             &context.function_manager,
             &insert_query,
             insert_query_str,
+            QueryOptions::default(),
         )
         .unwrap();
     let (mut iterator, ExecutionContext { snapshot, .. }) =
@@ -455,7 +473,7 @@ fn test_match_sort() {
             &context.function_manager,
             &match_,
             query,
-            false,
+            QueryOptions::default(),
         )
         .unwrap();
     let named_outputs = pipeline.rows_positions().unwrap().clone();
@@ -497,6 +515,7 @@ fn test_select() {
             &context.function_manager,
             &insert_query,
             insert_query_str,
+            QueryOptions::default(),
         )
         .unwrap();
     let (mut iterator, ExecutionContext { snapshot, .. }) =
@@ -520,7 +539,7 @@ fn test_select() {
                 &context.function_manager,
                 &match_,
                 query,
-                false,
+                QueryOptions::default(),
             )
             .unwrap();
         let named_outputs = pipeline.rows_positions().unwrap();
@@ -540,7 +559,7 @@ fn test_select() {
                 &context.function_manager,
                 &match_,
                 query,
-                false,
+                QueryOptions::default(),
             )
             .unwrap();
         let named_outputs = pipeline.rows_positions().unwrap();
@@ -566,6 +585,7 @@ fn test_require() {
             &context.function_manager,
             &insert_query,
             insert_query_str,
+            QueryOptions::default(),
         )
         .unwrap();
     let (mut iterator, ExecutionContext { snapshot, .. }) =
@@ -589,7 +609,7 @@ fn test_require() {
                 &context.function_manager,
                 &match_,
                 query,
-                false,
+                QueryOptions::default(),
             )
             .unwrap();
         let named_outputs = pipeline.rows_positions().unwrap();

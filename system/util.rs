@@ -132,6 +132,7 @@ pub mod query_util {
         pipeline::stage::{ExecutionContext, StageIterator},
     };
     use function::function_manager::FunctionManager;
+    use options::QueryOptions;
     use query::{error::QueryError, query_manager::QueryManager};
     use storage::{durability_client::WALClient, snapshot::WriteSnapshot};
     use typeql::query::Pipeline;
@@ -150,7 +151,7 @@ pub mod query_util {
             &tx.function_manager,
             pipeline,
             source_query,
-            false,
+            QueryOptions::default(),
         ) {
             Ok(pipeline) => pipeline,
             Err(err) => return (tx, Err(err)),
@@ -199,6 +200,7 @@ pub mod query_util {
             function_manager,
             pipeline,
             source_query,
+            QueryOptions::default(),
         ) {
             Ok(pipeline) => pipeline,
             Err((snapshot, err)) => return (Err(err), Arc::new(snapshot)),

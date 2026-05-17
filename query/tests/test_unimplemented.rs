@@ -19,6 +19,7 @@ use function::function_manager::FunctionManager;
 use ir::RepresentationError;
 use itertools::Either;
 use lending_iterator::LendingIterator;
+use options::QueryOptions;
 use query::{error::QueryError, query_cache::QueryCache, query_manager::QueryManager};
 use resource::profile::CommitProfile;
 use storage::{MVCCStorage, durability_client::WALClient, snapshot::CommittableSnapshot};
@@ -46,7 +47,15 @@ fn setup_common(schema: &str) -> Context {
     let mut snapshot = storage.clone().open_snapshot_schema();
     let define = typeql::parse_query(schema).unwrap().into_structure().into_schema();
     query_manager
-        .execute_schema(&mut snapshot, &type_manager, &thing_manager, &function_manager, define, schema)
+        .execute_schema(
+            &mut snapshot,
+            &type_manager,
+            &thing_manager,
+            &function_manager,
+            define,
+            schema,
+            QueryOptions::default(),
+        )
         .unwrap();
     snapshot.commit(&mut CommitProfile::DISABLED).unwrap();
 
@@ -74,7 +83,7 @@ fn run_read_query(
             &context.function_manager,
             &match_,
             query,
-            false,
+            QueryOptions::default(),
         )
         .map_err(|query_error| Either::Left(query_error))?;
     let rows_positions = pipeline.rows_positions().unwrap().clone();
@@ -101,6 +110,7 @@ fn run_write_query(
             &context.function_manager,
             &query_as_pipeline,
             query,
+            QueryOptions::default(),
         )
         .unwrap();
     let rows_positions = pipeline.rows_positions().unwrap().clone();

@@ -41,6 +41,7 @@ use executor::{
     pipeline::stage::{ExecutionContext, StageIterator},
 };
 use function::function_manager::FunctionManager;
+use options::QueryOptions;
 use query::{query_cache::QueryCache, query_manager::QueryManager};
 use resource::profile::{CommitProfile, PatternProfile, QueryProfile, StepProfile, SubstepProfile};
 use storage::{MVCCStorage, durability_client::WALClient, snapshot::CommittableSnapshot};
@@ -108,6 +109,7 @@ fn define_schema(context: &mut Context, query: &str) {
             &context.function_manager,
             schema_query,
             query,
+            QueryOptions::default(),
         )
         .unwrap();
     snapshot.commit(&mut CommitProfile::DISABLED).unwrap();
@@ -127,6 +129,7 @@ fn commit_writes(context: &mut Context, queries: &[String]) {
                 &context.function_manager,
                 &parsed_query,
                 query,
+                QueryOptions::default(),
             )
             .unwrap();
         // `into_rows_iterator` executes eagerly for write pipelines: every write stage
@@ -163,7 +166,7 @@ fn execute_read(context: &Context, query: &str) -> (usize, Arc<QueryProfile>) {
             // REVIEWER: `executor/tests/pipeline_planner_repro.rs::run_read` still
             // passes `false` here — its `worst_advances_per_row` assertions are
             // vacuous under libtest parallel execution. Worth fixing in the same PR.
-            true,
+            QueryOptions { force_query_profile: true },
         )
         .unwrap();
     let (iterator, ExecutionContext { profile, .. }) =

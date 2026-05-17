@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use encoding::graph::definition::definition_key_generator::DefinitionKeyGenerator;
 use function::function_manager::FunctionManager;
+use options::QueryOptions;
 use query::{error::QueryError, query_manager::QueryManager};
 use resource::{constants::query::MAX_PIPELINE_STAGES, profile::CommitProfile};
 use storage::snapshot::CommittableSnapshot;
@@ -41,7 +42,15 @@ fn setup() -> (
     let mut snapshot = storage.clone().open_snapshot_schema();
     let schema_query = typeql::parse_query(schema).unwrap().into_structure().into_schema();
     query_manager
-        .execute_schema(&mut snapshot, &type_manager, &thing_manager, &function_manager, schema_query, schema)
+        .execute_schema(
+            &mut snapshot,
+            &type_manager,
+            &thing_manager,
+            &function_manager,
+            schema_query,
+            schema,
+            QueryOptions::default(),
+        )
         .unwrap();
     snapshot.commit(&mut CommitProfile::DISABLED).unwrap();
 
@@ -65,7 +74,7 @@ fn pipeline_at_limit_is_accepted() {
         &function_manager,
         &pipeline,
         &query_str,
-        false,
+        QueryOptions::default(),
     );
 
     assert!(result.is_ok());
@@ -88,7 +97,7 @@ fn pipeline_over_limit_is_rejected() {
         &function_manager,
         &pipeline,
         &query_str,
-        false,
+        QueryOptions::default(),
     );
     let err = match result {
         Ok(_) => panic!("query with too many stages should fail"),

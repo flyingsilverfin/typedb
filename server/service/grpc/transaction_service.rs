@@ -30,7 +30,7 @@ use executor::{
 use ir::pipeline::ParameterRegistry;
 use itertools::{Either, Itertools};
 use lending_iterator::LendingIterator;
-use options::ServerQueryOptions;
+use options::{QueryOptions, ServerQueryOptions};
 use query::error::QueryError;
 use resource::profile::{EncodingProfile, QueryProfile, StorageCounters};
 use storage::snapshot::ReadableSnapshot;
@@ -1192,7 +1192,7 @@ impl TransactionService {
                     &function_manager,
                     &pipeline,
                     &source_query,
-                    false,
+                    QueryOptions::default(),
                 );
                 let pipeline = unwrap_or_execute_and_return!(pipeline, |err| {
                     Self::submit_response_sync(&sender, StreamQueryResponse::done_err(err));

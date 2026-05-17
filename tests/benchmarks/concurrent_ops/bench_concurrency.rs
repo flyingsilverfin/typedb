@@ -24,7 +24,7 @@ use database::{
     transaction::{CommitIntent, TransactionRead, TransactionSchema, TransactionWrite},
 };
 use executor::{ExecutionInterrupt, pipeline::stage::StageIterator};
-use options::{ServerQueryOptions, TransactionOptions};
+use options::{QueryOptions, ServerQueryOptions, TransactionOptions};
 use rand_core::RngCore;
 use storage::durability_client::WALClient;
 use test_utils::{TempDir, create_tmp_storage_dir};
@@ -305,7 +305,7 @@ fn execute_read_query(database: &Arc<Database<WALClient>>, query_str: &str) {
             function_manager,
             &query,
             query_str,
-            false,
+            QueryOptions::default(),
         )
         .unwrap();
     let (rows, _context) = pipeline.into_rows_iterator(ExecutionInterrupt::new_uninterruptible()).unwrap();

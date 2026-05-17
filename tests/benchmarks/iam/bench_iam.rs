@@ -12,7 +12,7 @@ use database::{
     transaction::{CommitIntent, TransactionRead, TransactionSchema, TransactionWrite},
 };
 use executor::{ExecutionInterrupt, batch::Batch, pipeline::stage::StageIterator};
-use options::TransactionOptions;
+use options::{QueryOptions, TransactionOptions};
 use storage::durability_client::WALClient;
 use test_utils::create_tmp_storage_dir;
 
@@ -49,6 +49,7 @@ fn load_schema_tql(database: Arc<Database<WALClient>>, schema_tql: &Path) {
             &function_manager,
             schema_query,
             &schema_str,
+            QueryOptions::default(),
         )
         .unwrap();
     let tx = TransactionSchema::from_parts(
@@ -90,6 +91,7 @@ fn load_data_tql(database: Arc<Database<WALClient>>, data_tql: &Path) {
             &function_manager,
             &data_query,
             &data_str,
+            QueryOptions::default(),
         )
         .unwrap();
     let (_output, context) = write_pipeline.into_rows_iterator(ExecutionInterrupt::new_uninterruptible()).unwrap();
@@ -139,7 +141,7 @@ fn run_query(database: Arc<Database<WALClient>>, query_str: &str) -> Batch {
             function_manager,
             &query,
             query_str,
-            false,
+            QueryOptions::default(),
         )
         .unwrap();
     let (rows, _context) = pipeline.into_rows_iterator(ExecutionInterrupt::new_uninterruptible()).unwrap();

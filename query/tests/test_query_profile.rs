@@ -12,6 +12,7 @@ use executor::ExecutionInterrupt;
 use function::function_manager::FunctionManager;
 use itertools::Itertools;
 use lending_iterator::LendingIterator;
+use options::QueryOptions;
 use query::{query_cache::QueryCache, query_manager::QueryManager};
 use resource::profile::{CommitProfile, PatternProfile, QueryProfile, StageProfile, SubstepProfile};
 use storage::{MVCCStorage, durability_client::WALClient, snapshot::CommittableSnapshot};
@@ -41,7 +42,15 @@ fn define_schema(
     "#;
     let schema_query = typeql::parse_query(query_str).unwrap().into_structure().into_schema();
     query_manager
-        .execute_schema(&mut snapshot, type_manager, thing_manager, function_manager, schema_query, query_str)
+        .execute_schema(
+            &mut snapshot,
+            type_manager,
+            thing_manager,
+            function_manager,
+            schema_query,
+            query_str,
+            QueryOptions::default(),
+        )
         .unwrap();
     snapshot.commit(&mut CommitProfile::DISABLED).unwrap();
 }
@@ -57,7 +66,15 @@ fn insert_data(
     let query_manager = QueryManager::new(Some(Arc::new(QueryCache::new())));
     let query = typeql::parse_query(query_string).unwrap().into_structure().into_pipeline();
     let pipeline = query_manager
-        .prepare_write_pipeline(snapshot, type_manager, thing_manager, function_manager, &query, query_string)
+        .prepare_write_pipeline(
+            snapshot,
+            type_manager,
+            thing_manager,
+            function_manager,
+            &query,
+            query_string,
+            QueryOptions::default(),
+        )
         .unwrap();
     let (_iterator, context) = pipeline.into_rows_iterator(ExecutionInterrupt::new_uninterruptible()).unwrap();
     let snapshot = Arc::into_inner(context.snapshot).unwrap();
@@ -172,7 +189,15 @@ fn query_profile_tree_structure() {
     let query = typeql::parse_query(query_str).unwrap().into_structure().into_pipeline();
     let snapshot = Arc::new(storage.clone().open_snapshot_read());
     let pipeline = QueryManager::new(Some(Arc::new(QueryCache::new())))
-        .prepare_read_pipeline(snapshot, &type_manager, thing_manager.clone(), &function_manager, &query, query_str, false)
+        .prepare_read_pipeline(
+            snapshot,
+            &type_manager,
+            thing_manager.clone(),
+            &function_manager,
+            &query,
+            query_str,
+            QueryOptions::default(),
+        )
         .unwrap();
 
     let (iterator, context) = pipeline.into_rows_iterator(ExecutionInterrupt::new_uninterruptible()).unwrap();

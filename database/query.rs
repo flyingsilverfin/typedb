@@ -16,7 +16,7 @@ use executor::{
 use function::function_manager::FunctionManager;
 use ir::pipeline::ParameterRegistry;
 use itertools::{Either, Itertools};
-use options::ServerQueryOptions;
+use options::{QueryOptions, ServerQueryOptions};
 use query::{error::QueryError, query_manager::QueryManager};
 use storage::{durability_client::WALClient, snapshot::WritableSnapshot};
 use tracing::{Level, event};
@@ -64,6 +64,7 @@ pub fn execute_schema_query(
                 &function_manager,
                 query,
                 &source_query,
+                QueryOptions::default(),
             )
         }
     )
@@ -176,6 +177,7 @@ pub(crate) fn execute_write_query_in<Snapshot: WritableSnapshot + 'static>(
         function_manager,
         pipeline,
         source_query,
+        QueryOptions::default(),
     );
     let pipeline = match result {
         Ok(pipeline) => pipeline,
