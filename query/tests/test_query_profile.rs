@@ -172,7 +172,7 @@ fn query_profile_tree_structure() {
     let query = typeql::parse_query(query_str).unwrap().into_structure().into_pipeline();
     let snapshot = Arc::new(storage.clone().open_snapshot_read());
     let pipeline = QueryManager::new(Some(Arc::new(QueryCache::new())))
-        .prepare_read_pipeline(snapshot, &type_manager, thing_manager.clone(), &function_manager, &query, query_str)
+        .prepare_read_pipeline(snapshot, &type_manager, thing_manager.clone(), &function_manager, &query, query_str, false)
         .unwrap();
 
     let (iterator, context) = pipeline.into_rows_iterator(ExecutionInterrupt::new_uninterruptible()).unwrap();

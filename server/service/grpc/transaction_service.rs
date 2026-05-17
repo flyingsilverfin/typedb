@@ -1192,6 +1192,7 @@ impl TransactionService {
                     &function_manager,
                     &pipeline,
                     &source_query,
+                    false,
                 );
                 let pipeline = unwrap_or_execute_and_return!(pipeline, |err| {
                     Self::submit_response_sync(&sender, StreamQueryResponse::done_err(err));

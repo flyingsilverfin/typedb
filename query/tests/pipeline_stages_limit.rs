@@ -65,6 +65,7 @@ fn pipeline_at_limit_is_accepted() {
         &function_manager,
         &pipeline,
         &query_str,
+        false,
     );
 
     assert!(result.is_ok());
@@ -87,6 +88,7 @@ fn pipeline_over_limit_is_rejected() {
         &function_manager,
         &pipeline,
         &query_str,
+        false,
     );
     let err = match result {
         Ok(_) => panic!("query with too many stages should fail"),

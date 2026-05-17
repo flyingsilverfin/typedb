@@ -178,6 +178,7 @@ fn test_match() {
             &context.function_manager,
             &match_,
             query,
+            false,
         )
         .unwrap();
     let (iterator, ExecutionContext { snapshot, .. }) =
@@ -196,6 +197,7 @@ fn test_match() {
             &context.function_manager,
             &match_,
             query,
+            false,
         )
         .unwrap();
     let (iterator, ExecutionContext { .. }) =
@@ -248,6 +250,7 @@ fn test_match_match() {
             &context.function_manager,
             &match_,
             query,
+            false,
         )
         .unwrap();
     let (iterator, ExecutionContext { snapshot, .. }) =
@@ -266,6 +269,7 @@ fn test_match_match() {
             &context.function_manager,
             &match_,
             query,
+            false,
         )
         .unwrap();
     let (iterator, ExecutionContext { .. }) =
@@ -451,6 +455,7 @@ fn test_match_sort() {
             &context.function_manager,
             &match_,
             query,
+            false,
         )
         .unwrap();
     let named_outputs = pipeline.rows_positions().unwrap().clone();
@@ -515,6 +520,7 @@ fn test_select() {
                 &context.function_manager,
                 &match_,
                 query,
+                false,
             )
             .unwrap();
         let named_outputs = pipeline.rows_positions().unwrap();
@@ -534,6 +540,7 @@ fn test_select() {
                 &context.function_manager,
                 &match_,
                 query,
+                false,
             )
             .unwrap();
         let named_outputs = pipeline.rows_positions().unwrap();
@@ -582,6 +589,7 @@ fn test_require() {
                 &context.function_manager,
                 &match_,
                 query,
+                false,
             )
             .unwrap();
         let named_outputs = pipeline.rows_positions().unwrap();

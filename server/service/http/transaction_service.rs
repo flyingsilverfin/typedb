@@ -969,6 +969,7 @@ impl TransactionService {
                     &function_manager,
                     &pipeline,
                     &source_query,
+                    false,
                 );
                 let pipeline = match pipeline_result {
                     Ok(pipeline) => pipeline,

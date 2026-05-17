@@ -150,6 +150,7 @@ pub mod query_util {
             &tx.function_manager,
             pipeline,
             source_query,
+            false,
         ) {
             Ok(pipeline) => pipeline,
             Err(err) => return (tx, Err(err)),

@@ -126,6 +126,7 @@ fn run_read_query(
             &context.function_manager,
             &match_,
             query,
+            false,
         )
         .unwrap();
     let rows_positions = pipeline.rows_positions().unwrap().clone();

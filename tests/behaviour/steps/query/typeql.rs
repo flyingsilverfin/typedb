@@ -80,6 +80,7 @@ fn execute_read_query(
             &tx.function_manager,
             &query.into_structure().into_pipeline(),
             source_query,
+            false,
         )?;
         if pipeline.has_fetch() {
             match pipeline.into_documents_iterator(ExecutionInterrupt::new_uninterruptible()) {

@@ -74,6 +74,7 @@ fn run_read_query(
             &context.function_manager,
             &match_,
             query,
+            false,
         )
         .map_err(|query_error| Either::Left(query_error))?;
     let rows_positions = pipeline.rows_positions().unwrap().clone();

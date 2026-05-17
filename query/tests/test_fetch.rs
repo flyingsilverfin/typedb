@@ -128,6 +128,7 @@ fetch {
             &function_manager,
             &pipeline,
             query_str,
+            false,
         )
         .unwrap();
 
