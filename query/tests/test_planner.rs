@@ -127,7 +127,7 @@ fn commit_writes(context: &mut Context, queries: &[String]) {
                 QueryOptions::default(),
             )
             .unwrap();
-        // `into_rows_iterator` executes eagerly
+        // into_rows_iterator executes eagerly
         let (_iterator, exec_context) = pipeline.into_rows_iterator(ExecutionInterrupt::new_uninterruptible()).unwrap();
         snapshot = Arc::into_inner(exec_context.snapshot).unwrap();
     }
@@ -135,11 +135,6 @@ fn commit_writes(context: &mut Context, queries: &[String]) {
     context.refresh();
 }
 
-/// Run a read pipeline to completion and return its output row count plus its
-/// `QueryProfile` for assertions on planner choices. We always return the profile
-/// (rather than the un-executed prepared pipeline) because every existing test caller
-/// wants to inspect runtime counters, and we return the row count because most variants
-/// want to assert it as a correctness check independent of the plan shape.
 fn compile_read(context: &Context, query: &str) -> Pipeline<ReadSnapshot<WALClient>, ReadPipelineStage<ReadSnapshot<WALClient>>> {
     let snapshot = Arc::new(context.storage.clone().open_snapshot_read());
     let parsed_query = typeql::parse_query(query).unwrap().into_structure().into_pipeline();
@@ -152,13 +147,6 @@ fn compile_read(context: &Context, query: &str) -> Pipeline<ReadSnapshot<WALClie
             &context.function_manager,
             &parsed_query,
             query,
-            // We force the profile on so step counters are populated regardless of
-            // whether the test's calling thread happens to have the trace subscriber
-            // installed — `init_logging()` uses a thread-local `DefaultGuard`, which
-            // libtest's parallel runner does not propagate to worker threads.
-            // REVIEWER: `executor/tests/pipeline_planner_repro.rs::run_read` still
-            // passes `false` here — its `worst_advances_per_row` assertions are
-            // vacuous under libtest parallel execution. Worth fixing in the same PR.
             QueryOptions { force_query_profile: true },
         )
         .unwrap();
@@ -173,17 +161,6 @@ fn execute_read(pipeline: Pipeline<ReadSnapshot<WALClient>, ReadPipelineStage<Re
 }
 
 // --- DataSpec: declarative test-data builder -------------------------------------------------
-//
-// `DataSpec` is a small DSL for populating a freshly-defined schema with controllable
-// cardinalities. The shape mirrors how planner tests want to reason about data:
-// "this many entities of type X, each with a unique key; that many `has` edges
-// connecting owners of type Y to attributes of type Z with values from generator g".
-//
-// Implementation strategy: build one `insert` query per InstanceSpec, and one
-// `match $o by key; insert $o has attr value;` per HasSpec edge, then hand the
-// batch to `commit_writes`. We track owner counts per type so HasSpec can
-// distribute edges round-robin, and look up specific owners by their key value
-// (which is why HasSpec owner types must have `key: Some(_)`).
 
 struct DataSpec {
     instances: Vec<InstanceSpec>,
@@ -191,62 +168,39 @@ struct DataSpec {
 }
 
 struct InstanceSpec {
-    /// Type label of the entity to insert.
     type_: &'static str,
-    /// Number of instances to insert.
     count: usize,
-    /// If `Some(label)`, also give each instance a `has` edge to a unique attribute
-    /// value of type `label`. Values are integers `0..count`. `label` must be an
-    /// integer-valued attribute type owned by `type_` (typically declared `@key`).
+    /// Optionally each instance a `has` edge to a key attribute using integers `0..count`.
     key: Option<&'static str>,
 }
 
-/// Generator for `HasSpec` attribute values, boxed so call sites can capture state
-/// (offsets, moduli, etc.) without forcing every variant into a fresh top-level fn.
+// NOTE: only integer right now
 type AttributeGenerator = Box<dyn Fn(usize) -> i64>;
 
-/// Each edge index gets a unique value (`0, 1, 2, ...`). Use when you want one
-/// distinct attribute value per edge — typical "unique key per row" setup.
-fn unique() -> AttributeGenerator {
+fn sequential() -> AttributeGenerator {
     Box::new(|i| i as i64)
 }
 
-/// Values cycle through `0..modulus`. Use when the same attribute value should be
-/// shared by `count_total / modulus` owners (fan-out / many-to-many setups).
 fn cyclic(modulus: usize) -> AttributeGenerator {
     Box::new(move |i| (i % modulus) as i64)
 }
 
-/// Unique values shifted by `start`. Use to build value domains that don't overlap
-/// between two `HasSpec`s (disjoint-domain setups).
 fn offset_unique(start: i64) -> AttributeGenerator {
     Box::new(move |i| i as i64 + start)
 }
 
 struct HasSpec {
-    /// Owner entity type. Must have been populated by a prior `InstanceSpec`.
     owner_type: &'static str,
-    /// Attribute type for the edge. Must be integer-valued.
     attr_type: &'static str,
-    /// Per-owner cap on the number of edges produced (round-robin across owners).
+    /// Per-owner cap on the number of has's produced
     count_each: usize,
-    /// Total number of `has` edges to produce. Distributed across owners round-robin.
+    /// Total number of `has` edges to produce - given to owners round-robin.
     count_total: usize,
     /// Maps edge index `0..count_total` to an integer attribute value. Repeating values
-    /// across different `HasSpec`s lets you set up join keys.
     attribute_generator: AttributeGenerator,
 }
 
 fn load_data(context: &mut Context, spec: DataSpec) {
-    // REVIEWER: borderline cases not currently guarded — flag for the user.
-    //  - If multiple HasSpecs share the same owner_type, each one's `count_each` cap is
-    //    tracked independently, so the per-owner global edge count can exceed `count_each`.
-    //    Fine for the current single-HasSpec-per-(owner,attr) usage, but rethink before
-    //    adding multi-HasSpec-per-owner tests.
-    //  - An InstanceSpec with `count: 0` doesn't register the owner_type, so a later
-    //    HasSpec referencing it panics with the (misleading) "no prior InstanceSpec
-    //    inserts" message.
-    // Track instance counts per type so HasSpec lookups can iterate over them.
     let mut instance_counts: HashMap<&'static str, usize> = HashMap::new();
     let mut queries: Vec<String> = Vec::new();
 
@@ -331,10 +285,6 @@ fn load_data(context: &mut Context, spec: DataSpec) {
 }
 
 // --- Helpers for inspecting QueryProfile ----------------------------------------------------
-//
-// Mirrors `executor/tests/pipeline_planner_repro.rs::worst_advances_per_row`. Kept local
-// so this test doesn't reach across crates for one helper; if a third caller appears,
-// fold this into a shared test util.
 
 fn worst_advances_per_row(profile: &QueryProfile) -> (f64, u64, u64, String) {
     let mut worst: (f64, u64, u64, String) = (0.0, 0, 0, String::new());
@@ -398,9 +348,6 @@ const KEY_1: &str = "key_1";
 const KEY_2: &str = "key_2";
 const JOIN_ATTR: &str = "join_attr";
 
-/// Define the schema shared by every variant: two owner types each with their own
-/// integer `@key` plus a shared integer `join_attr`. The variants differ only in
-/// how the data is populated, so the schema is centralised.
 fn define_two_owner_schema(context: &mut Context) {
     let schema = format!(
         "define \
@@ -413,7 +360,6 @@ fn define_two_owner_schema(context: &mut Context) {
     define_schema(context, &schema);
 }
 
-/// The canonical two-side has-join query used by every variant.
 fn two_owner_join_query() -> String {
     format!(
         "match \
@@ -426,11 +372,9 @@ fn two_owner_join_query() -> String {
 
 /// Baseline: both sides have identical, non-overlapping-but-full-coverage stats.
 ///
-/// 100 entities per owner type, each owns 1 join_attr with a unique value 0..99.
-/// Both sides: io = 100, scan = 100, no post-filter waste, full join-domain coverage.
-/// `p_unmatched = 0` on both sides → the blend collapses to the legacy expected cost.
-/// Merge intersection is the right plan; this test exists to detect regressions from
-/// the blend penalty leaking into the no-waste, no-gap regime.
+/// Best plan options:
+///   1) Reverse Has iteration sequentially (indexed loop join). Cost ~= <???> seeks + <???> advances
+///   2) Reverse Has intersection (merge join). Cost ~= <???> seeks + <???> advances
 #[test]
 fn has_2_join_balanced() {
     let mut context = setup();
@@ -448,14 +392,14 @@ fn has_2_join_balanced() {
                 attr_type: JOIN_ATTR,
                 count_each: 1,
                 count_total: N,
-                attribute_generator: unique(),
+                attribute_generator: sequential(),
             },
             HasSpec {
                 owner_type: OWNER_2,
                 attr_type: JOIN_ATTR,
                 count_each: 1,
                 count_total: N,
-                attribute_generator: unique(),
+                attribute_generator: sequential(),
             },
         ],
     };
@@ -464,8 +408,7 @@ fn has_2_join_balanced() {
     let pipeline = compile_read(&context, &two_owner_join_query());
 
     // Plan-shape note: both merge and sequential are reasonable for the balanced
-    // case (cost is similar either way). Don't assert plan shape — only correctness
-    // and that the per-step work stays bounded.
+    // case (cost is similar either way).
     let _merges = multi_iter_intersection_steps(&pipeline);
 
     let (rows, profile) = execute_read(pipeline);
@@ -515,14 +458,14 @@ fn has_2_join_subset_with_post_filter() {
                 attr_type: JOIN_ATTR,
                 count_each: 1,
                 count_total: N_LARGE,
-                attribute_generator: unique(),
+                attribute_generator: sequential(),
             },
             HasSpec {
                 owner_type: OWNER_2,
                 attr_type: JOIN_ATTR,
                 count_each: 1,
                 count_total: N_SMALL,
-                attribute_generator: unique(),
+                attribute_generator: sequential(),
             },
         ],
     };
@@ -588,7 +531,7 @@ fn has_2_join_disjoint_domains() {
                 attr_type: JOIN_ATTR,
                 count_each: 1,
                 count_total: N,
-                attribute_generator: unique(),
+                attribute_generator: sequential(),
             },
             HasSpec {
                 owner_type: OWNER_2,
@@ -653,7 +596,7 @@ fn has_2_join_fk_fanout() {
                 attr_type: JOIN_ATTR,
                 count_each: 1,
                 count_total: N_PK,
-                attribute_generator: unique(),
+                attribute_generator: sequential(),
             },
             HasSpec {
                 owner_type: OWNER_2,
@@ -724,14 +667,14 @@ fn has_2_join_selective_against_full() {
                 attr_type: JOIN_ATTR,
                 count_each: 1,
                 count_total: 1,
-                attribute_generator: unique(),
+                attribute_generator: sequential(),
             },
             HasSpec {
                 owner_type: OWNER_2,
                 attr_type: JOIN_ATTR,
                 count_each: 1,
                 count_total: N_BIG,
-                attribute_generator: unique(),
+                attribute_generator: sequential(),
             },
         ],
     };
