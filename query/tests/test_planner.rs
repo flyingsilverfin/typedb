@@ -418,13 +418,16 @@ fn has_2_join_balanced() {
 /// unique values 0..24. Subset coverage on owner_2 side. Storage range covers
 /// 125 entries; owner_2's `Reverse[has]` post-filters to 25 (waste=100). Blend
 /// fires on owner_2 (`p_unmatched = 0.75`) → merge intersection penalised →
-/// planner should pick sequential. Output: 25 rows.
+/// planner picks sequential. Output: 25 rows.
 ///
-/// Best plan options:
-///   1) Reverse Has iteration sequentially (indexed loop join). Cost ~=  26 seeks + 175 advances
-///   2) Reverse Has intersection (merge join).                   Cost ~=   2 seeks + 275 advances
-///   (Merge's worst-case includes a scan-past-the-cluster waste term that
-///    blows total cost much higher — the regime this fix targets.)
+/// Best plan options (measured from query profile):
+///   1) Indexed loop join (drive from owner_2).   Cost = 26 seeks +  75 advances
+///      (1 outer scan + 25 tight bound-from probes, ~1 advance each)
+///   2) Reverse Has intersection (merge join).    Cost ~= 3 seeks + 250 advances
+///      (2 opens + 1 catch-up seek when owner_2 exhausts at value 25)
+///   (Sequential is cheaper by raw arithmetic at this scale; blend adds extra
+///    pessimism that locks in the choice at larger scales where merge's
+///    failed-probe scan past the cluster would explode.)
 #[test]
 fn has_2_join_subset_with_post_filter() {
     let mut context = setup();
