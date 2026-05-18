@@ -923,14 +923,14 @@ fn add_noise_owners(spec: &mut DataSpec, n_noise_types: usize, per_type: usize, 
 /// **Case 1: both sides simultaneously have post-filter waste AND a coverage gap.**
 ///
 /// Setup: 50 entities per query owner with disjoint values (owner_1: 0..49,
-/// owner_2: 50..99), plus 1000 noise-owner entries owning the same join_attr
-/// type with unique values 100..1099.
+/// owner_2: 50..99), plus 5000 noise-owner entries owning the same join_attr
+/// type with unique values 100..5099.
 ///
 /// Stats (predicted):
-/// - Scan for either `Reverse[query has $j]`: 50 + 50 + 1000 = 1100 entries.
-/// - owner_1.io = 50, waste = 1050. owner_2.io = 50, waste = 1050.
-/// - join_size = 1100 distinct values.
-/// - `p_unmatched` for both sides ≈ 0.954 (= 1 − 50/1100).
+/// - Scan for either `Reverse[query has $j]`: 50 + 50 + 5000 = 5100 entries.
+/// - owner_1.io = 50, waste = 5050. owner_2.io = 50, waste = 5050.
+/// - join_size = 5100 distinct values.
+/// - `p_unmatched` for both sides ≈ 0.990 (= 1 − 50/5100).
 /// - Blend fires heavily on **both** sides simultaneously.
 ///
 /// What this tests: per-side decomposition under symmetric pressure. The blend
@@ -942,9 +942,12 @@ fn add_noise_owners(spec: &mut DataSpec, n_noise_types: usize, per_type: usize, 
 /// fails to fire on a symmetric setup.
 #[test]
 fn has_2_join_waste_on_both_sides() {
+    // Tuned to extreme: 10 noise types × 500 each = 5000 noise entries swamp
+    // the 100 query entries → scan = 5100, waste/io = 50× on each query side.
+    // Both new and old models should overwhelmingly reject merge here.
     const N_QUERY: usize = 50;
-    const N_NOISE_TYPES: usize = 5;
-    const N_NOISE_PER_TYPE: usize = 200;
+    const N_NOISE_TYPES: usize = 5;  // bounded by NOISE_TYPES.len() = 5
+    const N_NOISE_PER_TYPE: usize = 1000;
 
     let mut context = setup();
     define_two_owner_with_noise_schema(&mut context, N_NOISE_TYPES);
@@ -989,17 +992,17 @@ fn has_2_join_waste_on_both_sides() {
 
 /// **Case 2: small side has the coverage gap, large side has heavy waste.**
 ///
-/// Setup: owner_1 ("small, gap") has 10 entities with values 0..9; owner_2
-/// ("large, fewer-gap") has 100 entities with values 0..99 (fully covering its
-/// distinct set). 10 noise entries push the domain to 120 distinct values.
+/// Setup: owner_1 ("small, gap") has 5 entities with values 0..4; owner_2
+/// ("large, fewer-gap") has 500 entities with values 0..499 (full coverage of
+/// its distinct set). 200 noise entries push the domain to ~705 distinct values.
 ///
 /// Stats (predicted):
-/// - Scan range: 10 + 100 + 10 = 120.
-/// - owner_1.io = 10, waste = 110. owner_2.io = 100, waste = 20.
-/// - join_size = 120 distinct values.
-/// - `p_unmatched_owner_1 ≈ 0.917` (heavy gap).
-/// - `p_unmatched_owner_2 ≈ 0.167` (small gap).
-/// - owner_1 blended cost: ~102 per output. owner_2 blended: ~4.3.
+/// - Scan range: 5 + 500 + 200 = 705.
+/// - owner_1.io = 5, waste = 700. owner_2.io = 500, waste = 205.
+/// - join_size = 705 distinct values.
+/// - `p_unmatched_owner_1 ≈ 0.993` (extreme gap).
+/// - `p_unmatched_owner_2 ≈ 0.291` (moderate gap).
+/// - owner_1 blend dominates: tiny side, huge waste relative to its io.
 ///
 /// What this tests: per-side blend is asymmetric and the small side's penalty
 /// dominates. A regression that symmetrizes or averages the blend would show as
@@ -1008,10 +1011,15 @@ fn has_2_join_waste_on_both_sides() {
 /// Output: owner_1's 10 values are a subset of owner_2's 100 → 10 rows.
 #[test]
 fn has_2_join_inverted_asymmetry() {
-    const N_SMALL: usize = 10;
-    const N_LARGE: usize = 100;
-    const N_NOISE_TYPES: usize = 1;
-    const N_NOISE_PER_TYPE: usize = 10;
+    // Tuned to extreme: very small side (5 entities) with values in a tiny
+    // sub-range of the very large side (500 entities, values 0..499) plus 200
+    // noise entries extending the domain. Small side's p_unmatched approaches
+    // 1.0 and has the only meaningful waste; large side is essentially full
+    // coverage. Both new and old models should drive from the small side.
+    const N_SMALL: usize = 5;
+    const N_LARGE: usize = 500;
+    const N_NOISE_TYPES: usize = 2;
+    const N_NOISE_PER_TYPE: usize = 100;
 
     let mut context = setup();
     define_two_owner_with_noise_schema(&mut context, N_NOISE_TYPES);
@@ -1057,18 +1065,19 @@ fn has_2_join_inverted_asymmetry() {
 
 /// **Case 3: one side's `io > join_size` clamp engages; the other side doesn't.**
 ///
-/// Setup: owner_1 ("dense", clamps) has 200 entities cyclic over values 0..9
-/// (so 200 has-edges but only 10 distinct values on this side); owner_2
-/// ("sparse, gap") has 30 entities each with a unique value 0..29. 100 noise
-/// entries push the domain to 130 distinct values.
+/// Setup: owner_1 ("dense", clamps hard) has 1000 entities cyclic over values
+/// 0..4 (so 1000 has-edges but only 5 distinct values on this side, 200 owners
+/// per value); owner_2 ("sparse, gap") has 50 entities each with a unique value
+/// 0..49. 100 noise entries push the domain to ~155 distinct values.
 ///
 /// Stats (predicted):
-/// - Scan range: 200 + 30 + 100 = 330.
-/// - owner_1.io = 200, waste = 130. owner_2.io = 30, waste = 300.
-/// - join_size = 130 distinct values (10 + 20 unique to owner_2 + 100 noise).
-/// - `p_unmatched_owner_1 = max(0, 1 − 200/130) = 0` (**clamps** — owner_1
-///   densely covers its values).
-/// - `p_unmatched_owner_2 = 1 − 30/130 ≈ 0.77` (**does NOT clamp** — owner_2 has
+/// - Scan range: 1000 + 50 + 100 = 1150.
+/// - owner_1.io = 1000, waste = 150. owner_2.io = 50, waste = 1100.
+/// - join_size = 155 distinct values (5 dense + 45 unique sparse + 100 noise =
+///   150; minus the 5 overlapping = ~150, depending on attribute counting).
+/// - `p_unmatched_owner_1 = max(0, 1 − 1000/155) = 0` (**clamps hard** —
+///   owner_1's io is 6.5× join_size, so it densely covers any subset).
+/// - `p_unmatched_owner_2 = 1 − 50/155 ≈ 0.677` (**does NOT clamp** — owner_2 has
 ///   a real gap).
 ///
 /// What this tests: the `max(0, ...)` clamp on `p_unmatched` activates
@@ -1076,18 +1085,23 @@ fn has_2_join_inverted_asymmetry() {
 /// symmetrically, owner_1 would get penalized (incorrectly) and the planner
 /// might lose a perfectly valid merge plan.
 ///
-/// Output: owner_1's values 0..9 ∩ owner_2's 0..29 = 10 distinct values
-/// matching. owner_1 has 20 entries per value (cyclic), owner_2 has 1 per value.
-/// So 20 × 10 × 1 = 200 rows.
+/// Output: owner_1's values 0..4 ∩ owner_2's 0..49 = 5 distinct matching
+/// values. owner_1 has 200 entries per value (cyclic), owner_2 has 1.
+/// So 200 × 5 × 1 = 1000 rows.
 ///
 /// We do **not** assert plan shape here — merge or sequential are both
 /// reasonable, and which one wins depends on the rest of the cost calculation.
 /// Instead we bound the per-step work to catch a runaway plan.
 #[test]
 fn has_2_join_asymmetric_clamp() {
-    const N_DENSE: usize = 200;
-    const N_SPARSE: usize = 30;
-    const DENSE_DISTINCT: usize = 10;
+    // Tuned to extreme: extreme io_dense / join_size ratio (1000 cyclic over 5
+    // values = 200× io vs distinct). Sparse side has a real gap (50 unique
+    // out of join_size ~155 once noise is included). Clamp should fire hard
+    // on dense, gap blend should fire on sparse. Both models should agree on
+    // rejecting any plan that scans dense's full range per probe.
+    const N_DENSE: usize = 1000;
+    const N_SPARSE: usize = 50;
+    const DENSE_DISTINCT: usize = 5;
     const N_NOISE_TYPES: usize = 1;
     const N_NOISE_PER_TYPE: usize = 100;
 
@@ -1103,16 +1117,16 @@ fn has_2_join_asymmetric_clamp() {
             HasSpec {
                 owner_type: OWNER_1, attr_type: JOIN_ATTR,
                 count_each: 1, count_total: N_DENSE,
-                attribute_generator: cyclic(DENSE_DISTINCT),  // 20 owners per value 0..9
+                attribute_generator: cyclic(DENSE_DISTINCT),  // 200 owners per value 0..4
             },
             HasSpec {
                 owner_type: OWNER_2, attr_type: JOIN_ATTR,
                 count_each: 1, count_total: N_SPARSE,
-                attribute_generator: unique(),  // 0..29
+                attribute_generator: unique(),  // 0..49
             },
         ],
     };
-    add_noise_owners(&mut spec, N_NOISE_TYPES, N_NOISE_PER_TYPE, 30);  // values 30..129
+    add_noise_owners(&mut spec, N_NOISE_TYPES, N_NOISE_PER_TYPE, 50);  // values 50..149
     load_data(&mut context, spec);
 
     let pipeline = compile_read(&context, &two_owner_join_query());
@@ -1122,11 +1136,16 @@ fn has_2_join_asymmetric_clamp() {
     let _merges = multi_iter_intersection_steps(&pipeline);
 
     let (rows, profile) = execute_read(pipeline);
-    // owner_1 has 20 entries per value (cyclic 0..9). owner_2 has 1 entry per
-    // value 0..29. Intersection at values 0..9: 20 * 1 * 10 = 200 rows.
+    // owner_1 has 200 entries per value (cyclic 0..4). owner_2 has 1 entry per
+    // value 0..49. Intersection at values 0..4: 200 * 1 * 5 = 1000 rows.
     let expected_rows = (N_DENSE / DENSE_DISTINCT) * DENSE_DISTINCT;
     assert_eq!(rows, expected_rows, "asymmetric-clamp: cyclic owner_1 × unique owner_2 = N_DENSE rows");
     let (ratio, advances, prof_rows, descr) = worst_advances_per_row(&profile);
+    // Bound: with clamp working, owner_1 is treated as dense (no extra penalty)
+    // and a healthy plan does ~O(1) advances per output row. Allow 30/row to
+    // give headroom for type-check/wrapper-step overhead. A regression that
+    // removes the clamp would force the planner into a very different shape
+    // and likely blow past this.
     assert!(
         ratio < 30.0,
         "asymmetric-clamp: worst step should remain bounded (< 30 advances/row); got {ratio:.2} ({advances}/{prof_rows}). step: {descr}",
