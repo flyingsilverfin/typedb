@@ -1285,3 +1285,128 @@ fn has_2_join_fk_pushed_to_merge() {
         "fk_pushed_to_merge: worst step should remain bounded (< 30 advances/row); got {ratio:.2}. step: {descr}",
     );
 }
+
+// --- Sweep helpers / probes -------------------------------------------------------------------
+
+/// Build, populate, plan, execute a single fk_fanout scenario; print one line of summary.
+/// Used by the breakpoint-sweep tests to record what the planner picks at each scale.
+fn probe_fk_at_scale(label: &str, n_pk: usize, n_fk: usize) -> (usize, usize, f64) {
+    let mut context = setup();
+    define_two_owner_schema(&mut context);
+    let data_spec = DataSpec {
+        instances: vec![
+            InstanceSpec { type_: OWNER_1, count: n_pk, key: Some(KEY_1) },
+            InstanceSpec { type_: OWNER_2, count: n_fk, key: Some(KEY_2) },
+        ],
+        has: vec![
+            HasSpec {
+                owner_type: OWNER_1, attr_type: JOIN_ATTR,
+                count_each: 1, count_total: n_pk,
+                attribute_generator: unique(),
+            },
+            HasSpec {
+                owner_type: OWNER_2, attr_type: JOIN_ATTR,
+                count_each: 1, count_total: n_fk,
+                attribute_generator: cyclic(n_pk),  // fan FK over PK values
+            },
+        ],
+    };
+    load_data(&mut context, data_spec);
+
+    let pipeline = compile_read(&context, &two_owner_join_query());
+    let merge_count = multi_iter_intersection_steps(&pipeline).len();
+    let (rows, profile) = execute_read(pipeline);
+    let (ratio, _, _, _) = worst_advances_per_row(&profile);
+    eprintln!(
+        "  [{label}] pk={n_pk:>4} fk={n_fk:>5} -> merges={merge_count} rows={rows:>5} worst={ratio:.2}"
+    );
+    (merge_count, rows, ratio)
+}
+
+/// Same shape as `probe_fk_at_scale` but for the balanced N:M cartesian shape.
+fn probe_nm_at_scale(label: &str, n_each: usize, n_distinct: usize) -> (usize, usize, f64) {
+    let mut context = setup();
+    define_two_owner_schema(&mut context);
+    let data_spec = DataSpec {
+        instances: vec![
+            InstanceSpec { type_: OWNER_1, count: n_each, key: Some(KEY_1) },
+            InstanceSpec { type_: OWNER_2, count: n_each, key: Some(KEY_2) },
+        ],
+        has: vec![
+            HasSpec {
+                owner_type: OWNER_1, attr_type: JOIN_ATTR,
+                count_each: 1, count_total: n_each,
+                attribute_generator: cyclic(n_distinct),
+            },
+            HasSpec {
+                owner_type: OWNER_2, attr_type: JOIN_ATTR,
+                count_each: 1, count_total: n_each,
+                attribute_generator: cyclic(n_distinct),
+            },
+        ],
+    };
+    load_data(&mut context, data_spec);
+
+    let pipeline = compile_read(&context, &two_owner_join_query());
+    let merge_count = multi_iter_intersection_steps(&pipeline).len();
+    let (rows, profile) = execute_read(pipeline);
+    let (ratio, _, _, _) = worst_advances_per_row(&profile);
+    eprintln!(
+        "  [{label}] n={n_each:>3} distinct={n_distinct:>2} -> merges={merge_count} rows={rows:>5} worst={ratio:.2}"
+    );
+    (merge_count, rows, ratio)
+}
+
+// --- Sweep tests -----------------------------------------------------------------------------
+
+/// Sweep PK/FK scales in the asymmetric direction. As n_pk shrinks and the
+/// asymmetry grows, classical literature increasingly favours INL drive-from-
+/// the-small-PK over merge. Record at what scale (if any) the planner
+/// actually switches from picking merge to picking sequential/INL.
+///
+/// This is an informational test — it asserts only that every scale runs to
+/// completion with sensible output. The breakpoint (if found) is reported
+/// in the test log for review.
+#[test]
+fn fk_breakpoint_sweep_toward_inl() {
+    eprintln!("fk_breakpoint_sweep_toward_inl: merges>=1 means the planner picked a 2-iter merge");
+    let scales = [(10, 1000), (5, 500), (3, 1000), (2, 1000), (1, 1000), (1, 2000)];
+    let mut results = Vec::new();
+    for (n_pk, n_fk) in scales {
+        let (merges, rows, ratio) = probe_fk_at_scale("sweep_inl", n_pk, n_fk);
+        results.push((n_pk, n_fk, merges, rows, ratio));
+    }
+    // Sanity: every scale produces correct row count and bounded per-step work.
+    for (n_pk, n_fk, _merges, rows, ratio) in &results {
+        assert_eq!(*rows, *n_fk, "fk_sweep pk={n_pk} fk={n_fk}: each FK matches → n_fk rows");
+        assert!(*ratio < 10.0, "fk_sweep pk={n_pk} fk={n_fk}: ratio {ratio:.2} > 10 — runaway plan?");
+    }
+}
+
+/// Sweep N:M scales in the cartesian-rich direction. As n_distinct shrinks
+/// (more owners per value, larger cartesian per match), merge should become
+/// the cheaper plan (cartesian sub-iterator amortizes one inner-side iter
+/// open per matched value, vs INL re-opening per outer row). Record at what
+/// scale the planner switches to merge.
+#[test]
+fn fk_breakpoint_sweep_toward_merge() {
+    eprintln!("fk_breakpoint_sweep_toward_merge: merges>=1 means the planner picked a 2-iter merge");
+    let scales = [
+        (200, 50),  // 4 per value, 800 output
+        (200, 20),  // 10 per value, 2000 output (already in fk_pushed_to_merge — should pick seq)
+        (200, 10),  // 20 per value, 4000 output (already in many_to_many — picks merge)
+        (200, 5),   // 40 per value, 8000 output
+        (200, 2),   // 100 per value, 20000 output
+    ];
+    let mut results = Vec::new();
+    for (n_each, n_distinct) in scales {
+        let (merges, rows, ratio) = probe_nm_at_scale("sweep_merge", n_each, n_distinct);
+        results.push((n_each, n_distinct, merges, rows, ratio));
+    }
+    for (n_each, n_distinct, _, rows, ratio) in &results {
+        let per_value = n_each / n_distinct;
+        let expected = per_value * per_value * n_distinct;
+        assert_eq!(*rows, expected, "nm_sweep n={n_each} distinct={n_distinct}: cartesian → expected rows");
+        assert!(*ratio < 30.0, "nm_sweep n={n_each} distinct={n_distinct}: ratio {ratio:.2} > 30");
+    }
+}
