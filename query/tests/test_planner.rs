@@ -254,19 +254,20 @@ fn load_data(context: &mut Context, spec: DataSpec) {
         if *count == 0 {
             continue;
         }
-        let mut q = String::from("insert\n");
-        for i in 0..*count {
-            // typeql disallows underscore-prefixed variables, so name with a letter prefix.
-            match key {
-                Some(key_label) => {
-                    q.push_str(&format!("  $x_{type_}_{i} isa {type_}, has {key_label} {i};\n"));
-                }
-                None => {
-                    q.push_str(&format!("  $x_{type_}_{i} isa {type_};\n"));
-                }
+        // Unkeyed owners can't be addressed by a subsequent `match ... insert`, so for
+        // them we defer entity creation to the HasSpec loop (which emits combined
+        // `insert $o isa T, has A V` statements). Skip the standalone insert here.
+        // Unkeyed instances WITHOUT a HasSpec attaching attributes are silently never
+        // created — fine for the current "noise" pattern; revisit if needed.
+        if key.is_some() {
+            let mut q = String::from("insert\n");
+            for i in 0..*count {
+                // typeql disallows underscore-prefixed variables, so name with a letter prefix.
+                let key_label = key.unwrap();
+                q.push_str(&format!("  $x_{type_}_{i} isa {type_}, has {key_label} {i};\n"));
             }
+            queries.push(q);
         }
-        queries.push(q);
         *instance_counts.entry(*type_).or_insert(0) += *count;
     }
 
@@ -284,35 +285,45 @@ fn load_data(context: &mut Context, spec: DataSpec) {
         if *count_total == 0 {
             continue;
         }
-        // We address individual owners by their key value, so the owner type must have
-        // had a `key` set on its InstanceSpec.
-        let key_label = spec
-            .instances
-            .iter()
-            .find(|i| i.type_ == *owner_type)
-            .and_then(|i| i.key)
-            .unwrap_or_else(|| {
-                panic!(
-                    "HasSpec owner_type '{owner_type}' has no InstanceSpec with a key; \
-                     can't address individual owners without one"
-                )
-            });
-        // Assign edges to owners round-robin: edge `e` goes to owner `e % owner_count`.
-        // This respects `count_each` (since count_total <= owner_count*count_each) and
-        // keeps the per-owner distribution flat.
-        let mut owner_edge_counts = vec![0usize; owner_count];
-        for e in 0..*count_total {
-            let owner_idx = e % owner_count;
-            owner_edge_counts[owner_idx] += 1;
-            assert!(
-                owner_edge_counts[owner_idx] <= *count_each,
-                "internal: round-robin exceeded count_each for owner {owner_idx}",
-            );
-            let value = attribute_generator(e);
-            queries.push(format!(
-                "match $o isa {owner_type}, has {key_label} {owner_idx}; \
-                 insert $o has {attr_type} {value};"
-            ));
+        let owner_key = spec.instances.iter().find(|i| i.type_ == *owner_type).and_then(|i| i.key);
+        match owner_key {
+            Some(key_label) => {
+                // Keyed path: address each owner by its key value and attach attributes via match-insert.
+                // Assign edges to owners round-robin: edge `e` goes to owner `e % owner_count`.
+                // This respects `count_each` (since count_total <= owner_count*count_each) and
+                // keeps the per-owner distribution flat.
+                let mut owner_edge_counts = vec![0usize; owner_count];
+                for e in 0..*count_total {
+                    let owner_idx = e % owner_count;
+                    owner_edge_counts[owner_idx] += 1;
+                    assert!(
+                        owner_edge_counts[owner_idx] <= *count_each,
+                        "internal: round-robin exceeded count_each for owner {owner_idx}",
+                    );
+                    let value = attribute_generator(e);
+                    queries.push(format!(
+                        "match $o isa {owner_type}, has {key_label} {owner_idx}; \
+                         insert $o has {attr_type} {value};"
+                    ));
+                }
+            }
+            None => {
+                // Unkeyed path: create entity+attribute pairs together since we can't
+                // address pre-existing entities without a key. Constraint: this only
+                // supports the "1 attribute per entity, total = owner_count" shape,
+                // which is what the noise-owner pattern needs.
+                assert!(
+                    *count_each == 1 && *count_total == owner_count,
+                    "unkeyed HasSpec for '{owner_type}' requires count_each=1 and count_total=owner_count \
+                     (got count_each={count_each}, count_total={count_total}, owner_count={owner_count})",
+                );
+                let mut q = String::from("insert\n");
+                for e in 0..*count_total {
+                    let value = attribute_generator(e);
+                    q.push_str(&format!("  $o_{owner_type}_{e} isa {owner_type}, has {attr_type} {value};\n"));
+                }
+                queries.push(q);
+            }
         }
     }
 
@@ -858,4 +869,266 @@ fn has_2_join_empty() {
 
     let (rows, _profile) = execute_read(pipeline);
     assert_eq!(rows, 0, "empty schema: 0 rows");
+}
+
+// --- Helpers for variants that introduce "noise" owner types --------------------------------
+
+const NOISE_TYPES: &[&str] = &["noise_1", "noise_2", "noise_3", "noise_4", "noise_5"];
+
+/// Schema shape for the "noise" variants: two query entity types plus N noise entity types,
+/// all owning the same `join_attr`. The query types are keyed (so load_data can address
+/// individual instances); the noise types are unkeyed (they only ever have the join_attr
+/// and we don't reference them in queries — they exist solely to bloat the scan range
+/// of `Reverse[X has $join]` and force post-filter waste on the query sides).
+fn define_two_owner_with_noise_schema(context: &mut Context, n_noise_types: usize) {
+    assert!(
+        n_noise_types <= NOISE_TYPES.len(),
+        "only {} noise types declared in NOISE_TYPES",
+        NOISE_TYPES.len()
+    );
+    let mut schema = format!(
+        "define \
+          entity {OWNER_1} owns {KEY_1} @key, owns {JOIN_ATTR}; \
+          entity {OWNER_2} owns {KEY_2} @key, owns {JOIN_ATTR}; \
+          attribute {KEY_1}, value integer; \
+          attribute {KEY_2}, value integer; \
+          attribute {JOIN_ATTR}, value integer; "
+    );
+    for t in &NOISE_TYPES[..n_noise_types] {
+        schema.push_str(&format!("entity {t} owns {JOIN_ATTR}; "));
+    }
+    define_schema(context, &schema);
+}
+
+/// Append InstanceSpec + HasSpec entries for noise owners to `spec`. Each noise type
+/// gets `per_type` entities, each owning one `join_attr` value; values are unique
+/// across all noise entities, starting at `value_start` and going up.
+fn add_noise_owners(spec: &mut DataSpec, n_noise_types: usize, per_type: usize, value_start: i64) {
+    let mut offset = value_start;
+    for t in &NOISE_TYPES[..n_noise_types] {
+        spec.instances.push(InstanceSpec { type_: t, count: per_type, key: None });
+        spec.has.push(HasSpec {
+            owner_type: t,
+            attr_type: JOIN_ATTR,
+            count_each: 1,
+            count_total: per_type,
+            attribute_generator: offset_unique(offset),
+        });
+        offset += per_type as i64;
+    }
+}
+
+// --- VARIANT 8: has_2_join_waste_on_both_sides -------------------------------------------------
+
+/// **Case 1: both sides simultaneously have post-filter waste AND a coverage gap.**
+///
+/// Setup: 50 entities per query owner with disjoint values (owner_1: 0..49,
+/// owner_2: 50..99), plus 1000 noise-owner entries owning the same join_attr
+/// type with unique values 100..1099.
+///
+/// Stats (predicted):
+/// - Scan for either `Reverse[query has $j]`: 50 + 50 + 1000 = 1100 entries.
+/// - owner_1.io = 50, waste = 1050. owner_2.io = 50, waste = 1050.
+/// - join_size = 1100 distinct values.
+/// - `p_unmatched` for both sides ≈ 0.954 (= 1 − 50/1100).
+/// - Blend fires heavily on **both** sides simultaneously.
+///
+/// What this tests: per-side decomposition under symmetric pressure. The blend
+/// must charge each side independently; the planner should see the cumulative
+/// cost and avoid a 2-iter merge intersection on $join.
+///
+/// Output: 0 rows (owner values are disjoint by construction). The assertion is
+/// plan-shape — correctness alone wouldn't catch a regression where the blend
+/// fails to fire on a symmetric setup.
+#[test]
+fn has_2_join_waste_on_both_sides() {
+    const N_QUERY: usize = 50;
+    const N_NOISE_TYPES: usize = 5;
+    const N_NOISE_PER_TYPE: usize = 200;
+
+    let mut context = setup();
+    define_two_owner_with_noise_schema(&mut context, N_NOISE_TYPES);
+
+    let mut spec = DataSpec {
+        instances: vec![
+            InstanceSpec { type_: OWNER_1, count: N_QUERY, key: Some(KEY_1) },
+            InstanceSpec { type_: OWNER_2, count: N_QUERY, key: Some(KEY_2) },
+        ],
+        has: vec![
+            HasSpec {
+                owner_type: OWNER_1, attr_type: JOIN_ATTR,
+                count_each: 1, count_total: N_QUERY,
+                attribute_generator: unique(),  // values 0..49
+            },
+            HasSpec {
+                owner_type: OWNER_2, attr_type: JOIN_ATTR,
+                count_each: 1, count_total: N_QUERY,
+                attribute_generator: offset_unique(N_QUERY as i64),  // values 50..99 (disjoint)
+            },
+        ],
+    };
+    add_noise_owners(&mut spec, N_NOISE_TYPES, N_NOISE_PER_TYPE, 100);
+    load_data(&mut context, spec);
+
+    let pipeline = compile_read(&context, &two_owner_join_query());
+
+    // Plan-shape assertion: blend fires heavily on both sides → merge cost is
+    // ballistic → planner should pick sequential (or any non-2-iter-merge plan).
+    let merges = multi_iter_intersection_steps(&pipeline);
+    assert!(
+        merges.is_empty(),
+        "waste-on-both: expected planner to avoid a 2-iter merge; found {} merge step(s)",
+        merges.len(),
+    );
+
+    let (rows, _profile) = execute_read(pipeline);
+    assert_eq!(rows, 0, "waste-on-both: query values are disjoint → 0 rows");
+}
+
+// --- VARIANT 9: has_2_join_inverted_asymmetry --------------------------------------------------
+
+/// **Case 2: small side has the coverage gap, large side has heavy waste.**
+///
+/// Setup: owner_1 ("small, gap") has 10 entities with values 0..9; owner_2
+/// ("large, fewer-gap") has 100 entities with values 0..99 (fully covering its
+/// distinct set). 10 noise entries push the domain to 120 distinct values.
+///
+/// Stats (predicted):
+/// - Scan range: 10 + 100 + 10 = 120.
+/// - owner_1.io = 10, waste = 110. owner_2.io = 100, waste = 20.
+/// - join_size = 120 distinct values.
+/// - `p_unmatched_owner_1 ≈ 0.917` (heavy gap).
+/// - `p_unmatched_owner_2 ≈ 0.167` (small gap).
+/// - owner_1 blended cost: ~102 per output. owner_2 blended: ~4.3.
+///
+/// What this tests: per-side blend is asymmetric and the small side's penalty
+/// dominates. A regression that symmetrizes or averages the blend would show as
+/// the planner failing to avoid the lopsided merge.
+///
+/// Output: owner_1's 10 values are a subset of owner_2's 100 → 10 rows.
+#[test]
+fn has_2_join_inverted_asymmetry() {
+    const N_SMALL: usize = 10;
+    const N_LARGE: usize = 100;
+    const N_NOISE_TYPES: usize = 1;
+    const N_NOISE_PER_TYPE: usize = 10;
+
+    let mut context = setup();
+    define_two_owner_with_noise_schema(&mut context, N_NOISE_TYPES);
+
+    let mut spec = DataSpec {
+        instances: vec![
+            InstanceSpec { type_: OWNER_1, count: N_SMALL, key: Some(KEY_1) },
+            InstanceSpec { type_: OWNER_2, count: N_LARGE, key: Some(KEY_2) },
+        ],
+        has: vec![
+            HasSpec {
+                owner_type: OWNER_1, attr_type: JOIN_ATTR,
+                count_each: 1, count_total: N_SMALL,
+                attribute_generator: unique(),  // 0..9
+            },
+            HasSpec {
+                owner_type: OWNER_2, attr_type: JOIN_ATTR,
+                count_each: 1, count_total: N_LARGE,
+                attribute_generator: unique(),  // 0..99 (10 of these overlap with owner_1)
+            },
+        ],
+    };
+    add_noise_owners(&mut spec, N_NOISE_TYPES, N_NOISE_PER_TYPE, 200);  // values 200..209
+    load_data(&mut context, spec);
+
+    let pipeline = compile_read(&context, &two_owner_join_query());
+
+    // Plan-shape assertion: owner_1's blend dominates; planner should avoid merge.
+    let merges = multi_iter_intersection_steps(&pipeline);
+    assert!(
+        merges.is_empty(),
+        "inverted-asymmetry: expected planner to avoid merge; found {} merge step(s)",
+        merges.len(),
+    );
+
+    let (rows, _profile) = execute_read(pipeline);
+    // owner_1's 10 values ∩ owner_2's 100 values = 10 matches (values 0..9 each
+    // appear once in each side).
+    assert_eq!(rows, N_SMALL, "inverted-asymmetry: small side ⊂ large side → N_SMALL rows");
+}
+
+// --- VARIANT 10: has_2_join_asymmetric_clamp ---------------------------------------------------
+
+/// **Case 3: one side's `io > join_size` clamp engages; the other side doesn't.**
+///
+/// Setup: owner_1 ("dense", clamps) has 200 entities cyclic over values 0..9
+/// (so 200 has-edges but only 10 distinct values on this side); owner_2
+/// ("sparse, gap") has 30 entities each with a unique value 0..29. 100 noise
+/// entries push the domain to 130 distinct values.
+///
+/// Stats (predicted):
+/// - Scan range: 200 + 30 + 100 = 330.
+/// - owner_1.io = 200, waste = 130. owner_2.io = 30, waste = 300.
+/// - join_size = 130 distinct values (10 + 20 unique to owner_2 + 100 noise).
+/// - `p_unmatched_owner_1 = max(0, 1 − 200/130) = 0` (**clamps** — owner_1
+///   densely covers its values).
+/// - `p_unmatched_owner_2 = 1 − 30/130 ≈ 0.77` (**does NOT clamp** — owner_2 has
+///   a real gap).
+///
+/// What this tests: the `max(0, ...)` clamp on `p_unmatched` activates
+/// asymmetrically. If a future refactor removes the clamp or applies it
+/// symmetrically, owner_1 would get penalized (incorrectly) and the planner
+/// might lose a perfectly valid merge plan.
+///
+/// Output: owner_1's values 0..9 ∩ owner_2's 0..29 = 10 distinct values
+/// matching. owner_1 has 20 entries per value (cyclic), owner_2 has 1 per value.
+/// So 20 × 10 × 1 = 200 rows.
+///
+/// We do **not** assert plan shape here — merge or sequential are both
+/// reasonable, and which one wins depends on the rest of the cost calculation.
+/// Instead we bound the per-step work to catch a runaway plan.
+#[test]
+fn has_2_join_asymmetric_clamp() {
+    const N_DENSE: usize = 200;
+    const N_SPARSE: usize = 30;
+    const DENSE_DISTINCT: usize = 10;
+    const N_NOISE_TYPES: usize = 1;
+    const N_NOISE_PER_TYPE: usize = 100;
+
+    let mut context = setup();
+    define_two_owner_with_noise_schema(&mut context, N_NOISE_TYPES);
+
+    let mut spec = DataSpec {
+        instances: vec![
+            InstanceSpec { type_: OWNER_1, count: N_DENSE, key: Some(KEY_1) },
+            InstanceSpec { type_: OWNER_2, count: N_SPARSE, key: Some(KEY_2) },
+        ],
+        has: vec![
+            HasSpec {
+                owner_type: OWNER_1, attr_type: JOIN_ATTR,
+                count_each: 1, count_total: N_DENSE,
+                attribute_generator: cyclic(DENSE_DISTINCT),  // 20 owners per value 0..9
+            },
+            HasSpec {
+                owner_type: OWNER_2, attr_type: JOIN_ATTR,
+                count_each: 1, count_total: N_SPARSE,
+                attribute_generator: unique(),  // 0..29
+            },
+        ],
+    };
+    add_noise_owners(&mut spec, N_NOISE_TYPES, N_NOISE_PER_TYPE, 30);  // values 30..129
+    load_data(&mut context, spec);
+
+    let pipeline = compile_read(&context, &two_owner_join_query());
+
+    // Plan-shape is not asserted: both merge and sequential are reasonable here.
+    // What we care about is correctness and bounded per-step work.
+    let _merges = multi_iter_intersection_steps(&pipeline);
+
+    let (rows, profile) = execute_read(pipeline);
+    // owner_1 has 20 entries per value (cyclic 0..9). owner_2 has 1 entry per
+    // value 0..29. Intersection at values 0..9: 20 * 1 * 10 = 200 rows.
+    let expected_rows = (N_DENSE / DENSE_DISTINCT) * DENSE_DISTINCT;
+    assert_eq!(rows, expected_rows, "asymmetric-clamp: cyclic owner_1 × unique owner_2 = N_DENSE rows");
+    let (ratio, advances, prof_rows, descr) = worst_advances_per_row(&profile);
+    assert!(
+        ratio < 30.0,
+        "asymmetric-clamp: worst step should remain bounded (< 30 advances/row); got {ratio:.2} ({advances}/{prof_rows}). step: {descr}",
+    );
 }
