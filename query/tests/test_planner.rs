@@ -201,25 +201,6 @@ struct HasSpec {
 }
 
 fn load_data(context: &mut Context, spec: DataSpec) {
-    // Pre-validate: every unkeyed InstanceSpec must have a matching HasSpec that
-    // will create its entities (unkeyed entities can't be addressed by a later
-    // `match ... insert`, so we fold their creation into the HasSpec's combined
-    // `insert $o isa T, has A V` statement). If no HasSpec covers an unkeyed
-    // InstanceSpec, the entities would never be created — surface that as a hard
-    // error so the test author isn't surprised by silently-empty data.
-    for InstanceSpec { type_, count, key } in &spec.instances {
-        if *count == 0 || key.is_some() {
-            continue;
-        }
-        let has_matching = spec.has.iter().any(|h| h.owner_type == *type_ && h.count_total > 0);
-        assert!(
-            has_matching,
-            "InstanceSpec for unkeyed type '{type_}' has no matching HasSpec — \
-             entities would never be created. Either add a HasSpec, give the InstanceSpec a key, \
-             or remove the InstanceSpec.",
-        );
-    }
-
     let mut instance_counts: HashMap<&'static str, usize> = HashMap::new();
     let mut queries: Vec<String> = Vec::new();
 
@@ -227,17 +208,19 @@ fn load_data(context: &mut Context, spec: DataSpec) {
         if *count == 0 {
             continue;
         }
-        // Keyed entities go in their own standalone insert here; unkeyed entities
-        // are deferred to the HasSpec loop below, which creates them inline with
-        // their attribute via `insert $o isa T, has A V`.
-        if let Some(key_label) = key {
-            let mut q = String::from("insert\n");
-            for i in 0..*count {
-                // typeql disallows underscore-prefixed variables, so name with a letter prefix.
-                q.push_str(&format!("  $x_{type_}_{i} isa {type_}, has {key_label} {i};\n"));
+        let mut q = String::from("insert\n");
+        for i in 0..*count {
+            // typeql disallows underscore-prefixed variables, so name with a letter prefix.
+            match key {
+                Some(key_label) => {
+                    q.push_str(&format!("  $x_{type_}_{i} isa {type_}, has {key_label} {i};\n"));
+                }
+                None => {
+                    q.push_str(&format!("  $x_{type_}_{i} isa {type_};\n"));
+                }
             }
-            queries.push(q);
         }
+        queries.push(q);
         *instance_counts.entry(*type_).or_insert(0) += *count;
     }
 
@@ -255,45 +238,33 @@ fn load_data(context: &mut Context, spec: DataSpec) {
         if *count_total == 0 {
             continue;
         }
-        let owner_key = spec.instances.iter().find(|i| i.type_ == *owner_type).and_then(|i| i.key);
-        match owner_key {
-            Some(key_label) => {
-                // Keyed path: address each owner by its key value and attach attributes via match-insert.
-                // Assign edges to owners round-robin: edge `e` goes to owner `e % owner_count`.
-                // This respects `count_each` (since count_total <= owner_count*count_each) and
-                // keeps the per-owner distribution flat.
-                let mut owner_edge_counts = vec![0usize; owner_count];
-                for e in 0..*count_total {
-                    let owner_idx = e % owner_count;
-                    owner_edge_counts[owner_idx] += 1;
-                    assert!(
-                        owner_edge_counts[owner_idx] <= *count_each,
-                        "internal: round-robin exceeded count_each for owner {owner_idx}",
-                    );
-                    let value = attribute_generator(e);
-                    queries.push(format!(
-                        "match $o isa {owner_type}, has {key_label} {owner_idx}; \
-                         insert $o has {attr_type} {value};"
-                    ));
-                }
-            }
-            None => {
-                // Unkeyed path: create entity+attribute pairs together since we can't
-                // address pre-existing entities without a key. Constraint: this only
-                // supports the "1 attribute per entity, total = owner_count" shape,
-                // which is what the noise-owner pattern needs.
-                assert!(
-                    *count_each == 1 && *count_total == owner_count,
-                    "unkeyed HasSpec for '{owner_type}' requires count_each=1 and count_total=owner_count \
-                     (got count_each={count_each}, count_total={count_total}, owner_count={owner_count})",
-                );
-                let mut q = String::from("insert\n");
-                for e in 0..*count_total {
-                    let value = attribute_generator(e);
-                    q.push_str(&format!("  $o_{owner_type}_{e} isa {owner_type}, has {attr_type} {value};\n"));
-                }
-                queries.push(q);
-            }
+        // HasSpec needs to address individual owners by key value, so the owner type
+        // must have had a `key` set on its InstanceSpec.
+        let key_label = spec
+            .instances
+            .iter()
+            .find(|i| i.type_ == *owner_type)
+            .and_then(|i| i.key)
+            .unwrap_or_else(|| {
+                panic!(
+                    "HasSpec owner_type '{owner_type}' has no InstanceSpec with a key; \
+                     can't address individual owners without one"
+                )
+            });
+        // Assign edges to owners round-robin: edge `e` goes to owner `e % owner_count`.
+        let mut owner_edge_counts = vec![0usize; owner_count];
+        for e in 0..*count_total {
+            let owner_idx = e % owner_count;
+            owner_edge_counts[owner_idx] += 1;
+            assert!(
+                owner_edge_counts[owner_idx] <= *count_each,
+                "internal: round-robin exceeded count_each for owner {owner_idx}",
+            );
+            let value = attribute_generator(e);
+            queries.push(format!(
+                "match $o isa {owner_type}, has {key_label} {owner_idx}; \
+                 insert $o has {attr_type} {value};"
+            ));
         }
     }
 
@@ -821,12 +792,13 @@ fn has_2_join_empty() {
 // --- Helpers for variants that introduce "noise" owner types --------------------------------
 
 const NOISE_TYPES: &[&str] = &["noise_1", "noise_2", "noise_3", "noise_4", "noise_5"];
+const NOISE_KEY: &str = "noise_id";
 
 /// Schema shape for the "noise" variants: two query entity types plus N noise entity types,
-/// all owning the same `join_attr`. The query types are keyed (so load_data can address
-/// individual instances); the noise types are unkeyed (they only ever have the join_attr
-/// and we don't reference them in queries — they exist solely to bloat the scan range
-/// of `Reverse[X has $join]` and force post-filter waste on the query sides).
+/// all owning the same `join_attr`. The noise types share a `noise_id` key so load_data
+/// can address them via match-insert when attaching attributes. We never query the noise
+/// types directly — they exist solely to bloat the scan range of `Reverse[X has $join]`
+/// and force post-filter waste on the query sides.
 fn define_two_owner_with_noise_schema(context: &mut Context, n_noise_types: usize) {
     assert!(
         n_noise_types <= NOISE_TYPES.len(),
@@ -839,10 +811,11 @@ fn define_two_owner_with_noise_schema(context: &mut Context, n_noise_types: usiz
           entity {OWNER_2} owns {KEY_2} @key, owns {JOIN_ATTR}; \
           attribute {KEY_1}, value integer; \
           attribute {KEY_2}, value integer; \
-          attribute {JOIN_ATTR}, value integer; "
+          attribute {JOIN_ATTR}, value integer; \
+          attribute {NOISE_KEY}, value integer; "
     );
     for t in &NOISE_TYPES[..n_noise_types] {
-        schema.push_str(&format!("entity {t} owns {JOIN_ATTR}; "));
+        schema.push_str(&format!("entity {t} owns {NOISE_KEY} @key, owns {JOIN_ATTR}; "));
     }
     define_schema(context, &schema);
 }
@@ -853,7 +826,7 @@ fn define_two_owner_with_noise_schema(context: &mut Context, n_noise_types: usiz
 fn add_noise_owners(spec: &mut DataSpec, n_noise_types: usize, per_type: usize, value_start: i64) {
     let mut offset = value_start;
     for t in &NOISE_TYPES[..n_noise_types] {
-        spec.instances.push(InstanceSpec { type_: t, count: per_type, key: None });
+        spec.instances.push(InstanceSpec { type_: t, count: per_type, key: Some(NOISE_KEY) });
         spec.has.push(HasSpec {
             owner_type: t,
             attr_type: JOIN_ATTR,
