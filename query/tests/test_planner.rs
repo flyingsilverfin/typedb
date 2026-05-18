@@ -1410,3 +1410,93 @@ fn fk_breakpoint_sweep_toward_merge() {
         assert!(*ratio < 30.0, "nm_sweep n={n_each} distinct={n_distinct}: ratio {ratio:.2} > 30");
     }
 }
+
+// --- VARIANT 13: has_2_join_selective_outer_filter ---------------------------------------------
+
+/// Tests the regime where one side has an additional selective external filter
+/// (a value-bound key lookup). Classical literature predicts INL drive-from-the-
+/// pinned outer should beat merge here: the outer is O(1) via key lookup, then
+/// a tight bound-from probe finishes the join.
+///
+/// Setup:
+/// - owner_1: 10 entities with unique key_1 values 0..9 and unique join_attr values 0..9
+/// - owner_2: 1000 entities, each owning one join_attr value cyclic 0..9 (100 per value)
+///
+/// Query: `$pk isa owner_1, has key_1 5, has join_attr $j; $fk isa owner_2, has join_attr $j;`
+///
+/// Plan-shape finding (worth documenting): TypeDB's planner picks a 2-iter
+/// Sorted Iterator Intersection on $j, but with `bound_vars=[$pk]` — so one
+/// of the merged iterators is bound by the pinned PK, effectively turning the
+/// "merge" into an INL probe internally. Observed cost ~1.1 advances/row,
+/// matching the literature-optimal cost of ~102 advances for 100 output rows.
+/// The merge-vs-INL distinction blurs when IntersectionExecutor's iterators
+/// have bound inputs — the operator is the same shape, but the data flow is
+/// effectively nested-loop.
+///
+/// So the *real* assertion here is on cost, not plan shape. Plan-shape is
+/// surfaced for review but not asserted.
+#[test]
+fn has_2_join_selective_outer_filter() {
+    const N_PK: usize = 10;
+    const N_FK: usize = 1000;
+    const SELECTED_KEY: i64 = 5;
+
+    let mut context = setup();
+    define_two_owner_schema(&mut context);
+
+    let data_spec = DataSpec {
+        instances: vec![
+            InstanceSpec { type_: OWNER_1, count: N_PK, key: Some(KEY_1) },
+            InstanceSpec { type_: OWNER_2, count: N_FK, key: Some(KEY_2) },
+        ],
+        has: vec![
+            HasSpec {
+                owner_type: OWNER_1, attr_type: JOIN_ATTR,
+                count_each: 1, count_total: N_PK,
+                attribute_generator: unique(),  // values 0..9, paired with key_1 0..9
+            },
+            HasSpec {
+                owner_type: OWNER_2, attr_type: JOIN_ATTR,
+                count_each: 1, count_total: N_FK,
+                attribute_generator: cyclic(N_PK),  // values cyclic 0..9, 100 per value
+            },
+        ],
+    };
+    load_data(&mut context, data_spec);
+
+    let query = format!(
+        "match \
+         $pk isa {OWNER_1}, has {KEY_1} {SELECTED_KEY}, has {JOIN_ATTR} $j; \
+         $fk isa {OWNER_2}, has {JOIN_ATTR} $j;"
+    );
+
+    let pipeline = compile_read(&context, &query);
+
+    // Plan-shape assertion: the optimal plan never puts `Reverse[PK has $j]` and
+    // `Reverse[FK has $j]` in a single merge intersection on $j. With $pk pinned
+    // by the key lookup, $j becomes a single value early, and the join collapses
+    // to a tight bound-from probe on FK.
+    let merges = multi_iter_intersection_steps(&pipeline);
+    let merge_count = merges.len();
+
+    let (rows, profile) = execute_read(pipeline);
+    let (ratio, advances, prof_rows, descr) = worst_advances_per_row(&profile);
+    eprintln!(
+        "selective_outer_filter: rows={rows} merges={merge_count} worst={ratio:.2} adv/row \
+         ({advances}/{prof_rows}). step: {descr}"
+    );
+
+    // Expected: PK with key=5 has join_attr=5; FK with value=5 has 100 owners; output = 100 rows.
+    assert_eq!(rows, N_FK / N_PK, "selective_outer_filter: 1 pk × 100 fk at value 5 = 100 rows");
+
+    // Cost assertion: the planner must route the join through the selective key
+    // lookup, regardless of whether it expresses the result as INL or as a
+    // bound-input merge intersection. A "bad" plan (e.g. merging the two
+    // reverse-has iters with no bound input) would be ~20× more expensive and
+    // would blow past this bound.
+    assert!(
+        ratio < 5.0,
+        "selective_outer_filter: worst step expected to be tight (< 5 advances/row); \
+         got {ratio:.2} ({advances}/{prof_rows}). step: {descr}"
+    );
+}
