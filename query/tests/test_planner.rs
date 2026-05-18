@@ -201,6 +201,25 @@ struct HasSpec {
 }
 
 fn load_data(context: &mut Context, spec: DataSpec) {
+    // Pre-validate: every unkeyed InstanceSpec must have a matching HasSpec that
+    // will create its entities (unkeyed entities can't be addressed by a later
+    // `match ... insert`, so we fold their creation into the HasSpec's combined
+    // `insert $o isa T, has A V` statement). If no HasSpec covers an unkeyed
+    // InstanceSpec, the entities would never be created — surface that as a hard
+    // error so the test author isn't surprised by silently-empty data.
+    for InstanceSpec { type_, count, key } in &spec.instances {
+        if *count == 0 || key.is_some() {
+            continue;
+        }
+        let has_matching = spec.has.iter().any(|h| h.owner_type == *type_ && h.count_total > 0);
+        assert!(
+            has_matching,
+            "InstanceSpec for unkeyed type '{type_}' has no matching HasSpec — \
+             entities would never be created. Either add a HasSpec, give the InstanceSpec a key, \
+             or remove the InstanceSpec.",
+        );
+    }
+
     let mut instance_counts: HashMap<&'static str, usize> = HashMap::new();
     let mut queries: Vec<String> = Vec::new();
 
@@ -208,16 +227,13 @@ fn load_data(context: &mut Context, spec: DataSpec) {
         if *count == 0 {
             continue;
         }
-        // Unkeyed owners can't be addressed by a subsequent `match ... insert`, so for
-        // them we defer entity creation to the HasSpec loop (which emits combined
-        // `insert $o isa T, has A V` statements). Skip the standalone insert here.
-        // Unkeyed instances WITHOUT a HasSpec attaching attributes are silently never
-        // created — fine for the current "noise" pattern; revisit if needed.
-        if key.is_some() {
+        // Keyed entities go in their own standalone insert here; unkeyed entities
+        // are deferred to the HasSpec loop below, which creates them inline with
+        // their attribute via `insert $o isa T, has A V`.
+        if let Some(key_label) = key {
             let mut q = String::from("insert\n");
             for i in 0..*count {
                 // typeql disallows underscore-prefixed variables, so name with a letter prefix.
-                let key_label = key.unwrap();
                 q.push_str(&format!("  $x_{type_}_{i} isa {type_}, has {key_label} {i};\n"));
             }
             queries.push(q);
@@ -370,11 +386,13 @@ fn two_owner_join_query() -> String {
 
 // --- VARIANT 1: has_2_join_balanced -----------------------------------------------------------
 
-/// Baseline: both sides have identical, non-overlapping-but-full-coverage stats.
+/// Baseline: 100 entities per owner, each owning one join_attr with unique
+/// values 0..99. Full overlap → 100 output rows. Storage range for either
+/// `Reverse[has join_attr]` covers 200 entries (100 A + 100 B).
 ///
 /// Best plan options:
-///   1) Reverse Has iteration sequentially (indexed loop join). Cost ~= <???> seeks + <???> advances
-///   2) Reverse Has intersection (merge join). Cost ~= <???> seeks + <???> advances
+///   1) Reverse Has iteration sequentially (indexed loop join). Cost ~= 101 seeks + 400 advances
+///   2) Reverse Has intersection (merge join).                   Cost ~=   2 seeks + 500 advances
 #[test]
 fn has_2_join_balanced() {
     let mut context = setup();
@@ -425,21 +443,17 @@ fn has_2_join_balanced() {
 // --- VARIANT 2: has_2_join_subset_with_post_filter --------------------------------------------
 
 /// The bug case — direct test of the `Cost::join` blended-out-cost fix.
+/// owner_1: 100 entities with unique values 0..99; owner_2: 25 entities with
+/// unique values 0..24. Subset coverage on owner_2 side. Storage range covers
+/// 125 entries; owner_2's `Reverse[has]` post-filters to 25 (waste=100). Blend
+/// fires on owner_2 (`p_unmatched = 0.75`) → merge intersection penalised →
+/// planner should pick sequential. Output: 25 rows.
 ///
-/// Setup: owner_1 has 100 entities each with a unique join_attr value (0..99); owner_2
-/// has 25 entities each with a unique join_attr value (0..24). Storage layout puts all
-/// has-edges into the same `Reverse[has]` range keyed by attribute, so iterating
-/// `Reverse[owner_2 has $jv]` unbound visits all 125 has-edges and post-filters down
-/// to the 25 belonging to owner_2 — `scan_size = 125, io_ratio = 25, waste = 100`.
-/// The join domain has 100 distinct values, so `p_unmatched_2 = 1 - 25/100 = 0.75`.
-/// Both conditions for the blend fire → merge intersection is now penalised → the
-/// planner should prefer a sequential plan (e.g. drive from the smaller owner_2 side
-/// and bound-from to owner_1).
-///
-/// Assertion: row count is exact (25); worst-step ratio stays bounded. If the planner
-/// still picks the multi-iter merge, the test prints that for review (we don't fail
-/// on plan shape alone, because the cost model is still being tuned and the goal here
-/// is to surface behaviour, not lock in one specific plan).
+/// Best plan options:
+///   1) Reverse Has iteration sequentially (indexed loop join). Cost ~=  26 seeks + 175 advances
+///   2) Reverse Has intersection (merge join).                   Cost ~=   2 seeks + 275 advances
+///   (Merge's worst-case includes a scan-past-the-cluster waste term that
+///    blows total cost much higher — the regime this fix targets.)
 #[test]
 fn has_2_join_subset_with_post_filter() {
     let mut context = setup();
@@ -501,19 +515,16 @@ fn has_2_join_subset_with_post_filter() {
 
 // --- VARIANT 3: has_2_join_disjoint_domains ---------------------------------------------------
 
-/// Disjoint value domains — both sides have post-filter waste AND a coverage gap of
-/// the join variable, but the merge produces zero rows because the value ranges
-/// don't overlap.
+/// Disjoint value domains. owner_1: 100 entities with values 0..99; owner_2:
+/// 100 entities with values 1000..1099. Storage covers 200 entries; each side
+/// post-filters to 100 (waste=100 each). Join domain has 200 distinct values
+/// → `p_unmatched = 0.5` on both sides → blend penalty applies on both.
+/// Output: 0 rows (disjoint).
 ///
-/// owner_1: 100 entities with join_attr values 0..99; owner_2: 100 entities with
-/// values 1000..1099. Both `Reverse[has]` iterators see all 200 attribute entries,
-/// each side has io=100, scan=200, waste=100. Join domain has 200 distinct values, so
-/// `p_unmatched = 1 - 100/200 = 0.5` on both sides → blend penalty applies on both.
-///
-/// Either plan choice (merge or sequential) is acceptable here; what matters is
-/// correctness — the executor returns zero rows without scanning unbounded data.
-/// This is a sanity check that the planner handles "blend-penalised on both sides"
-/// without going off the rails on a query whose output is empty.
+/// Best plan options:
+///   1) Reverse Has iteration sequentially (indexed loop join). Cost ~= 101 seeks + 200 advances
+///   2) Reverse Has intersection (merge join).                   Cost ~=   2 seeks + 400 advances
+///   (Either plan correctly emits 0 rows. Test asserts correctness only.)
 #[test]
 fn has_2_join_disjoint_domains() {
     let mut context = setup();
@@ -564,20 +575,17 @@ fn has_2_join_disjoint_domains() {
 
 // --- VARIANT 4: has_2_join_fk_fanout ----------------------------------------------------------
 
-/// Classic FK-PK fan-out join: many "FK" rows (owner_2) point at the same handful of
-/// "PK" rows (owner_1). Asymmetric `io_ratio`s, but both sides cover the full join
-/// domain so the blend's `p_unmatched` clamps to 0 → no penalty applies → merge
-/// intersection (the natural plan for sort-merge over a shared join key) should win.
+/// Classic FK-PK fan-out: 10 PK (unique values 0..9) × 1000 FK (cyclic over
+/// 0..9, so 100 owners per value). Storage covers 1010 entries. Both sides
+/// clamp `p_unmatched` to 0 (`bigger_io >> join_size`) → no blend penalty.
+/// Output: 1000 rows.
 ///
-/// owner_1: 10 entities with unique values 0..9 (the "PK side").
-/// owner_2: 1000 entities, each with join_attr value `i % 10` (the "FK side"). So
-/// every value in 0..9 has 100 owner_2 instances and 1 owner_1 instance.
-///
-/// Stats: A.io=10, scan=1010, waste=1000. B.io=1000, scan=1010, waste=10. Join domain
-/// has 10 distinct values. p_unmatched_A = max(0, 1 - 10/10) = 0; p_unmatched_B =
-/// max(0, 1 - 1000/10) = 0. No blend penalty → merge picked.
-///
-/// Output: 10 PK rows × 100 FK rows/value = 1000 rows.
+/// Best plan options:
+///   1) Reverse Has iteration sequentially (indexed loop join). Cost ~=  11 seeks + 2020 advances
+///      (drive from 10 PK, each probe walks 101 entries for value's PK+FK cluster)
+///   2) Reverse Has intersection (merge join).                   Cost ~=   2 seeks + 3020 advances
+///      (both iters walk 1010 entries + cartesian emit 1000)
+///   (Roughly tied; planner picks merge.)
 #[test]
 fn has_2_join_fk_fanout() {
     let mut context = setup();
@@ -633,23 +641,17 @@ fn has_2_join_fk_fanout() {
 
 // --- VARIANT 5: has_2_join_selective_against_full --------------------------------------------
 
-/// The "selective lookup vs. full scan" case: one side has a single tuple, the other
-/// covers a wide domain. This was the user's earlier "should merge even be picked?"
-/// scenario.
+/// Selective lookup vs. full scan. owner_1: 1 entity with value 0; owner_2:
+/// 1000 entities with unique values 0..999. Storage covers 1001 entries.
+/// A is heavily blend-penalised (`p_unmatched_A ≈ 0.999`, waste=1000); B has
+/// near-zero penalty. Output: 1 row.
 ///
-/// owner_1: 1 entity with join_attr value 0.
-/// owner_2: 1000 entities with unique values 0..999.
-///
-/// Stats: A.io=1, A.scan=1001 (the `Reverse[has]` iterator sees both 1 A-edge and
-/// 1000 B-edges), A.waste=1000. B.io=1000, B.scan=1001, B.waste=1. Join domain has
-/// 1000 distinct values, so p_unmatched_A = 1 - 1/1000 ≈ 0.999, p_unmatched_B ≈ 0.
-/// A is heavily penalised by the blend (huge waste × huge gap) → the planner
-/// should drive from A (or pick a sequential bound-from plan).
-///
-/// Expected output: 1 row (the value 0 owned by the lone A and by one of the Bs).
-/// Bound: a healthy plan does roughly O(N_B) total advances over 1 output row
-/// (worst step ≲ N_B + slack); we cap at < 5000 because we have 1000 + 1 attributes
-/// to walk plus per-step overhead, and we explicitly do NOT want to be tight here.
+/// Best plan options:
+///   1) Reverse Has iteration sequentially (indexed loop join). Cost ~=   2 seeks + 1003 advances
+///      (drive from the 1 A entity, then tight-probe B once)
+///   2) Reverse Has intersection (merge join).                   Cost ~=   2 seeks + 2002 advances
+///      (both iters walk 1001 entries even though only 1 produces output)
+///   (Sequential clearly wins; planner picks sequential.)
 #[test]
 fn has_2_join_selective_against_full() {
     let mut context = setup();
@@ -715,22 +717,21 @@ fn has_2_join_selective_against_full() {
 
 // --- VARIANT 6: has_2_join_many_to_many ------------------------------------------------------
 
-/// Many-to-many regime: both sides have io_ratio much larger than the join domain.
+/// Many-to-many: 200 owners per side, each with 1 join_attr value cyclic over
+/// 10 distinct values (so 20 owners per value per side). Storage covers 400
+/// entries. `bigger_io >> join_size` so blend clamps to 0 on both sides.
+/// Output: 10 values × 20 × 20 = 4000 rows (cartesian within each value).
 ///
-/// Setup: 200 owners per side, each with 1 join_attr edge whose value cycles over
-/// 10 distinct values. So each side has 200 has-edges spread across 10 join values
-/// (20 owners per value per side). Stats: io=200 per side, scan=400, waste=200,
-/// join_size=10. p_unmatched = max(0, 1 - 200/10) = 0 on both sides → blend penalty
-/// clamps to 0 even though there's lots of waste → merge picked, as expected for the
-/// classic many-to-many sort-merge case.
+/// (Implementation note: count_each=1 over 200 owners rather than count_each=2
+/// over 100 owners because `has` deduplicates per-owner and the round-robin
+/// distribution would otherwise give each owner two identical values.)
 ///
-/// (Implementation note: we use count_each=1 over 200 owners rather than count_each=2
-/// over 100 owners because the round-robin distribution in `load_data` would otherwise
-/// give the same owner two `has` edges of the same value — `has` is a set, so after
-/// dedup each owner would carry only one distinct value, giving only 1000 output rows.)
-///
-/// Output: 10 join values × 20 A-owners × 20 B-owners = 4000 rows. Worst-step ratio
-/// should stay low — every advance contributes to an output row in expectation.
+/// Best plan options:
+///   1) Reverse Has iteration sequentially (indexed loop join). Cost ~= 201 seeks + 8600 advances
+///      (200 outer + 200 probes × 41 advances/probe through tight per-value range)
+///   2) Reverse Has intersection (merge join).                   Cost ~=   2 seeks + 4800 advances
+///      (both iters walk 400 + cartesian sub-iterator amortises emit across 4000)
+///   (Merge wins decisively; planner picks merge.)
 #[test]
 fn has_2_join_many_to_many() {
     let mut context = setup();
@@ -791,12 +792,15 @@ fn has_2_join_many_to_many() {
 
 // --- VARIANT 7: has_2_join_empty -------------------------------------------------------------
 
-/// Degenerate empty-data case: schema defined but zero instances of either owner.
+/// Degenerate empty-data case: schema defined but zero instances. Smoke test
+/// for the boundary where every cardinality estimate clamps to `MIN_SCAN_SIZE`
+/// and the blend math degenerates (`cost / io_ratio`, `io_ratio / join_size`).
+/// Output: 0 rows.
 ///
-/// Stats are all zero; the planner mustn't panic on this. Output is 0 rows. This is
-/// a smoke test for the boundary condition where every cardinality clamps to
-/// `MIN_SCAN_SIZE` / similar floors and the blend math degenerates (e.g. division by
-/// zero in `cost / io_ratio` or `io_ratio / join_size`).
+/// Best plan options:
+///   1) Reverse Has iteration sequentially (indexed loop join). Cost ~= 1 seek + 0 advances
+///   2) Reverse Has intersection (merge join).                   Cost ~= 2 seeks + 0 advances
+///   (Plans are trivial; test asserts no panic and 0 rows.)
 #[test]
 fn has_2_join_empty() {
     let mut context = setup();
@@ -863,26 +867,17 @@ fn add_noise_owners(spec: &mut DataSpec, n_noise_types: usize, per_type: usize, 
 
 // --- VARIANT 8: has_2_join_waste_on_both_sides -------------------------------------------------
 
-/// **Case 1: both sides simultaneously have post-filter waste AND a coverage gap.**
+/// Both sides simultaneously have heavy post-filter waste AND a coverage gap.
+/// 50 entities per query owner with disjoint values (owner_1: 0..49, owner_2:
+/// 50..99), plus 5000 noise-owner entries with unique values 100..5099.
+/// Storage covers 5100 entries; each query side post-filters to 50 (waste=5050).
+/// Join domain = 5100, so `p_unmatched ≈ 0.99` on both sides → blend fires
+/// heavily on both. Output: 0 rows.
 ///
-/// Setup: 50 entities per query owner with disjoint values (owner_1: 0..49,
-/// owner_2: 50..99), plus 5000 noise-owner entries owning the same join_attr
-/// type with unique values 100..5099.
-///
-/// Stats (predicted):
-/// - Scan for either `Reverse[query has $j]`: 50 + 50 + 5000 = 5100 entries.
-/// - owner_1.io = 50, waste = 5050. owner_2.io = 50, waste = 5050.
-/// - join_size = 5100 distinct values.
-/// - `p_unmatched` for both sides ≈ 0.990 (= 1 − 50/5100).
-/// - Blend fires heavily on **both** sides simultaneously.
-///
-/// What this tests: per-side decomposition under symmetric pressure. The blend
-/// must charge each side independently; the planner should see the cumulative
-/// cost and avoid a 2-iter merge intersection on $join.
-///
-/// Output: 0 rows (owner values are disjoint by construction). The assertion is
-/// plan-shape — correctness alone wouldn't catch a regression where the blend
-/// fails to fire on a symmetric setup.
+/// Best plan options:
+///   1) Reverse Has iteration sequentially (indexed loop join). Cost ~=  51 seeks +  5100 advances
+///   2) Reverse Has intersection (merge join).                   Cost ~=   2 seeks + 10200 advances
+///   (Sequential wins decisively even without blend; planner picks sequential.)
 #[test]
 fn has_2_join_waste_on_both_sides() {
     // Tuned to extreme: 10 noise types × 500 each = 5000 noise entries swamp
@@ -904,7 +899,7 @@ fn has_2_join_waste_on_both_sides() {
             HasSpec {
                 owner_type: OWNER_1, attr_type: JOIN_ATTR,
                 count_each: 1, count_total: N_QUERY,
-                attribute_generator: unique(),  // values 0..49
+                attribute_generator: sequential(),  // values 0..49
             },
             HasSpec {
                 owner_type: OWNER_2, attr_type: JOIN_ATTR,
@@ -933,25 +928,17 @@ fn has_2_join_waste_on_both_sides() {
 
 // --- VARIANT 9: has_2_join_inverted_asymmetry --------------------------------------------------
 
-/// **Case 2: small side has the coverage gap, large side has heavy waste.**
+/// Small side has the coverage gap; large side covers its own domain. owner_1:
+/// 5 entities with values 0..4; owner_2: 500 entities with unique values 0..499.
+/// 200 noise entries push the domain to ~705 distinct. Storage = 705 entries;
+/// owner_1.waste = 700, owner_2.waste = 205. `p_unmatched_1 ≈ 0.99` (extreme),
+/// `p_unmatched_2 ≈ 0.29` (moderate). owner_1's blend dominates. Output: 5 rows.
 ///
-/// Setup: owner_1 ("small, gap") has 5 entities with values 0..4; owner_2
-/// ("large, fewer-gap") has 500 entities with values 0..499 (full coverage of
-/// its distinct set). 200 noise entries push the domain to ~705 distinct values.
-///
-/// Stats (predicted):
-/// - Scan range: 5 + 500 + 200 = 705.
-/// - owner_1.io = 5, waste = 700. owner_2.io = 500, waste = 205.
-/// - join_size = 705 distinct values.
-/// - `p_unmatched_owner_1 ≈ 0.993` (extreme gap).
-/// - `p_unmatched_owner_2 ≈ 0.291` (moderate gap).
-/// - owner_1 blend dominates: tiny side, huge waste relative to its io.
-///
-/// What this tests: per-side blend is asymmetric and the small side's penalty
-/// dominates. A regression that symmetrizes or averages the blend would show as
-/// the planner failing to avoid the lopsided merge.
-///
-/// Output: owner_1's 10 values are a subset of owner_2's 100 → 10 rows.
+/// Best plan options:
+///   1) Reverse Has iteration sequentially (indexed loop join). Cost ~=   6 seeks +  715 advances
+///      (drive from 5-entity owner_1, each probe tight on its value into owner_2)
+///   2) Reverse Has intersection (merge join).                   Cost ~=   2 seeks + 1410 advances
+///   (Sequential wins by ~2×; planner picks sequential.)
 #[test]
 fn has_2_join_inverted_asymmetry() {
     // Tuned to extreme: very small side (5 entities) with values in a tiny
@@ -976,12 +963,12 @@ fn has_2_join_inverted_asymmetry() {
             HasSpec {
                 owner_type: OWNER_1, attr_type: JOIN_ATTR,
                 count_each: 1, count_total: N_SMALL,
-                attribute_generator: unique(),  // 0..9
+                attribute_generator: sequential(),  // 0..9
             },
             HasSpec {
                 owner_type: OWNER_2, attr_type: JOIN_ATTR,
                 count_each: 1, count_total: N_LARGE,
-                attribute_generator: unique(),  // 0..99 (10 of these overlap with owner_1)
+                attribute_generator: sequential(),  // 0..99 (10 of these overlap with owner_1)
             },
         ],
     };
@@ -1006,35 +993,18 @@ fn has_2_join_inverted_asymmetry() {
 
 // --- VARIANT 10: has_2_join_asymmetric_clamp ---------------------------------------------------
 
-/// **Case 3: one side's `io > join_size` clamp engages; the other side doesn't.**
+/// Asymmetric clamp: dense side's `io > join_size` clamps `p_unmatched` to 0;
+/// sparse side has a real gap. owner_1: 1000 entities cyclic over 5 values
+/// (200 owners per value); owner_2: 50 unique values 0..49; 100 noise entries.
+/// Storage covers 1150 entries. `p_unmatched_1 = 0` (dense covers any subset);
+/// `p_unmatched_2 ≈ 0.68`. Output: 200 × 5 × 1 = 1000 rows.
 ///
-/// Setup: owner_1 ("dense", clamps hard) has 1000 entities cyclic over values
-/// 0..4 (so 1000 has-edges but only 5 distinct values on this side, 200 owners
-/// per value); owner_2 ("sparse, gap") has 50 entities each with a unique value
-/// 0..49. 100 noise entries push the domain to ~155 distinct values.
-///
-/// Stats (predicted):
-/// - Scan range: 1000 + 50 + 100 = 1150.
-/// - owner_1.io = 1000, waste = 150. owner_2.io = 50, waste = 1100.
-/// - join_size = 155 distinct values (5 dense + 45 unique sparse + 100 noise =
-///   150; minus the 5 overlapping = ~150, depending on attribute counting).
-/// - `p_unmatched_owner_1 = max(0, 1 − 1000/155) = 0` (**clamps hard** —
-///   owner_1's io is 6.5× join_size, so it densely covers any subset).
-/// - `p_unmatched_owner_2 = 1 − 50/155 ≈ 0.677` (**does NOT clamp** — owner_2 has
-///   a real gap).
-///
-/// What this tests: the `max(0, ...)` clamp on `p_unmatched` activates
-/// asymmetrically. If a future refactor removes the clamp or applies it
-/// symmetrically, owner_1 would get penalized (incorrectly) and the planner
-/// might lose a perfectly valid merge plan.
-///
-/// Output: owner_1's values 0..4 ∩ owner_2's 0..49 = 5 distinct matching
-/// values. owner_1 has 200 entries per value (cyclic), owner_2 has 1.
-/// So 200 × 5 × 1 = 1000 rows.
-///
-/// We do **not** assert plan shape here — merge or sequential are both
-/// reasonable, and which one wins depends on the rest of the cost calculation.
-/// Instead we bound the per-step work to catch a runaway plan.
+/// Best plan options:
+///   1) Reverse Has iteration sequentially (indexed loop join). Cost ~=  51 seeks +  2200 advances
+///      (drive from 50 sparse, each matched probe walks 201 entries; 45 empty probes)
+///   2) Reverse Has intersection (merge join).                   Cost ~=   2 seeks +  3300 advances
+///      (both iters walk 1150 + cartesian 1000)
+///   (Sequential cheaper; clamp must hold to avoid mis-pricing dense side.)
 #[test]
 fn has_2_join_asymmetric_clamp() {
     // Tuned to extreme: extreme io_dense / join_size ratio (1000 cyclic over 5
@@ -1065,7 +1035,7 @@ fn has_2_join_asymmetric_clamp() {
             HasSpec {
                 owner_type: OWNER_2, attr_type: JOIN_ATTR,
                 count_each: 1, count_total: N_SPARSE,
-                attribute_generator: unique(),  // 0..49
+                attribute_generator: sequential(),  // 0..49
             },
         ],
     };
@@ -1097,20 +1067,15 @@ fn has_2_join_asymmetric_clamp() {
 
 // --- VARIANT 11: has_2_join_fk_pushed_to_inl ---------------------------------------------------
 
-/// Scale-up of `fk_fanout` pushed into INL (index-nested-loop) territory.
+/// Scale-up of `fk_fanout` pushed into INL territory: 5 PK × 500 FK (each PK
+/// matches 100 FK rows). Storage covers 505 entries. Output: 500 rows.
 ///
-/// Setup: 5 PK × 500 FK (each PK matches ~100 FK rows). Both sides' Reverse
-/// scan covers all 505 join_attr edges. Output: 500 rows.
-///
-/// Literature-predicted optimal:
-/// - Merge: ~505 scan + 500 emit ≈ 1005 advances
-/// - INL drive-from-5: 5 outer + 5 × (open + ~101 advances per probe) ≈ 535
-///
-/// INL drive-from-5 should be ~2× cheaper than merge. If the planner picks
-/// merge here, it confirms the `fk_fanout` tie-leaning-to-merge tendency
-/// persists at this asymmetry — telling us the cost model under-weights
-/// INL's small-outer advantage. Scale kept modest because the framework
-/// emits one match-insert per edge during data load.
+/// Best plan options:
+///   1) Reverse Has iteration sequentially (indexed loop join). Cost ~=   6 seeks + 1010 advances
+///      (drive from 5 PK, each probe walks 101-entry tight range)
+///   2) Reverse Has intersection (merge join).                   Cost ~=   2 seeks + 1510 advances
+///   (Sequential ~2× cheaper in principle; planner picks merge —
+///    documents the under-weighting of INL for small-PK × large-FK.)
 #[test]
 fn has_2_join_fk_pushed_to_inl() {
     const N_PK: usize = 5;
@@ -1128,7 +1093,7 @@ fn has_2_join_fk_pushed_to_inl() {
             HasSpec {
                 owner_type: OWNER_1, attr_type: JOIN_ATTR,
                 count_each: 1, count_total: N_PK,
-                attribute_generator: unique(),  // PK side: values 0..4
+                attribute_generator: sequential(),  // PK side: values 0..4
             },
             HasSpec {
                 owner_type: OWNER_2, attr_type: JOIN_ATTR,
@@ -1163,21 +1128,18 @@ fn has_2_join_fk_pushed_to_inl() {
 
 // --- VARIANT 12: has_2_join_fk_pushed_to_merge -------------------------------------------------
 
-/// Scale-up of `fk_fanout` pushed into merge-clearly-wins territory.
+/// Scale-up of `fk_fanout` pushed into merge-clearly-wins territory: 200 × 200
+/// with cyclic over 20 distinct values (10 owners per value per side). Storage
+/// covers 400 entries. Output: 10 × 10 × 20 = 2000 rows (cartesian within each
+/// value).
 ///
-/// Setup: 200 × 200 with cyclic-over-20 distinct values (so 10 owners per
-/// value per side). Output: 10 × 10 × 20 = 2000 rows (cartesian within each
-/// shared value).
-///
-/// Literature-predicted optimal:
-/// - Merge: ~400 scan + 2000 cartesian emit ≈ 2400 advances
-/// - INL drive-from-200: 200 outer + 200 × (open + ~10 advances per probe)
-///   ≈ 200 + 200×15 = 3200 advances
-///
-/// Merge should be cheaper because the cartesian sub-iterator amortizes one
-/// inner-side iterator open across all 10 cartesian outputs per value,
-/// whereas INL must re-open the inner iterator per outer row. Modest scale
-/// chosen for fast data load.
+/// Best plan options:
+///   1) Reverse Has iteration sequentially (indexed loop join). Cost ~= 201 seeks + 4600 advances
+///      (200 outer + 200 probes × 21 entries/probe)
+///   2) Reverse Has intersection (merge join).                   Cost ~=   2 seeks + 2800 advances
+///      (both iters walk 400 + cartesian emits 2000)
+///   (Merge cheaper in principle; planner picks sequential at this scale —
+///    the merge breakpoint is around per-value cartesian ≥ ~400 outputs.)
 #[test]
 fn has_2_join_fk_pushed_to_merge() {
     const N_EACH: usize = 200;
@@ -1245,7 +1207,7 @@ fn probe_fk_at_scale(label: &str, n_pk: usize, n_fk: usize) -> (usize, usize, f6
             HasSpec {
                 owner_type: OWNER_1, attr_type: JOIN_ATTR,
                 count_each: 1, count_total: n_pk,
-                attribute_generator: unique(),
+                attribute_generator: sequential(),
             },
             HasSpec {
                 owner_type: OWNER_2, attr_type: JOIN_ATTR,
@@ -1356,28 +1318,24 @@ fn fk_breakpoint_sweep_toward_merge() {
 
 // --- VARIANT 13: has_2_join_selective_outer_filter ---------------------------------------------
 
-/// Tests the regime where one side has an additional selective external filter
-/// (a value-bound key lookup). Classical literature predicts INL drive-from-the-
-/// pinned outer should beat merge here: the outer is O(1) via key lookup, then
-/// a tight bound-from probe finishes the join.
+/// Selective outer filter — non-default query shape. owner_1: 10 entities with
+/// unique key_1 values 0..9 and unique join_attr values 0..9; owner_2: 1000
+/// entities, each owning one join_attr value cyclic 0..9 (100 per value).
+/// Query: `$pk isa owner_1, has key_1 5, has join_attr $j; $fk isa owner_2,
+/// has join_attr $j;` — the `has key_1 5` pins `$pk` to one entity. Output:
+/// 100 rows.
 ///
-/// Setup:
-/// - owner_1: 10 entities with unique key_1 values 0..9 and unique join_attr values 0..9
-/// - owner_2: 1000 entities, each owning one join_attr value cyclic 0..9 (100 per value)
+/// Best plan options:
+///   1) Indexed loop via key lookup + bound-from chain. Cost ~= 3 seeks + ~113 advances
+///      (key scan + `$pk has $j` with bound pk + `$fk has $j` with bound j)
+///   2) Reverse Has intersection (merge join) on $j.    Cost ~= 2 seeks + ~2002 advances
+///      (full reverse-has on both sides + 100 emits)
 ///
-/// Query: `$pk isa owner_1, has key_1 5, has join_attr $j; $fk isa owner_2, has join_attr $j;`
-///
-/// Plan-shape finding (worth documenting): TypeDB's planner picks a 2-iter
-/// Sorted Iterator Intersection on $j, but with `bound_vars=[$pk]` — so one
-/// of the merged iterators is bound by the pinned PK, effectively turning the
-/// "merge" into an INL probe internally. Observed cost ~1.1 advances/row,
-/// matching the literature-optimal cost of ~102 advances for 100 output rows.
-/// The merge-vs-INL distinction blurs when IntersectionExecutor's iterators
-/// have bound inputs — the operator is the same shape, but the data flow is
-/// effectively nested-loop.
-///
-/// So the *real* assertion here is on cost, not plan shape. Plan-shape is
-/// surfaced for review but not asserted.
+/// Observed: planner picks a 2-iter Sorted Iterator Intersection on $j with
+/// `bound_vars=[$pk]` — one of the merged iterators is bound by the pinned
+/// PK, effectively turning the "merge" into an INL probe internally. Observed
+/// cost ~1.1 advances/row. The merge-vs-INL distinction blurs when iterators
+/// have bound inputs: same operator, different data flow.
 #[test]
 fn has_2_join_selective_outer_filter() {
     const N_PK: usize = 10;
@@ -1396,7 +1354,7 @@ fn has_2_join_selective_outer_filter() {
             HasSpec {
                 owner_type: OWNER_1, attr_type: JOIN_ATTR,
                 count_each: 1, count_total: N_PK,
-                attribute_generator: unique(),  // values 0..9, paired with key_1 0..9
+                attribute_generator: sequential(),  // values 0..9, paired with key_1 0..9
             },
             HasSpec {
                 owner_type: OWNER_2, attr_type: JOIN_ATTR,
