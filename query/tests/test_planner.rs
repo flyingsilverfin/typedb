@@ -36,6 +36,7 @@ use durability::DurabilitySequenceNumber;
 use encoding::graph::{
     definition::definition_key_generator::DefinitionKeyGenerator, thing::vertex_generator::ThingVertexGenerator,
 };
+use compiler::executable::match_::planner::conjunction_executable::{ExecutionStep, IntersectionStep};
 use executor::{
     ExecutionInterrupt,
     pipeline::stage::{ExecutionContext, StageIterator},
@@ -359,28 +360,23 @@ fn update_worst(step: &StepProfile, worst: &mut (f64, u64, u64, String)) {
     }
 }
 
-/// Returns descriptions of all `Sorted Iterator Intersection` steps that contain
-/// 2+ instructions — i.e. real merge intersections, not single-iterator wrappers.
-///
-/// Detection: `IntersectionStep`'s `Display` impl prints the header on one line and
-/// each instruction prefixed by `"\n      "` (see
-/// `compiler::executable::match_::planner::conjunction_executable::IntersectionStep`).
-/// So a multi-instruction merge has 2+ `\n` in its description; a single-iter wrapper
-/// has exactly 1. Anything not starting with "Sorted Iterator Intersection" is ignored.
-fn merge_intersection_step_descriptions(profile: &QueryProfile) -> Vec<String> {
-    let mut descs = Vec::new();
-    for (_id, stage) in profile.stage_profiles().read().unwrap().iter() {
-        if let Some(pattern) = stage.pattern_profile() {
-            visit_steps_in_pattern(&pattern, &mut |step| {
-                if let Some(desc) = step.description() {
-                    if desc.starts_with("Sorted Iterator Intersection") && desc.matches('\n').count() >= 2 {
-                        descs.push(desc);
-                    }
-                }
-            });
-        }
-    }
-    descs
+/// Returns all `IntersectionStep`s across the plan that combine 2+ instructions
+/// — i.e. real sort-merge intersections, not single-iterator wrappers. Structural
+/// inspection of the compiled `ConjunctionExecutable`, so robust against changes
+/// to step display formatting.
+fn multi_iter_intersection_steps<'a>(
+    pipeline: &'a Pipeline<ReadSnapshot<WALClient>, ReadPipelineStage<ReadSnapshot<WALClient>>>,
+) -> Vec<&'a IntersectionStep> {
+    pipeline
+        .stages()
+        .iter()
+        .filter_map(|s| s.as_match())
+        .flat_map(|m| m.executable().steps())
+        .filter_map(|s| match s {
+            ExecutionStep::Intersection(i) if i.instructions.len() >= 2 => Some(i),
+            _ => None,
+        })
+        .collect()
 }
 
 // --- Tests ----------------------------------------------------------------------------------
@@ -456,7 +452,10 @@ fn has_2_join_balanced() {
 
     let pipeline = compile_read(&context, &two_owner_join_query());
 
-    // TODO: assert over executable plan shape
+    // Plan-shape note: both merge and sequential are reasonable for the balanced
+    // case (cost is similar either way). Don't assert plan shape — only correctness
+    // and that the per-step work stays bounded.
+    let _merges = multi_iter_intersection_steps(&pipeline);
 
     let (rows, profile) = execute_read(pipeline);
 
@@ -520,7 +519,18 @@ fn has_2_join_subset_with_post_filter() {
 
     let pipeline = compile_read(&context, &two_owner_join_query());
 
-    // TODO: assert over executable plan shape
+    // Plan-shape assertion: the cost-model fix should keep the planner from putting both
+    // `Reverse[A has $join]` and `Reverse[B has $join]` in a single merge intersection
+    // when one side has post-filter waste and the smaller side's domain overhangs the
+    // bigger side's coverage. Sequential is the expected plan here.
+    let merges = multi_iter_intersection_steps(&pipeline);
+    assert!(
+        merges.is_empty(),
+        "subset-with-post-filter: planner should pick sequential, not a merge intersection. \
+         Found {} multi-iter intersection step(s); first sort_var={:?}",
+        merges.len(),
+        merges.first().map(|m| m.sort_variable),
+    );
 
     let (rows, profile) = execute_read(pipeline);
 
@@ -533,20 +543,6 @@ fn has_2_join_subset_with_post_filter() {
         "subset-with-post-filter: worst step expected to be bounded (< 10 advances/row); \
          got {ratio:.2} ({advances}/{prof_rows}). step: {descr}",
     );
-    // Informational: print whether the planner still picked the merge after the fix.
-    // We do *not* assert on this — if the planner still picks the merge, the bound above
-    // still has to hold, and the message surfaces the case for human review.
-    // REVIEWER: a merge regression here (e.g. 100 advances / 25 rows = 4/row) would
-    // still pass the < 10 cap above and the NOTE is print-only. CI would not fail.
-    // If the goal is to lock in the planner choice, tighten this into an assertion
-    // (e.g. `assert!(merges.is_empty(), ...)`) once the cost model is stable.
-    let merges = merge_intersection_step_descriptions(&profile);
-    if !merges.is_empty() {
-        eprintln!(
-            "  NOTE: planner still picked a multi-iter merge for the subset case — review whether \
-             the blend penalty is strong enough. Steps above."
-        );
-    }
 }
 
 // --- VARIANT 3: has_2_join_disjoint_domains ---------------------------------------------------
@@ -596,7 +592,10 @@ fn has_2_join_disjoint_domains() {
 
     let pipeline = compile_read(&context, &two_owner_join_query());
 
-    // TODO: assert over executable plan shape
+    // Plan-shape note: both sides have waste + a coverage gap → blend penalty fires
+    // on both. The planner is free to pick merge or sequential; correctness is the
+    // primary concern here, not plan shape.
+    let _merges = multi_iter_intersection_steps(&pipeline);
 
     let (rows, profile) = execute_read(pipeline);
 
@@ -658,7 +657,15 @@ fn has_2_join_fk_fanout() {
 
     let pipeline = compile_read(&context, &two_owner_join_query());
 
-    // TODO: assert over executable plan shape
+    // Plan-shape assertion: this is the "classic" FK-PK case the merge intersection
+    // exists for. Both sides clamp p_unmatched to 0 (io > join_size), so the blend
+    // adds no penalty and the planner should still pick a 2-iter merge.
+    let merges = multi_iter_intersection_steps(&pipeline);
+    assert!(
+        !merges.is_empty(),
+        "fk_fanout: expected the planner to pick a merge intersection (classic FK-PK \
+         shape with no blend penalty); none found",
+    );
 
     let (rows, profile) = execute_read(pipeline);
 
@@ -721,7 +728,17 @@ fn has_2_join_selective_against_full() {
 
     let pipeline = compile_read(&context, &two_owner_join_query());
 
-    // TODO: assert over executable plan shape
+    // Plan-shape note: A has waste=1000 and p_unmatched≈1, so the blend penalises
+    // A heavily — pushing the planner toward sequential (drive from selective A,
+    // bound-from into B). The catastrophic plan to avoid is the merge intersection
+    // putting both Reverse[has]s into a single step. Assert no such merge exists.
+    let merges = multi_iter_intersection_steps(&pipeline);
+    assert!(
+        merges.is_empty(),
+        "selective-vs-full: a 2-iter merge on $join would be O(N_BIG^2) per probe; \
+         expected sequential drive-from-A. Found {} multi-iter merge step(s)",
+        merges.len(),
+    );
 
     let (rows, profile) = execute_read(pipeline);
 
@@ -796,16 +813,22 @@ fn has_2_join_many_to_many() {
 
     let pipeline = compile_read(&context, &two_owner_join_query());
 
-    // TODO: assert over executable plan shape
+    // Plan-shape assertion: many-to-many with both sides clamped to p_unmatched=0
+    // (io >> join_size) → blend adds nothing → planner should still pick a 2-iter
+    // merge intersection, which is the natural shape for this query.
+    let merges = multi_iter_intersection_steps(&pipeline);
+    assert!(
+        !merges.is_empty(),
+        "many_to_many: expected the planner to pick a merge intersection (the canonical \
+         many-to-many sort-merge); none found",
+    );
 
     let (rows, profile) = execute_read(pipeline);
 
     assert_eq!(rows, EXPECTED_ROWS, "many-to-many: full cartesian within each value");
     let (ratio, advances, prof_rows, descr) = worst_advances_per_row(&profile);
-    // The chosen plan is a 2-iter merge intersection on $join (the natural many-to-many
-    // sort-merge). Each output row costs ~1 storage advance on the inner side plus a
-    // small constant for the outer/type-check steps; observed worst step is ~8/row, so
-    // we cap at 20 to leave headroom without admitting catastrophic regressions.
+    // Each output row costs ~1 storage advance on the inner side plus a small constant
+    // for the outer/type-check steps; observed worst step is ~8/row, cap at 20 for headroom.
     assert!(
         ratio < 20.0,
         "many-to-many: worst step should be O(1) per row (got {ratio:.2}, {advances}/{prof_rows}). step: {descr}",
@@ -828,8 +851,11 @@ fn has_2_join_empty() {
 
     let pipeline = compile_read(&context, &two_owner_join_query());
 
-    // TODO: assert over executable plan shape
+    // Smoke check: plan compiled without panicking on degenerate stats. Don't
+    // assert plan shape — the choice is uninteresting when every cardinality
+    // estimator floors to MIN_SCAN_SIZE.
+    let _merges = multi_iter_intersection_steps(&pipeline);
 
-    let (rows, profile) = execute_read(pipeline);
+    let (rows, _profile) = execute_read(pipeline);
     assert_eq!(rows, 0, "empty schema: 0 rows");
 }
