@@ -1151,3 +1151,137 @@ fn has_2_join_asymmetric_clamp() {
         "asymmetric-clamp: worst step should remain bounded (< 30 advances/row); got {ratio:.2} ({advances}/{prof_rows}). step: {descr}",
     );
 }
+
+// --- VARIANT 11: has_2_join_fk_pushed_to_inl ---------------------------------------------------
+
+/// Scale-up of `fk_fanout` pushed into INL (index-nested-loop) territory.
+///
+/// Setup: 5 PK × 500 FK (each PK matches ~100 FK rows). Both sides' Reverse
+/// scan covers all 505 join_attr edges. Output: 500 rows.
+///
+/// Literature-predicted optimal:
+/// - Merge: ~505 scan + 500 emit ≈ 1005 advances
+/// - INL drive-from-5: 5 outer + 5 × (open + ~101 advances per probe) ≈ 535
+///
+/// INL drive-from-5 should be ~2× cheaper than merge. If the planner picks
+/// merge here, it confirms the `fk_fanout` tie-leaning-to-merge tendency
+/// persists at this asymmetry — telling us the cost model under-weights
+/// INL's small-outer advantage. Scale kept modest because the framework
+/// emits one match-insert per edge during data load.
+#[test]
+fn has_2_join_fk_pushed_to_inl() {
+    const N_PK: usize = 5;
+    const N_FK: usize = 500;
+
+    let mut context = setup();
+    define_two_owner_schema(&mut context);
+
+    let data_spec = DataSpec {
+        instances: vec![
+            InstanceSpec { type_: OWNER_1, count: N_PK, key: Some(KEY_1) },
+            InstanceSpec { type_: OWNER_2, count: N_FK, key: Some(KEY_2) },
+        ],
+        has: vec![
+            HasSpec {
+                owner_type: OWNER_1, attr_type: JOIN_ATTR,
+                count_each: 1, count_total: N_PK,
+                attribute_generator: unique(),  // PK side: values 0..4
+            },
+            HasSpec {
+                owner_type: OWNER_2, attr_type: JOIN_ATTR,
+                count_each: 1, count_total: N_FK,
+                attribute_generator: cyclic(N_PK),  // FK side: cyclic over 0..4, ~1000 per value
+            },
+        ],
+    };
+    load_data(&mut context, data_spec);
+
+    let pipeline = compile_read(&context, &two_owner_join_query());
+    let merges = multi_iter_intersection_steps(&pipeline);
+    let merge_count = merges.len();
+    let (rows, profile) = execute_read(pipeline);
+    let (ratio, advances, prof_rows, descr) = worst_advances_per_row(&profile);
+
+    // Diagnostic — surface plan + key numbers regardless of pass/fail so the
+    // user can see whether the planner picked the literature-optimal INL or
+    // stayed on merge.
+    eprintln!(
+        "fk_pushed_to_inl: rows={rows} merges={merge_count} worst={ratio:.2} adv/row \
+         ({advances}/{prof_rows}). step: {descr}"
+    );
+
+    assert_eq!(rows, N_FK, "fk_pushed_to_inl: each FK matches one PK → N_FK rows");
+    // Bound at 5 advances/row — leaves headroom for either plan choice.
+    assert!(
+        ratio < 5.0,
+        "fk_pushed_to_inl: worst step should remain bounded (< 5 advances/row); got {ratio:.2}. step: {descr}",
+    );
+}
+
+// --- VARIANT 12: has_2_join_fk_pushed_to_merge -------------------------------------------------
+
+/// Scale-up of `fk_fanout` pushed into merge-clearly-wins territory.
+///
+/// Setup: 200 × 200 with cyclic-over-20 distinct values (so 10 owners per
+/// value per side). Output: 10 × 10 × 20 = 2000 rows (cartesian within each
+/// shared value).
+///
+/// Literature-predicted optimal:
+/// - Merge: ~400 scan + 2000 cartesian emit ≈ 2400 advances
+/// - INL drive-from-200: 200 outer + 200 × (open + ~10 advances per probe)
+///   ≈ 200 + 200×15 = 3200 advances
+///
+/// Merge should be cheaper because the cartesian sub-iterator amortizes one
+/// inner-side iterator open across all 10 cartesian outputs per value,
+/// whereas INL must re-open the inner iterator per outer row. Modest scale
+/// chosen for fast data load.
+#[test]
+fn has_2_join_fk_pushed_to_merge() {
+    const N_EACH: usize = 200;
+    const N_DISTINCT: usize = 20;
+    const PER_VALUE: usize = N_EACH / N_DISTINCT;  // 10
+
+    let mut context = setup();
+    define_two_owner_schema(&mut context);
+
+    let data_spec = DataSpec {
+        instances: vec![
+            InstanceSpec { type_: OWNER_1, count: N_EACH, key: Some(KEY_1) },
+            InstanceSpec { type_: OWNER_2, count: N_EACH, key: Some(KEY_2) },
+        ],
+        has: vec![
+            HasSpec {
+                owner_type: OWNER_1, attr_type: JOIN_ATTR,
+                count_each: 1, count_total: N_EACH,
+                attribute_generator: cyclic(N_DISTINCT),  // 10 per value
+            },
+            HasSpec {
+                owner_type: OWNER_2, attr_type: JOIN_ATTR,
+                count_each: 1, count_total: N_EACH,
+                attribute_generator: cyclic(N_DISTINCT),  // 10 per value
+            },
+        ],
+    };
+    load_data(&mut context, data_spec);
+
+    let pipeline = compile_read(&context, &two_owner_join_query());
+    let merges = multi_iter_intersection_steps(&pipeline);
+    let merge_count = merges.len();
+    let (rows, profile) = execute_read(pipeline);
+    let (ratio, advances, prof_rows, descr) = worst_advances_per_row(&profile);
+
+    eprintln!(
+        "fk_pushed_to_merge: rows={rows} merges={merge_count} worst={ratio:.2} adv/row \
+         ({advances}/{prof_rows}). step: {descr}"
+    );
+
+    // Output: 10 × 10 cartesian × 20 values = 2000.
+    let expected_rows = PER_VALUE * PER_VALUE * N_DISTINCT;
+    assert_eq!(rows, expected_rows, "fk_pushed_to_merge: cartesian-within-value → 2000 rows");
+    // Bound at 30 advances/row (matches many_to_many) — merge with cartesian
+    // sub-iterator should easily stay under this.
+    assert!(
+        ratio < 30.0,
+        "fk_pushed_to_merge: worst step should remain bounded (< 30 advances/row); got {ratio:.2}. step: {descr}",
+    );
+}
