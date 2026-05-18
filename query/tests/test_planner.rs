@@ -40,11 +40,15 @@ use executor::{
     ExecutionInterrupt,
     pipeline::stage::{ExecutionContext, StageIterator},
 };
+use executor::pipeline::pipeline::Pipeline;
+use executor::pipeline::stage::{ReadPipelineStage, StageAPI};
 use function::function_manager::FunctionManager;
 use query::options::QueryOptions;
 use query::{query_cache::QueryCache, query_manager::QueryManager};
 use resource::profile::{CommitProfile, PatternProfile, QueryProfile, StepProfile, SubstepProfile};
 use storage::{MVCCStorage, durability_client::WALClient, snapshot::CommittableSnapshot};
+use storage::durability_client::DurabilityClient;
+use storage::snapshot::{ReadSnapshot, ReadableSnapshot};
 use test_utils::TempDir;
 use test_utils_concept::{load_managers, setup_concept_storage};
 use test_utils_encoding::create_core_storage;
@@ -59,15 +63,6 @@ struct Context {
 }
 
 impl Context {
-    /// Rebuild the type manager (with fresh `TypeCache`) and thing manager (with synced
-    /// `Statistics`) so that the next planning pass sees the latest committed schema and
-    /// row counts. Must be called after every schema or write commit.
-    ///
-    /// Note: we cannot mutate the existing `Arc<ThingManager>` in place — `ThingManager`
-    /// holds its statistics as an `Arc<Statistics>` field, and even if we could swap that
-    /// `Arc`, outstanding clones of the parent `Arc<ThingManager>` (e.g. inside cached
-    /// executables) would still see the old value. Rebuilding both managers is the
-    /// straightforward correct fix; the cost is negligible in a test.
     fn refresh(&mut self) {
         let mut statistics = Statistics::new(DurabilitySequenceNumber::MIN);
         statistics.may_synchronise(self.storage.as_ref()).unwrap();
@@ -83,7 +78,6 @@ impl Context {
 
         self.type_manager = type_manager;
         self.thing_manager = thing_manager;
-        // The query cache holds executables compiled against stale stats — invalidate it.
         self.query_manager = QueryManager::new(Some(Arc::new(QueryCache::new())));
     }
 }
@@ -132,9 +126,7 @@ fn commit_writes(context: &mut Context, queries: &[String]) {
                 QueryOptions::default(),
             )
             .unwrap();
-        // `into_rows_iterator` executes eagerly for write pipelines: every write stage
-        // (Insert/Put/Update/Delete) drains its input iterator and performs all writes
-        // before returning. The returned iterator only walks the pre-computed output batch.
+        // `into_rows_iterator` executes eagerly
         let (_iterator, exec_context) = pipeline.into_rows_iterator(ExecutionInterrupt::new_uninterruptible()).unwrap();
         snapshot = Arc::into_inner(exec_context.snapshot).unwrap();
     }
@@ -147,7 +139,7 @@ fn commit_writes(context: &mut Context, queries: &[String]) {
 /// (rather than the un-executed prepared pipeline) because every existing test caller
 /// wants to inspect runtime counters, and we return the row count because most variants
 /// want to assert it as a correctness check independent of the plan shape.
-fn execute_read(context: &Context, query: &str) -> (usize, Arc<QueryProfile>) {
+fn compile_read(context: &Context, query: &str) -> Pipeline<ReadSnapshot<WALClient>, ReadPipelineStage<ReadSnapshot<WALClient>>> {
     let snapshot = Arc::new(context.storage.clone().open_snapshot_read());
     let parsed_query = typeql::parse_query(query).unwrap().into_structure().into_pipeline();
     let pipeline = context
@@ -169,6 +161,10 @@ fn execute_read(context: &Context, query: &str) -> (usize, Arc<QueryProfile>) {
             QueryOptions { force_query_profile: true },
         )
         .unwrap();
+    pipeline
+}
+
+fn execute_read(pipeline: Pipeline<ReadSnapshot<WALClient>, ReadPipelineStage<ReadSnapshot<WALClient>>>) -> (usize, Arc<QueryProfile>) {
     let (iterator, ExecutionContext { profile, .. }) =
         pipeline.into_rows_iterator(ExecutionInterrupt::new_uninterruptible()).unwrap();
     let rows = iterator.collect_owned().unwrap().len();
@@ -419,25 +415,6 @@ fn two_owner_join_query() -> String {
     )
 }
 
-/// Dump the chosen plan's relevant facts to stderr so test logs are useful when
-/// reviewing whether the planner did something interesting. Kept compact: one line
-/// of "name: worst N advances / R rows = ..." plus the merge-intersection step
-/// descriptions (if any), each preceded by an indent so the multi-line desc reads.
-fn report(name: &str, rows: usize, profile: &QueryProfile) {
-    let (ratio, advances, prof_rows, descr) = worst_advances_per_row(profile);
-    eprintln!(
-        "{name}: output={rows} rows; worst step {advances} advances / {prof_rows} rows = {ratio:.2} advances/row\n  step: {descr}"
-    );
-    let merges = merge_intersection_step_descriptions(profile);
-    if merges.is_empty() {
-        eprintln!("  [no multi-instruction merge intersection steps]");
-    } else {
-        for m in merges {
-            eprintln!("  [multi-iter merge]: {m}");
-        }
-    }
-}
-
 // --- VARIANT 1: has_2_join_balanced -----------------------------------------------------------
 
 /// Baseline: both sides have identical, non-overlapping-but-full-coverage stats.
@@ -477,8 +454,11 @@ fn has_2_join_balanced() {
     };
     load_data(&mut context, data_spec);
 
-    let (rows, profile) = execute_read(&context, &two_owner_join_query());
-    report("has_2_join_balanced", rows, &profile);
+    let pipeline = compile_read(&context, &two_owner_join_query());
+
+    // TODO: assert over executable plan shape
+
+    let (rows, profile) = execute_read(pipeline);
 
     // Each $join value matches exactly 1 e1 and 1 e2 → N output rows.
     assert_eq!(rows, N, "balanced join should produce exactly N rows");
@@ -538,8 +518,11 @@ fn has_2_join_subset_with_post_filter() {
     };
     load_data(&mut context, data_spec);
 
-    let (rows, profile) = execute_read(&context, &two_owner_join_query());
-    report("has_2_join_subset_with_post_filter", rows, &profile);
+    let pipeline = compile_read(&context, &two_owner_join_query());
+
+    // TODO: assert over executable plan shape
+
+    let (rows, profile) = execute_read(pipeline);
 
     // owner_2's 25 values are a subset of owner_1's 100 → 25 output rows.
     assert_eq!(rows, N_SMALL, "subset join should produce N_SMALL rows");
@@ -611,8 +594,11 @@ fn has_2_join_disjoint_domains() {
     };
     load_data(&mut context, data_spec);
 
-    let (rows, profile) = execute_read(&context, &two_owner_join_query());
-    report("has_2_join_disjoint_domains", rows, &profile);
+    let pipeline = compile_read(&context, &two_owner_join_query());
+
+    // TODO: assert over executable plan shape
+
+    let (rows, profile) = execute_read(pipeline);
 
     // Correctness: no overlap → 0 rows. The interesting question is whether the
     // planner picks merge or sequential; both are reasonable when the join is empty.
@@ -670,8 +656,11 @@ fn has_2_join_fk_fanout() {
     };
     load_data(&mut context, data_spec);
 
-    let (rows, profile) = execute_read(&context, &two_owner_join_query());
-    report("has_2_join_fk_fanout", rows, &profile);
+    let pipeline = compile_read(&context, &two_owner_join_query());
+
+    // TODO: assert over executable plan shape
+
+    let (rows, profile) = execute_read(pipeline);
 
     assert_eq!(rows, N_FK, "FK fanout: each FK joins to 1 PK → N_FK rows");
     let (ratio, advances, prof_rows, descr) = worst_advances_per_row(&profile);
@@ -730,8 +719,11 @@ fn has_2_join_selective_against_full() {
     };
     load_data(&mut context, data_spec);
 
-    let (rows, profile) = execute_read(&context, &two_owner_join_query());
-    report("has_2_join_selective_against_full", rows, &profile);
+    let pipeline = compile_read(&context, &two_owner_join_query());
+
+    // TODO: assert over executable plan shape
+
+    let (rows, profile) = execute_read(pipeline);
 
     assert_eq!(rows, 1, "selective-vs-full: 1 A-value matches 1 B-row");
 
@@ -802,8 +794,11 @@ fn has_2_join_many_to_many() {
     };
     load_data(&mut context, data_spec);
 
-    let (rows, profile) = execute_read(&context, &two_owner_join_query());
-    report("has_2_join_many_to_many", rows, &profile);
+    let pipeline = compile_read(&context, &two_owner_join_query());
+
+    // TODO: assert over executable plan shape
+
+    let (rows, profile) = execute_read(pipeline);
 
     assert_eq!(rows, EXPECTED_ROWS, "many-to-many: full cartesian within each value");
     let (ratio, advances, prof_rows, descr) = worst_advances_per_row(&profile);
@@ -831,7 +826,10 @@ fn has_2_join_empty() {
     define_two_owner_schema(&mut context);
     // Deliberately no data: skip load_data entirely. The empty case is the test.
 
-    let (rows, profile) = execute_read(&context, &two_owner_join_query());
-    report("has_2_join_empty", rows, &profile);
+    let pipeline = compile_read(&context, &two_owner_join_query());
+
+    // TODO: assert over executable plan shape
+
+    let (rows, profile) = execute_read(pipeline);
     assert_eq!(rows, 0, "empty schema: 0 rows");
 }
