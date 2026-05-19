@@ -514,31 +514,32 @@ impl BenchResult {
     }
 }
 
-// --- Profile dump (BENCH_PROFILE_DUMP=1): runs a fixed shape with full profile and
-// prints both forced-merge and forced-sequential profiles side-by-side. --------------------
+// --- Profile dump (BENCH_PROFILE_DUMP=1): runs each test scenario with profiling
+// enabled and dumps both forced-merge and forced-sequential QueryProfiles. -------------------
 
-fn dump_profile_comparison(n_each: usize) {
-    println!("=== Profile dump: {n_each}x{n_each} symmetric balanced, 1:1 full coverage ===");
-    println!("Textbook merge-win shape: both sides pre-sorted on join key, no waste, dense overlap.");
-    println!();
-
-    let mut context = setup();
-    define_two_owner_schema(&mut context);
-    println!("[setup] loading {n_each} + {n_each} has-edges...");
+fn dump_profile_for_scenario(
+    label: &str,
+    shape_label: &str,
+    query: &str,
+    setup_data: impl FnOnce(&mut Context),
+) {
+    println!("================================================================");
+    println!("=== SCENARIO: {label}");
+    println!("=== {shape_label}");
+    println!("================================================================");
     let setup_start = Instant::now();
-    load_data(&mut context, build_symmetric_spec(n_each, n_each));
-    println!("[setup] done in {:.2?}", setup_start.elapsed());
+    let mut context = setup();
+    setup_data(&mut context);
+    println!("[setup] data loaded in {:.2?}", setup_start.elapsed());
     println!();
 
-    let query = two_owner_join_query();
-
-    // Warmup once (page cache, etc.) with whatever plan the planner naturally picks.
+    // Warmup (page cache, etc.) with whatever plan the planner naturally picks.
     apply_mode(Mode::Natural);
-    let _ = execute_read(compile_read(&context, &query));
+    let _ = execute_read(compile_read(&context, query));
 
     for mode in [Mode::ForceNoMerge, Mode::ForceMerge] {
         apply_mode(mode);
-        let pipeline = compile_read_profiled(&context, &query);
+        let pipeline = compile_read_profiled(&context, query);
         let plan_label = if pipeline_has_multi_iter_merge(&pipeline) { "merge" } else { "sequential" };
 
         let exec_start = Instant::now();
@@ -547,14 +548,132 @@ fn dump_profile_comparison(n_each: usize) {
         let row_count = iterator.collect_owned().unwrap().len();
         let wall = exec_start.elapsed();
 
-        println!("################################################################");
-        println!("# mode: {:<16}  plan picked: {}", mode.label(), plan_label);
-        println!("# wall: {:>9.2?}    rows produced: {}", wall, row_count);
-        println!("################################################################");
+        println!("---- {label} :: {:<16}  plan: {:<10}  wall: {:>9.2?}  rows: {}",
+            mode.label(), plan_label, wall, row_count);
         println!("{}", exec_ctx.profile);
         println!();
     }
     apply_mode(Mode::Natural);
+    println!();
+}
+
+fn dump_profile_all_scenarios() {
+    // Run each scenario at the same scales as the test_planner.rs tests so the
+    // counter numbers are directly cite-able in the test docstrings.
+    println!("Profile dump for all 8 test scenarios at test-suite scales.");
+    println!();
+
+    // === Merge-must-win shapes ===
+
+    dump_profile_for_scenario(
+        "merge_wins_symmetric_balanced", "500x500 owners 1:1 full coverage",
+        &two_owner_join_query(),
+        |ctx| { define_two_owner_schema(ctx); load_data(ctx, build_symmetric_spec(500, 500)); },
+    );
+    dump_profile_for_scenario(
+        "merge_wins_moderate_cartesian", "500x500 owners, 50 distinct (10:1 fan-out)",
+        &two_owner_join_query(),
+        |ctx| { define_two_owner_schema(ctx); load_data(ctx, build_symmetric_spec(500, 50)); },
+    );
+    dump_profile_for_scenario(
+        "merge_wins_heavy_cartesian", "500x500 owners, 10 distinct (50:1 fan-out)",
+        &two_owner_join_query(),
+        |ctx| { define_two_owner_schema(ctx); load_data(ctx, build_symmetric_spec(500, 10)); },
+    );
+    dump_profile_for_scenario(
+        "merge_wins_at_scale_with_fanout", "1000x1000 owners, 100 distinct (10:1 fan-out)",
+        &two_owner_join_query(),
+        |ctx| { define_two_owner_schema(ctx); load_data(ctx, build_symmetric_spec(1_000, 100)); },
+    );
+
+    // === Sequential-must-win shapes ===
+
+    dump_profile_for_scenario(
+        "sequential_wins_tiny_outer_huge_inner", "1 outer x 2000 inner, full coverage",
+        &two_owner_join_query(),
+        |ctx| {
+            define_two_owner_schema(ctx);
+            load_data(ctx, DataSpec {
+                instances: vec![
+                    InstanceSpec { type_: OWNER_1, count: 1, key: Some(KEY_1) },
+                    InstanceSpec { type_: OWNER_2, count: 2_000, key: Some(KEY_2) },
+                ],
+                has: vec![
+                    HasSpec { owner_type: OWNER_1, attr_type: JOIN_ATTR,
+                              count_each: 1, count_total: 1,
+                              attribute_generator: sequential() },
+                    HasSpec { owner_type: OWNER_2, attr_type: JOIN_ATTR,
+                              count_each: 1, count_total: 2_000,
+                              attribute_generator: sequential() },
+                ],
+            });
+        },
+    );
+    dump_profile_for_scenario(
+        "sequential_wins_subset_coverage", "100 outer (0..99) ⊂ 2000 inner (0..1999)",
+        &two_owner_join_query(),
+        |ctx| {
+            define_two_owner_schema(ctx);
+            load_data(ctx, DataSpec {
+                instances: vec![
+                    InstanceSpec { type_: OWNER_1, count: 100, key: Some(KEY_1) },
+                    InstanceSpec { type_: OWNER_2, count: 2_000, key: Some(KEY_2) },
+                ],
+                has: vec![
+                    HasSpec { owner_type: OWNER_1, attr_type: JOIN_ATTR,
+                              count_each: 1, count_total: 100,
+                              attribute_generator: sequential() },
+                    HasSpec { owner_type: OWNER_2, attr_type: JOIN_ATTR,
+                              count_each: 1, count_total: 2_000,
+                              attribute_generator: sequential() },
+                ],
+            });
+        },
+    );
+    dump_profile_for_scenario(
+        "sequential_wins_noisy_inner", "100+100 query (0..99) + 2000 noise (100..2099)",
+        &two_owner_join_query(),
+        |ctx| {
+            define_two_owner_with_noise_schema(ctx, 2);
+            let mut spec = DataSpec {
+                instances: vec![
+                    InstanceSpec { type_: OWNER_1, count: 100, key: Some(KEY_1) },
+                    InstanceSpec { type_: OWNER_2, count: 100, key: Some(KEY_2) },
+                ],
+                has: vec![
+                    HasSpec { owner_type: OWNER_1, attr_type: JOIN_ATTR,
+                              count_each: 1, count_total: 100,
+                              attribute_generator: sequential() },
+                    HasSpec { owner_type: OWNER_2, attr_type: JOIN_ATTR,
+                              count_each: 1, count_total: 100,
+                              attribute_generator: sequential() },
+                ],
+            };
+            add_noise_owners(&mut spec, 2, 1_000, 100);  // 2 * 1000 = 2000 noise
+            load_data(ctx, spec);
+        },
+    );
+    dump_profile_for_scenario(
+        "sequential_wins_asymmetric_coverage", "10 outer (0..9) x 2000 inner (5..2004), overlap=5",
+        &two_owner_join_query(),
+        |ctx| {
+            define_two_owner_schema(ctx);
+            load_data(ctx, DataSpec {
+                instances: vec![
+                    InstanceSpec { type_: OWNER_1, count: 10, key: Some(KEY_1) },
+                    InstanceSpec { type_: OWNER_2, count: 2_000, key: Some(KEY_2) },
+                ],
+                has: vec![
+                    HasSpec { owner_type: OWNER_1, attr_type: JOIN_ATTR,
+                              count_each: 1, count_total: 10,
+                              attribute_generator: sequential() },
+                    HasSpec { owner_type: OWNER_2, attr_type: JOIN_ATTR,
+                              count_each: 1, count_total: 2_000,
+                              attribute_generator: offset_unique(5) },
+                ],
+            });
+        },
+    );
 }
 
 fn time_iterations(
@@ -624,12 +743,12 @@ fn main() {
     println!("Times include compile + execute per iteration (compile is small at this scale).");
     println!();
 
-    // Profile dump mode: run a single fixed scenario, print full QueryProfile for each
-    // plan shape, then exit. Use to inspect where merge's overhead lives.
+    // Profile dump mode: run each of the 8 test_planner.rs scenarios at test-suite scales
+    // with profiling enabled, print full QueryProfile for both forced-sequential and
+    // forced-merge plans, then exit. Use to extract per-step seek/advance counters for
+    // each scenario.
     if std::env::var("BENCH_PROFILE_DUMP").is_ok() {
-        let n: usize = std::env::var("BENCH_PROFILE_N")
-            .ok().and_then(|s| s.parse().ok()).unwrap_or(5_000);
-        dump_profile_comparison(n);
+        dump_profile_all_scenarios();
         return;
     }
 
