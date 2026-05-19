@@ -427,6 +427,71 @@ fn build_nway_spec(n_sides: usize, n_owners_per_side: usize) -> DataSpec {
     spec
 }
 
+// --- Multi-attribute filter on a single entity (sweep over K attribute patterns) ------------
+//
+// Shape: `match $x isa widget, has attr_0 0, has attr_1 0, ..., has attr_{K-1} 0;`
+// Each `has attr_i 0` constrains $x via a `Reverse[has(attr_i = 0)]` iter that's pre-sorted
+// by owner-id. Sequential drives from one such set, probes others with bind-from on $x.
+// Merge intersects all K sorted-by-owner-id iters in lockstep.
+//
+// Data layout: N widgets, each with K attribute edges. For attribute i and widget j, the
+// value is (j / M^i) % M — base-M digit-position assignment, giving a uniform combinatorial
+// distribution over (val_0, val_1, ..., val_{K-1}). Expected output for the all-zeros query
+// is N / M^K rows (1 widget per combo, repeated when N > M^K).
+
+const WIDGET: &str = "widget";
+const WIDGET_KEY: &str = "widget_key";
+const MULTI_ATTR_TYPES: &[&str] = &[
+    "m_attr_0", "m_attr_1", "m_attr_2", "m_attr_3", "m_attr_4",
+    "m_attr_5", "m_attr_6", "m_attr_7", "m_attr_8", "m_attr_9",
+];
+
+fn define_multi_attr_schema(context: &mut Context, k_attrs: usize) {
+    assert!(k_attrs >= 2 && k_attrs <= MULTI_ATTR_TYPES.len());
+    let mut schema = format!("define entity {WIDGET} owns {WIDGET_KEY} @key");
+    for i in 0..k_attrs {
+        schema.push_str(&format!(", owns {}", MULTI_ATTR_TYPES[i]));
+    }
+    schema.push_str(&format!("; attribute {WIDGET_KEY}, value integer;"));
+    for i in 0..k_attrs {
+        schema.push_str(&format!(" attribute {}, value integer;", MULTI_ATTR_TYPES[i]));
+    }
+    define_schema(context, &schema);
+}
+
+fn multi_attr_query(k_attrs: usize, fixed_value: i64) -> String {
+    let mut q = format!("match $x isa {WIDGET}");
+    for i in 0..k_attrs {
+        q.push_str(&format!(", has {} {fixed_value}", MULTI_ATTR_TYPES[i]));
+    }
+    q.push(';');
+    q
+}
+
+fn load_multi_attr_data(context: &mut Context, n_owners: usize, k_attrs: usize, m_values: usize) {
+    assert!(k_attrs <= MULTI_ATTR_TYPES.len());
+    let mut spec = DataSpec {
+        instances: vec![InstanceSpec { type_: WIDGET, count: n_owners, key: Some(WIDGET_KEY) }],
+        has: vec![],
+    };
+    for i in 0..k_attrs {
+        // Base-M digit-position: widget j gets value (j / m^i) % m for attr_i.
+        // This gives a uniform combinatorial assignment.
+        let divisor: usize = m_values.pow(i as u32);
+        let modulus = m_values;
+        spec.has.push(HasSpec {
+            owner_type: WIDGET, attr_type: MULTI_ATTR_TYPES[i],
+            count_each: 1, count_total: n_owners,
+            attribute_generator: Box::new(move |edge_idx| {
+                // load_data assigns edge `e` to owner `e % owner_count` round-robin;
+                // with count_total = n_owners and count_each = 1, edge_idx == owner_idx.
+                ((edge_idx / divisor) % modulus) as i64
+            }),
+        });
+    }
+    load_data(context, spec);
+}
+
 // --- Bench harness ----------------------------------------------------------------------------
 
 fn build_symmetric_spec(n_owners: usize, distinct_values: usize) -> DataSpec {
@@ -674,6 +739,20 @@ fn dump_profile_all_scenarios() {
             });
         },
     );
+
+    // === Multi-attribute filter scenarios (merge-wins shape) =================================
+    // K=3, M=3, N=1000 — clean signal, planner naturally picks merge, merge wins ~1.8x.
+    dump_profile_for_scenario(
+        "merge_wins_multi_attr_K3_M3_N1000", "1000 widgets, 3 attrs × 3 values; query: all-zeros",
+        &multi_attr_query(3, 0),
+        |ctx| { define_multi_attr_schema(ctx, 3); load_multi_attr_data(ctx, 1_000, 3, 3); },
+    );
+    // K=10, M=2, N=1000 — extreme arity case to see how counters scale.
+    dump_profile_for_scenario(
+        "merge_wins_multi_attr_K10_M2_N1000", "1000 widgets, 10 attrs × 2 values; query: all-zeros",
+        &multi_attr_query(10, 0),
+        |ctx| { define_multi_attr_schema(ctx, 10); load_multi_attr_data(ctx, 1_000, 10, 2); },
+    );
 }
 
 fn time_iterations(
@@ -905,6 +984,55 @@ fn main() {
     // Theoretical asymmetry: sequential plan pays M × (N-1) probe-opens, merge pays N
     // total opens + N × M advances. As N grows, sequential's open cost compounds while
     // merge's stays linear in (N+1)M. So merge's relative position should improve with N.
+
+    // === Multi-attribute filter on single entity (sweep K patterns) =========================
+    // Single $x with K `has attr_i 0` patterns; intersection on owner-id is structurally
+    // the case where sort-merge has its best chance vs INL/bind-from. Sweep K with N=1000
+    // and M=3 (each pattern selects N/M ≈ 333 owners). Expected output = N / M^K rows.
+    {
+        const MULTI_ATTR_N: usize = 1_000;
+        const MULTI_ATTR_M: usize = 3;
+        for &k_attrs in &[2usize, 3, 5] {
+            let label_owned = format!("multi_attr_K{k_attrs}_M{MULTI_ATTR_M}_N{MULTI_ATTR_N}");
+            let label: &'static str = Box::leak(label_owned.into_boxed_str());
+            let shape = format!(
+                "{MULTI_ATTR_N} widgets, {k_attrs} attrs × {MULTI_ATTR_M} values; \
+                 query: all-zeros (output ≈ {MULTI_ATTR_N}/{MULTI_ATTR_M}^{k_attrs} rows)"
+            );
+            results.push(run_scenario_with_query(
+                label, shape, 30,
+                multi_attr_query(k_attrs, 0),
+                move |ctx| {
+                    define_multi_attr_schema(ctx, k_attrs);
+                    load_multi_attr_data(ctx, MULTI_ATTR_N, k_attrs, MULTI_ATTR_M);
+                },
+            ));
+            println!();
+        }
+    }
+    // High-K + low-selectivity (M=2 binary attrs): each pattern matches ~half of all owners,
+    // intersection tightens by 2× per added pattern. Classical case for sort-merge.
+    {
+        const MULTI_ATTR_N: usize = 1_000;
+        const MULTI_ATTR_M: usize = 2;
+        for &k_attrs in &[5usize, 7, 10] {
+            let label_owned = format!("multi_attr_K{k_attrs}_M{MULTI_ATTR_M}_N{MULTI_ATTR_N}");
+            let label: &'static str = Box::leak(label_owned.into_boxed_str());
+            let shape = format!(
+                "{MULTI_ATTR_N} widgets, {k_attrs} attrs × {MULTI_ATTR_M} values; \
+                 query: all-zeros (output ≈ {MULTI_ATTR_N}/{MULTI_ATTR_M}^{k_attrs} rows)"
+            );
+            results.push(run_scenario_with_query(
+                label, shape, 30,
+                multi_attr_query(k_attrs, 0),
+                move |ctx| {
+                    define_multi_attr_schema(ctx, k_attrs);
+                    load_multi_attr_data(ctx, MULTI_ATTR_N, k_attrs, MULTI_ATTR_M);
+                },
+            ));
+            println!();
+        }
+    }
 
     const NWAY_OWNERS_PER_SIDE: usize = 500;
     for &n_sides in &[2usize, 3, 4, 5, 6, 7, 8, 10, 12] {

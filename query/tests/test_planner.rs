@@ -32,11 +32,12 @@
 //! does ~3-6× more storage seeks+advances per output row than the equivalent
 //! bound-from probe, plus ~8.5µs/row of per-emit overhead. So:
 //!
-//! Merge-must-win scenarios (cost model thinks merge wins; **runtime says no**):
-//! - `merge_wins_symmetric_balanced`         — 1:1 baseline, full coverage    [FAILS: planner picks seq]
-//! - `merge_wins_moderate_cartesian`         — 10:1 per-value fan-out         [FAILS: planner picks seq]
+//! Merge-must-win scenarios (cost model thinks merge wins):
+//! - `merge_wins_multi_attr_filter`          — K patterns on one entity        [PASSES: merge actually wins runtime ~1.3-1.8×]
+//! - `merge_wins_symmetric_balanced`         — 1:1 baseline, full coverage    [FAILS: planner picks seq (correctly per runtime)]
+//! - `merge_wins_moderate_cartesian`         — 10:1 per-value fan-out         [FAILS: planner picks seq (correctly per runtime)]
 //! - `merge_wins_heavy_cartesian`            — 50:1 per-value fan-out         [PASSES: planner picks merge, but merge is 3× SLOWER]
-//! - `merge_wins_at_scale_with_fanout`       — moderate fan-out, higher card  [FAILS: planner picks seq]
+//! - `merge_wins_at_scale_with_fanout`       — moderate fan-out, higher card  [FAILS: planner picks seq (correctly per runtime)]
 //!
 //! Sequential-must-win scenarios (planner correctly picks sequential):
 //! - `sequential_wins_tiny_outer_huge_inner` — 1 outer × N inner              [PASSES]
@@ -701,6 +702,145 @@ fn merge_wins_at_scale_with_fanout() {
     assert!(
         ratio < 20.0,
         "at_scale_with_fanout: worst step should be O(1) per row (< 20 advances/row); \
+         got {ratio:.2} ({advances}/{prof_rows}). step: {descr}",
+    );
+}
+
+// --- Multi-attribute filter helpers (single-entity, K-pattern intersection) -----------------
+
+const WIDGET: &str = "widget";
+const WIDGET_KEY: &str = "widget_key";
+const MULTI_ATTR_TYPES: &[&str] = &[
+    "m_attr_0", "m_attr_1", "m_attr_2", "m_attr_3", "m_attr_4",
+    "m_attr_5", "m_attr_6", "m_attr_7", "m_attr_8", "m_attr_9",
+];
+
+fn define_multi_attr_schema(context: &mut Context, k_attrs: usize) {
+    assert!(k_attrs >= 2 && k_attrs <= MULTI_ATTR_TYPES.len());
+    let mut schema = format!("define entity {WIDGET} owns {WIDGET_KEY} @key");
+    for i in 0..k_attrs {
+        schema.push_str(&format!(", owns {}", MULTI_ATTR_TYPES[i]));
+    }
+    schema.push_str(&format!("; attribute {WIDGET_KEY}, value integer;"));
+    for i in 0..k_attrs {
+        schema.push_str(&format!(" attribute {}, value integer;", MULTI_ATTR_TYPES[i]));
+    }
+    define_schema(context, &schema);
+}
+
+fn multi_attr_query(k_attrs: usize, fixed_value: i64) -> String {
+    let mut q = format!("match $x isa {WIDGET}");
+    for i in 0..k_attrs {
+        q.push_str(&format!(", has {} {fixed_value}", MULTI_ATTR_TYPES[i]));
+    }
+    q.push(';');
+    q
+}
+
+fn build_multi_attr_spec(n_owners: usize, k_attrs: usize, m_values: usize) -> DataSpec {
+    assert!(k_attrs <= MULTI_ATTR_TYPES.len());
+    let mut spec = DataSpec {
+        instances: vec![InstanceSpec { type_: WIDGET, count: n_owners, key: Some(WIDGET_KEY) }],
+        has: vec![],
+    };
+    for i in 0..k_attrs {
+        // Base-M digit-position: widget j gets value (j / m^i) % m for attr_i.
+        // This gives a uniform combinatorial assignment over (val_0, ..., val_{K-1}).
+        let divisor: usize = m_values.pow(i as u32);
+        let modulus = m_values;
+        spec.has.push(HasSpec {
+            owner_type: WIDGET, attr_type: MULTI_ATTR_TYPES[i],
+            count_each: 1, count_total: n_owners,
+            attribute_generator: Box::new(move |edge_idx| {
+                // With count_total = n_owners and count_each = 1, edge_idx == owner_idx.
+                ((edge_idx / divisor) % modulus) as i64
+            }),
+        });
+    }
+    spec
+}
+
+// --- merge_wins_multi_attr_filter ------------------------------------------------------------
+
+/// Multi-attribute filter on a single entity — the canonical merge-wins shape.
+/// One `widget` entity owning K integer attributes; query constrains all K to a
+/// fixed value:
+///   `match $x isa widget, has attr_0 0, has attr_1 0, has attr_2 0;`
+///
+/// Data: N=1000 widgets, K=3 attrs × M=3 values each. Values are assigned by
+/// base-M digit positions, so each combination appears N/M^K = ~37 times. The
+/// all-zeros query produces ~37 widget matches.
+///
+/// Why merge actually wins here (unlike the same-variable joins in other tests):
+/// the K `Reverse[has(attr_i = 0)]` iterators are all pre-sorted by **owner-id**
+/// (storage layout: `[has-reverse][attr_type][attr_value][owner_type][owner_iid]`,
+/// so with the attr_type and attr_value pinned, the remaining iteration is in
+/// owner_iid order). Merge co-walks all K owner-sorted iters in one pass;
+/// sequential would have to drive from one filter (~333 widgets) and bind-from
+/// probe each of the other K-1 patterns per output row.
+///
+/// Expected (cost model + theory): each per-attr filter selects ~N/M = 333 widgets.
+/// Sequential cascades K-1 probe steps (334 → 112 → 38 rows), each paying per-row
+/// pipeline overhead; merge does the whole intersection in one step, paying overhead
+/// only on the final 38 emits. Merge expected to win by a meaningful margin.
+///
+/// Actually observed (profile dump at test scale, opt mode, single execution):
+///   forced sequential: 3.63 ms total, cascade of 3 join steps:
+///     step [1] drive attr_0: 334 rows × 4.4 µs/row — 1 seek + 334 advances total
+///     step [4] probe attr_1: 112 rows × 13.1 µs/row — 334 seeks + 112 advances total
+///     step [6] probe attr_2: 38 rows × 2.9 µs/row — 112 seeks total
+///   forced merge:      0.85 ms total, single intersection step:
+///     step [2] merge 3 iters: 38 rows × 18.3 µs/row — 151 seeks + 1264 advances total
+///                                              →  merge wins by 4.3× (this run)
+/// Planner picks merge. **Test PASSES.** First confirmed merge-wins shape in the
+/// suite: intersection over entity-id (not attribute value), multiple iterators of
+/// similar size all pre-sorted on the same key. The averaged iterated bench at the
+/// same scale shows ~1.8× win (single executions can swing higher due to warmup
+/// and pipeline-init variance).
+///
+/// Why merge wins despite doing more raw advances per row: sequential's per-output
+/// cost compounds across K-1 cascading probe steps (each step pays pipeline overhead
+/// per *intermediate* row, not per final output). Merge concentrates all the work
+/// in one step that pays overhead only on the final 38 rows. The structural pattern
+/// — multiple owner-id-sorted iters all needing to be intersected — is what the
+/// sort-merge intersection executor exists for.
+#[test]
+fn merge_wins_multi_attr_filter() {
+    const N: usize = 1_000;
+    const K: usize = 3;
+    const M: usize = 3;
+    const EXPECTED_ROWS: usize = N / (M * M * M); // 1000 / 27 = 37
+
+    let mut context = setup();
+    define_multi_attr_schema(&mut context, K);
+    load_data(&mut context, build_multi_attr_spec(N, K, M));
+
+    let pipeline = compile_read(&context, &multi_attr_query(K, 0));
+    let merges = multi_iter_intersection_steps(&pipeline);
+    assert!(
+        !merges.is_empty(),
+        "multi_attr_filter: planner should pick a merge intersection \
+         (K={K} same-entity attribute filters, all owner-id sorted — \
+         the canonical merge-wins shape); found none",
+    );
+
+    let (rows, profile) = execute_read(pipeline);
+    // Each base-M combination appears floor(N / M^K) or ceil(N / M^K) times due to
+    // integer arithmetic in the digit-position generator. Allow ±a few rows of slack.
+    let lo = EXPECTED_ROWS.saturating_sub(2);
+    let hi = EXPECTED_ROWS + 2;
+    assert!(
+        (lo..=hi).contains(&rows),
+        "multi_attr_filter: expected ~{EXPECTED_ROWS} rows (= N / M^K with N={N}, M={M}, K={K}); \
+         got {rows}",
+    );
+    let (ratio, advances, prof_rows, descr) = worst_advances_per_row(&profile);
+    // Merge co-walks K iters each of ~N/M size. Per output row, roughly ~K × M
+    // advances of "scan one position on each side"; bound generously at 30/row to
+    // catch only a catastrophically-bad plan.
+    assert!(
+        ratio < 30.0,
+        "multi_attr_filter: worst step should be bounded (< 30 advances/row); \
          got {ratio:.2} ({advances}/{prof_rows}). step: {descr}",
     );
 }
