@@ -75,11 +75,38 @@ rust_test(
     use_libtest_harness = False,
 )
 
+# Microbench comparing merge vs sequential plans on the same data, across
+# scenarios where the cost model's pick is non-obvious. Run with:
+#   bazel run --compilation_mode=opt //query/benches:bench_planner_join_compare
+rust_test(
+    name = "bench_planner_join_compare",
+    srcs = ["bench_planner_join_compare.rs"],
+    deps = [
+        "//compiler",
+        "//concept",
+        "//durability",
+        "//encoding",
+        "//executor",
+        "//function",
+        "//query",
+        "//resource",
+        "//storage",
+
+        "//concept/tests:test_utils_concept",
+        "//encoding/tests:test_utils_encoding",
+        "//util/test:test_utils",
+
+        "@typeql//rust:typeql",
+    ],
+    use_libtest_harness = False,
+)
+
 rustfmt_test(
     name = "rustfmt_test",
     targets = [
         ":bench_insert_queries",
         ":bench_insert_queries_multithreaded",
+        ":bench_planner_join_compare",
     ],
     size = "small",
 )
