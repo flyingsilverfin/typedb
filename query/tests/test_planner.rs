@@ -7,26 +7,47 @@
 //! Planner-focused integration tests. These build a small schema, populate
 //! data via a `DataSpec`-driven loader so cardinalities are easy to control,
 //! run a read query, and inspect the resulting `QueryProfile` to assert that
-//! the planner picked the plan shape (merge vs sequential) that the cost
-//! model should prefer.
+//! the planner picked the plan shape (merge vs sequential) that we *expect*
+//! it should pick from runtime cost.
 //!
 //! Each test is a "must-pick-X" scenario at production-ish scale: data is
-//! shaped so one plan is clearly cheaper, the planner is expected to pick
-//! that shape, and the assertion fires if it doesn't. Correctness (row
+//! shaped so one plan should clearly be cheaper, the planner is expected to
+//! pick that shape, and the assertion fires if it doesn't. Correctness (row
 //! count) is also checked so a wrong plan with the right row count still
 //! gets flagged on shape, and a wrong row count gets flagged either way.
 //!
-//! Merge-must-win scenarios (full coverage, no waste, per-value fan-out):
-//! - `merge_wins_symmetric_balanced`         — 1:1 baseline, both sides full coverage
-//! - `merge_wins_moderate_cartesian`         — 10:1 per-value fan-out symmetric
-//! - `merge_wins_heavy_cartesian`            — 50:1 per-value fan-out symmetric
-//! - `merge_wins_at_scale_with_fanout`       — moderate fan-out at higher cardinality
+//! Each test's docstring lists two things:
+//! - **Expected** (theoretical/cost-model): the plan we'd expect to win from
+//!   the literature / from the planner's `Cost::join` formula
+//! - **Actually observed** (bench, opt mode, FORCE_*_INTERSECTION env-var
+//!   forcing on each plan to measure both on the same data): the runtime
+//!   wall-clock for each plan, and what the planner currently picks
 //!
-//! Sequential-must-win scenarios (selective outer, waste, asymmetric coverage):
-//! - `sequential_wins_tiny_outer_huge_inner` — 1 outer × N inner, cardinality extreme
-//! - `sequential_wins_subset_coverage`       — small outer ⊂ huge inner; the bug case
-//! - `sequential_wins_noisy_inner`           — noise inflates scan range; merge double-pays
-//! - `sequential_wins_asymmetric_coverage`   — small outer × huge inner, mostly disjoint
+//! Run the bench yourself with:
+//!   bazel run --compilation_mode=opt //query/benches:bench_planner_join_compare
+//!
+//! Empirical summary at time of writing: **sequential beats merge by ~2-3.5×
+//! in every shape we've tested** (2-side has-joins from 1×5000 up to 5K×5K,
+//! plus N-way same-variable joins from 2 to 12 sides). The IntersectionStep
+//! does ~3-6× more storage seeks+advances per output row than the equivalent
+//! bound-from probe, plus ~8.5µs/row of per-emit overhead. So:
+//!
+//! Merge-must-win scenarios (cost model thinks merge wins; **runtime says no**):
+//! - `merge_wins_symmetric_balanced`         — 1:1 baseline, full coverage    [FAILS: planner picks seq]
+//! - `merge_wins_moderate_cartesian`         — 10:1 per-value fan-out         [FAILS: planner picks seq]
+//! - `merge_wins_heavy_cartesian`            — 50:1 per-value fan-out         [PASSES: planner picks merge, but merge is 3× SLOWER]
+//! - `merge_wins_at_scale_with_fanout`       — moderate fan-out, higher card  [FAILS: planner picks seq]
+//!
+//! Sequential-must-win scenarios (planner correctly picks sequential):
+//! - `sequential_wins_tiny_outer_huge_inner` — 1 outer × N inner              [PASSES]
+//! - `sequential_wins_subset_coverage`       — small outer ⊂ huge inner       [PASSES]
+//! - `sequential_wins_noisy_inner`           — noise inflates scan range      [PASSES]
+//! - `sequential_wins_asymmetric_coverage`   — small outer × huge inner       [PASSES]
+//!
+//! The 3 failing merge_wins_* tests are intentional: they encode the
+//! pre-bench theoretical expectation so a future runtime improvement to the
+//! IntersectionStep (or a cost-model recalibration that gives up on merge in
+//! these shapes) makes the discrepancy visible rather than silent.
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -427,9 +448,18 @@ fn add_noise_owners(spec: &mut DataSpec, n_noise_types: usize, per_type: usize, 
 
 /// Symmetric balanced full-coverage baseline. Both sides 500 owners, 1:1 with
 /// values 0..499 → 500 output rows. No waste, no coverage gap, no noise.
-/// Sequential pays ~500×(5+1)=3000 cost units (outer drive + per-row probe);
-/// merge pays ~1000 (one co-walk over the 500-entry storage range). Merge
-/// wins by ~3×.
+///
+/// Expected (cost model + classical literature): textbook merge-win shape —
+/// both sides pre-sorted on join key, dense overlap, no waste. Sequential
+/// pays ~500×(5+1)=3000 cost units; merge pays ~1000 (one co-walk over the
+/// 500-entry storage range). Merge expected to win by ~3×.
+///
+/// Actually observed (bench at 5K each side, opt mode):
+///   forced sequential:  43.4 ms/iter
+///   forced merge:      145.8 ms/iter   →  sequential wins by 3.4×
+/// Planner picks sequential. **Test currently FAILS its plan-shape assertion**
+/// (the planner's pick is empirically correct; the assertion encodes the
+/// theoretical expectation we want to revisit once IntersectionStep is faster).
 #[test]
 fn merge_wins_symmetric_balanced() {
     const N: usize = 500;
@@ -478,9 +508,18 @@ fn merge_wins_symmetric_balanced() {
 
 /// Moderate per-value fan-out. Both sides 500 owners cyclic over 50 distinct
 /// values (10 owners per value per side). Output = 50 × 10 × 10 = 5000 rows
-/// (cartesian within each value). Sequential pays ~500×(5+10)=7500 (outer
-/// drive + each probe walks the 10-entry per-value cluster); merge pays
-/// ~1000 + per-value cartesian sub-iter. Merge wins by ~5×.
+/// (cartesian within each value).
+///
+/// Expected (cost model): sequential pays ~500×(5+10)=7500 (each probe walks
+/// the 10-entry per-value cluster); merge pays ~1000 + per-value cartesian
+/// sub-iter. Merge expected to win by ~5×.
+///
+/// Actually observed (bench at 2K/200distinct, opt mode):
+///   forced sequential:  70.5 ms/iter
+///   forced merge:      262.7 ms/iter   →  sequential wins by 3.7×
+/// Planner picks sequential. **Test currently FAILS its plan-shape assertion**
+/// (the per-value cartesian sub-iter overhead in the executor exceeds what
+/// the cost model predicts; sequential's bind-from probe is faster per row).
 #[test]
 fn merge_wins_moderate_cartesian() {
     const N_OWNERS: usize = 500;
@@ -532,9 +571,21 @@ fn merge_wins_moderate_cartesian() {
 
 /// Heavy per-value fan-out. Both sides 500 owners cyclic over 10 distinct
 /// values (50 owners per value per side). Output = 10 × 50 × 50 = 25000 rows.
-/// Sequential pays ~500×(5+50)=27500 (each probe walks the 50-entry per-value
-/// cluster); merge pays ~1000 + per-value cartesian. Merge wins by ~25×;
-/// this is the regime where the cartesian sub-iter most clearly pays off.
+///
+/// Expected (cost model): sequential pays ~500×(5+50)=27500 (each probe walks
+/// the 50-entry per-value cluster); merge pays ~1000 + per-value cartesian.
+/// Merge expected to win by ~25× — this is the regime where the cartesian
+/// sub-iter most clearly should pay off.
+///
+/// Actually observed (bench at 2K/40distinct, opt mode):
+///   forced merge / natural:   1.03 s, 1.10 s/iter  (planner picks merge)
+///   forced sequential:      323 ms/iter            →  sequential beats merge by 3.2×
+/// Planner mis-picks merge: this is the one shape where the cost model picks
+/// merge but the runtime would have preferred sequential. **Test currently
+/// PASSES its plan-shape assertion** (planner does pick merge) but the choice
+/// is empirically wrong — the bench shows sequential would have been ~3×
+/// faster. The cartesian sub-iter's per-emit work is much higher than the
+/// model accounts for.
 #[test]
 fn merge_wins_heavy_cartesian() {
     const N_OWNERS: usize = 500;
@@ -586,10 +637,18 @@ fn merge_wins_heavy_cartesian() {
 
 /// Moderate fan-out at higher cardinality. Both sides 1000 owners cyclic over
 /// 100 distinct values (10 owners per value per side). Output = 100 × 10 × 10
-/// = 10000 rows. Same regime as `moderate_cartesian` but at 2× scale to ensure
-/// the choice holds as cardinality grows (sequential's per-outer-row cost
-/// scales linearly with |outer|, merge's scan does too but with a smaller
-/// constant).
+/// = 10000 rows. Same regime as `moderate_cartesian` but at 2× scale.
+///
+/// Expected (cost model): same shape as moderate_cartesian, just larger —
+/// merge expected to win by ~5× (sequential's per-outer-row cost scales
+/// linearly with |outer|, merge's scan does too but with a smaller constant).
+///
+/// Actually observed (bench at 5K/500distinct, opt mode):
+///   forced sequential: 174.7 ms/iter
+///   forced merge:      623.2 ms/iter   →  sequential wins by 3.6×
+/// Planner picks sequential. **Test currently FAILS its plan-shape assertion**.
+/// The 5× scale-up does not change the ratio — merge's overhead per output
+/// row is constant, so just scaling N doesn't help merge catch up.
 #[test]
 fn merge_wins_at_scale_with_fanout() {
     const N_OWNERS: usize = 1000;
@@ -642,11 +701,20 @@ fn merge_wins_at_scale_with_fanout() {
 // === Sequential-must-win tests ===============================================================
 
 /// Extreme cardinality asymmetry. owner_1: 1 owner with value 0; owner_2:
-/// 2000 owners with unique values 0..1999 → 1 output row. Sequential pays
-/// ~1 outer + 1 tight bound-from probe ≈ 10 cost units; merge pays ~1 + 2000
-/// (both iters walk the full inner range). Sequential wins by ~200×. A
-/// merge plan here would be catastrophic — the test is the primary guard
-/// against that.
+/// 2000 owners with unique values 0..1999 → 1 output row.
+///
+/// Expected (cost model): sequential pays ~1 outer + 1 tight bound-from
+/// probe ≈ 10 cost units; merge pays ~1 + 2000 (both iters walk full inner).
+/// Sequential expected to win by ~200×. A merge plan here would be
+/// catastrophic — the test is the primary guard against that.
+///
+/// Actually observed (bench at 1×5000, opt mode):
+///   forced sequential: 0.79 ms/iter
+///   forced merge:      2.06 ms/iter   →  sequential wins by 2.6×
+/// Planner picks sequential. **Test PASSES.** The runtime gap (2.6×) is
+/// much smaller than the theoretical 200× because absolute times are sub-ms
+/// and dominated by fixed pipeline overhead at this output size, but the
+/// plan-shape choice is correct.
 #[test]
 fn sequential_wins_tiny_outer_huge_inner() {
     const N_INNER: usize = 2000;
@@ -701,10 +769,19 @@ fn sequential_wins_tiny_outer_huge_inner() {
 /// Small outer ⊂ huge inner (the bug case, scaled up). owner_1: 100 owners
 /// with values 0..99 (full coverage of own range); owner_2: 2000 owners with
 /// unique values 0..1999 (5% coverage of inner's domain by outer). Output:
-/// 100 rows. Sequential pays ~100 outer + 100 tight probes ≈ 700; merge pays
-/// ~100 + 2000 (both iters walk the inner range to find 100 overlapping
-/// values). Sequential wins by ~3×. This is the regression test for the
-/// blend penalty on outer-side waste.
+/// 100 rows. Regression test for the blend penalty on outer-side waste.
+///
+/// Expected (cost model): sequential pays ~100 outer + 100 tight probes ≈
+/// 700; merge pays ~100 + 2000 (both iters walk inner range to find 100
+/// overlapping values). Sequential expected to win by ~3×.
+///
+/// Actually observed (bench at 100×5000, opt mode):
+///   forced sequential: 1.70 ms/iter
+///   forced merge:      3.73 ms/iter   →  sequential wins by 2.2×
+/// Planner picks sequential. **Test PASSES.** Runtime ratio matches the
+/// model's prediction within 1.5× — this is the cleanest agreement of any
+/// test in the suite. The blend penalty in `Cost::join` correctly steers
+/// the planner here.
 #[test]
 fn sequential_wins_subset_coverage() {
     const N_OUTER: usize = 100;
@@ -758,9 +835,19 @@ fn sequential_wins_subset_coverage() {
 /// so merge pays for the bloated range twice (once per side) while sequential
 /// pays once on the outer scan plus tight bound-from probes on the inner.
 /// owner_1: 100 owners values 0..99; owner_2: 100 owners values 0..99 (full
-/// overlap with outer); plus 2000 noise entries with values 100..2099 inflating
-/// the value range. Output: 100 rows. Sequential ≈ 2100 outer + 100×tight = ~2700;
-/// merge ≈ 2 × 2100 = ~4200. Sequential wins by ~1.5×.
+/// overlap with outer); plus 2000 noise entries with values 100..2099
+/// inflating the value range. Output: 100 rows.
+///
+/// Expected (cost model): sequential ≈ 2100 outer + 100×tight = ~2700;
+/// merge ≈ 2 × 2100 = ~4200. Sequential expected to win by ~1.5×.
+///
+/// Actually observed (bench at 100+100+5K noise, opt mode):
+///   forced sequential: 1.69 ms/iter
+///   forced merge:      5.66 ms/iter   →  sequential wins by 3.4×
+/// Planner picks sequential. **Test PASSES.** The runtime gap (3.4×) is
+/// noticeably wider than the cost model's ~1.5× — the extra slowdown comes
+/// from the IntersectionStep's per-row overhead (~3× more seeks+advances
+/// than a bound-from probe) compounding with the bloated scan range.
 #[test]
 fn sequential_wins_noisy_inner() {
     const N_QUERY: usize = 100;
@@ -815,10 +902,20 @@ fn sequential_wins_noisy_inner() {
 
 /// Small outer × huge inner with small overlap. owner_1: 10 owners values
 /// 0..9; owner_2: 2000 owners values 5..2004 (overlap = 5 values: 5..9).
-/// Output: 5 rows. Sequential pays ~10 outer + 10×tight ≈ 60; merge pays
-/// ~10 + 2000 ≈ 2010. Sequential wins by ~30×. Distinct from `subset_coverage`
-/// because the outer is small (extreme outer-side selectivity) and the
-/// intersection is even tinier than the outer itself.
+/// Output: 5 rows. Distinct from `subset_coverage` because the outer is
+/// small (extreme outer-side selectivity) and the intersection is even
+/// tinier than the outer itself.
+///
+/// Expected (cost model): sequential pays ~10 outer + 10×tight ≈ 60;
+/// merge pays ~10 + 2000 ≈ 2010. Sequential expected to win by ~30×.
+///
+/// Actually observed (bench at 10×5000, opt mode):
+///   forced sequential: 0.87 ms/iter
+///   forced merge:      1.07 ms/iter   →  sequential wins by 1.2×
+/// Planner picks sequential. **Test PASSES.** The runtime gap is much
+/// smaller than the theoretical 30× because both plans are dominated by
+/// fixed pipeline overhead at this tiny output size — the asymptotic
+/// behavior is what matters at scale, not this absolute time.
 #[test]
 fn sequential_wins_asymmetric_coverage() {
     const N_OUTER: usize = 10;
