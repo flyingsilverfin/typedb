@@ -689,7 +689,21 @@ impl Costed for HasPlanner<'_> {
             attribute_selectivity,
         );
 
-        let direction = fix_dir.unwrap_or(Direction::canonical_if(scan_size_canonical <= scan_size_reverse));
+        // Bench escape hatch: FORCE_HAS_REVERSE=1 forces the Reverse direction for unbound
+        // Has patterns. Rationale: in symmetric data the canonical and reverse scan sizes tie,
+        // and `Direction::canonical_if(canonical <= reverse)` picks Canonical on a tie. A
+        // Canonical-direction Has joins on the owner — there's no path to a shared-attribute
+        // merge. Forcing Reverse for unbound Has unblocks the pure 2-iter merge on the
+        // attribute variable. Combine with FORCE_MERGE_INTERSECTION=1 to actually pick it.
+        let direction = if fix_dir.is_none()
+            && !is_owner_bound
+            && !is_attribute_bound
+            && std::env::var("FORCE_HAS_REVERSE").is_ok()
+        {
+            Direction::Reverse
+        } else {
+            fix_dir.unwrap_or(Direction::canonical_if(scan_size_canonical <= scan_size_reverse))
+        };
         let cost = if direction == Direction::Canonical {
             OPEN_ITERATOR_RELATIVE_COST + ADVANCE_ITERATOR_RELATIVE_COST * scan_size_canonical
         } else {

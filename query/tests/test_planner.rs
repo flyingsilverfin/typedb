@@ -19,9 +19,27 @@
 //! Each test's docstring lists two things:
 //! - **Expected** (theoretical/cost-model): the plan we'd expect to win from
 //!   the literature / from the planner's `Cost::join` formula
-//! - **Actually observed** (bench, opt mode, FORCE_*_INTERSECTION env-var
-//!   forcing on each plan to measure both on the same data): the runtime
-//!   wall-clock for each plan, and what the planner currently picks
+//! - **Actually observed** (bench, opt mode, env-var forcing on each plan to
+//!   measure both on the same data): the runtime wall-clock for each plan,
+//!   and what the planner currently picks
+//!
+//! Forcing knobs (no-op when env vars unset → production unaffected):
+//! - `FORCE_NO_MERGE_INTERSECTION=1`: makes `Cost::join` return INFINITY, so
+//!   the planner picks a sequential chain (one iter unbound, next iter bound
+//!   by the join variable from prior step).
+//! - `FORCE_MERGE_INTERSECTION=1` + `FORCE_HAS_REVERSE=1` together: zero the
+//!   join cost AND force unbound Has patterns to use the Reverse direction.
+//!   Together these produce a pure 2-iter unbound merge on the attribute
+//!   variable (both iters unbound, sort_by=$attr_var). FORCE_HAS_REVERSE is
+//!   needed because in symmetric data canonical/reverse scan sizes tie, and
+//!   the tie-break picks Canonical — which joins on owner, not on the shared
+//!   attribute, so a pure merge on $j isn't structurally available.
+//!
+//! Two scenarios (`subset_coverage`, `asymmetric_coverage`) still degrade to
+//! a hybrid plan (outer entity-type scan + bound-input merge) even under the
+//! combined forcing — their asymmetric data shapes make the outer-scan plan
+//! cheaper than the pure merge even with merge cost zeroed. Each docstring
+//! flags this when it applies.
 //!
 //! Run the bench yourself with:
 //!   bazel run --compilation_mode=opt //query/benches:bench_planner_join_compare
@@ -455,15 +473,23 @@ fn add_noise_owners(spec: &mut DataSpec, n_noise_types: usize, per_type: usize, 
 /// pays ~500×(5+1)=3000 cost units; merge pays ~1000 (one co-walk over the
 /// 500-entry storage range). Merge expected to win by ~3×.
 ///
-/// Actually observed (profile dump at test scale, opt mode):
-///   forced sequential:  4.49 ms total — join step: 1.0 seek + 1.0 adv per row
-///   forced merge:      15.30 ms total — join step: 3.0 seeks + 6.0 adv per row
-///                                       →  sequential wins by 3.4×
+/// Actually observed (profile dump at test scale, opt mode; merge is a pure
+/// 2-iter unbound intersection under FORCE_MERGE_INTERSECTION + FORCE_HAS_REVERSE):
+///   forced sequential: 4.14 ms total — chain (unbound + bound):
+///       step 0 (unbound has):    1 seek + 1000 advances total (500 rows)
+///       step 3 (bound has):    500 seeks +  500 advances total (500 rows)
+///   forced merge:      5.14 ms total — single 2-iter merge on $1:
+///       step 0 (2× Reverse[has], both unbound, sort_by=$1):
+///                                 2 seeks + 2000 advances total (500 rows)
+///                                = 0.004 seeks/row + 4.0 advances/row
+///                                       →  sequential wins by 1.24×
 /// Planner picks sequential. **Test currently FAILS its plan-shape assertion**
 /// (the planner's pick is empirically correct; the assertion encodes the
 /// theoretical expectation we want to revisit once IntersectionStep is faster).
-/// The 3-seek and 6-advance overhead per row in the merge step is the
-/// structural slowdown — bound-from probe does the same join in 1+1.
+/// Note: pure merge does FEWER total seeks (2 vs 501) and fewer advances
+/// (2000 vs 1500) than sequential — but its per-emit cost is higher
+/// (advance walks every position in the sorted scan, sequential's bound
+/// probe lands directly).
 #[test]
 fn merge_wins_symmetric_balanced() {
     const N: usize = 500;
@@ -518,14 +544,20 @@ fn merge_wins_symmetric_balanced() {
 /// the 10-entry per-value cluster); merge pays ~1000 + per-value cartesian
 /// sub-iter. Merge expected to win by ~5×.
 ///
-/// Actually observed (profile dump at test scale, opt mode):
-///   forced sequential: 16.83 ms total — join step: 0.1 seek + 1.0 adv per row (5000 rows)
-///   forced merge:      55.06 ms total — join step: 0.5 seek + 6.5 adv per row
-///                                       →  sequential wins by 3.3×
-/// Planner picks sequential. **Test currently FAILS its plan-shape assertion**
-/// (the per-value cartesian sub-iter overhead in the executor exceeds what
-/// the cost model predicts; sequential's bind-from probe does ~1 advance/row
-/// vs merge's ~6.5 advances/row).
+/// Actually observed (profile dump at test scale, opt mode; merge is a pure
+/// 2-iter unbound intersection under FORCE_MERGE_INTERSECTION + FORCE_HAS_REVERSE):
+///   forced sequential: 16.96 ms total — chain (unbound + bound):
+///       step 0 (unbound has):    1 seek + 1000 advances total (500 rows)
+///       step 3 (bound has):    500 seeks + 5000 advances total (5000 rows)
+///   forced merge:      50.58 ms total — single 2-iter merge on $1:
+///       step 0 (2× Reverse[has], both unbound, sort_by=$1):
+///                              1092 seeks + 24026 advances total (5000 rows)
+///                                = 0.22 seeks/row + 4.8 advances/row
+///                                       →  sequential wins by 3.0×
+/// Planner picks sequential. **Test currently FAILS its plan-shape assertion**.
+/// Under 10:1 fan-out, merge advances ~5× per row vs sequential's ~1 advance/row,
+/// and the merge also incurs ~1000 extra seeks (one per value-group transition)
+/// due to cartesian sub-iter reopens inside the intersection.
 #[test]
 fn merge_wins_moderate_cartesian() {
     const N_OWNERS: usize = 500;
@@ -583,16 +615,20 @@ fn merge_wins_moderate_cartesian() {
 /// Merge expected to win by ~25× — this is the regime where the cartesian
 /// sub-iter most clearly should pay off.
 ///
-/// Actually observed (profile dump at test scale, opt mode):
-///   forced sequential:  72.05 ms total — join step: 0.02 seek + 1.0 adv per row (25000 rows)
-///   forced merge:      272.88 ms total — join step: 0.1 seek + 7.7 adv per row
-///                                       →  sequential beats merge by 3.8×
-/// Planner mis-picks merge: this is the one shape where the cost model picks
-/// merge but the runtime would have preferred sequential. **Test currently
-/// PASSES its plan-shape assertion** (planner does pick merge) but the choice
-/// is empirically wrong — the dump shows sequential would have been ~3.8×
-/// faster. The cartesian sub-iter's per-emit work (~7.7 advances/row vs
-/// sequential's 1.0) is much higher than the cost model accounts for.
+/// Actually observed (profile dump at test scale, opt mode; merge is a pure
+/// 2-iter unbound intersection under FORCE_MERGE_INTERSECTION + FORCE_HAS_REVERSE):
+///   forced sequential:  76.04 ms total — chain (unbound + bound):
+///       step 0 (unbound has):    1 seek + 1000 advances total (500 rows)
+///       step 2 (bound has):    500 seeks + 25000 advances total (25000 rows)
+///   forced merge:      190.43 ms total — single 2-iter merge on $1:
+///       step 0 (2× Reverse[has], both unbound, sort_by=$1):
+///                               972 seeks + 98946 advances total (25000 rows)
+///                                = 0.04 seeks/row + 4.0 advances/row
+///                                       →  sequential beats merge by 2.5×
+/// Planner mis-picks merge: the cost model picks merge but runtime would have
+/// preferred sequential. **Test currently PASSES its plan-shape assertion**
+/// (planner does pick merge) but the choice is empirically wrong — the pure
+/// merge does 4× the advances per row that sequential's bound probe does.
 #[test]
 fn merge_wins_heavy_cartesian() {
     const N_OWNERS: usize = 500;
@@ -650,13 +686,19 @@ fn merge_wins_heavy_cartesian() {
 /// merge expected to win by ~5× (sequential's per-outer-row cost scales
 /// linearly with |outer|, merge's scan does too but with a smaller constant).
 ///
-/// Actually observed (profile dump at test scale, opt mode):
-///   forced sequential: 32.59 ms total — join step: 0.1 seek + 1.0 adv per row (10000 rows)
-///   forced merge:     112.63 ms total — join step: 0.5 seek + 6.6 adv per row
-///                                       →  sequential wins by 3.5×
+/// Actually observed (profile dump at test scale, opt mode; merge is a pure
+/// 2-iter unbound intersection under FORCE_MERGE_INTERSECTION + FORCE_HAS_REVERSE):
+///   forced sequential: 31.66 ms total — chain (unbound + bound):
+///       step 0 (unbound has):     1 seek +  2000 advances total (1000 rows)
+///       step 3 (bound has):    1000 seeks + 10000 advances total (10000 rows)
+///   forced merge:      92.16 ms total — single 2-iter merge on $1:
+///       step 0 (2× Reverse[has], both unbound, sort_by=$1):
+///                              2192 seeks + 48276 advances total (10000 rows)
+///                                = 0.22 seeks/row + 4.8 advances/row
+///                                       →  sequential wins by 2.9×
 /// Planner picks sequential. **Test currently FAILS its plan-shape assertion**.
-/// Per-row counters match the moderate_cartesian shape almost exactly —
-/// scaling N does not change merge's per-row overhead, so it never closes.
+/// Per-row counters mirror moderate_cartesian almost exactly — scaling N doesn't
+/// help merge close the gap.
 #[test]
 fn merge_wins_at_scale_with_fanout() {
     const N_OWNERS: usize = 1000;
@@ -784,19 +826,26 @@ fn build_multi_attr_spec(n_owners: usize, k_attrs: usize, m_values: usize) -> Da
 /// pipeline overhead; merge does the whole intersection in one step, paying overhead
 /// only on the final 38 emits. Merge expected to win by a meaningful margin.
 ///
-/// Actually observed (profile dump at test scale, opt mode, single execution):
-///   forced sequential: 3.63 ms total, cascade of 3 join steps:
-///     step [1] drive attr_0: 334 rows × 4.4 µs/row — 1 seek + 334 advances total
-///     step [4] probe attr_1: 112 rows × 13.1 µs/row — 334 seeks + 112 advances total
-///     step [6] probe attr_2: 38 rows × 2.9 µs/row — 112 seeks total
-///   forced merge:      0.85 ms total, single intersection step:
-///     step [2] merge 3 iters: 38 rows × 18.3 µs/row — 151 seeks + 1264 advances total
-///                                              →  merge wins by 4.3× (this run)
+/// Actually observed (profile dump at test scale, opt mode; merge step is a
+/// genuine 3-iter intersection on $0 — its bound_vars=[$_1, $_3] are bound by
+/// query *literals* (= 0), not by an outer entity scan, so it's structurally a
+/// pure unbound intersection on the entity variable):
+///   forced sequential: 3.48 ms total — cascade of 3 join steps:
+///     step [1] drive attr_0 (unbound):
+///                                 334 rows ×  4.4 µs/row,    1 seek +  334 advances
+///     step [3] probe attr_1 (bound by $0):
+///                                 112 rows × 13.1 µs/row,  334 seeks +  112 advances
+///     step [5] probe attr_2 (bound by $0):
+///                                  38 rows ×  2.9 µs/row,  112 seeks +    0 advances
+///   forced merge:      1.18 ms total — single 3-iter intersection step:
+///     step [2] merge 3 iters (sort_by=$0, bound by query literals only):
+///                                  38 rows × 26.7 µs/row,  225 seeks + 1338 advances
+///                                              →  merge wins by 2.95×
 /// Planner picks merge. **Test PASSES.** First confirmed merge-wins shape in the
 /// suite: intersection over entity-id (not attribute value), multiple iterators of
 /// similar size all pre-sorted on the same key. The averaged iterated bench at the
-/// same scale shows ~1.8× win (single executions can swing higher due to warmup
-/// and pipeline-init variance).
+/// same scale shows ~1.8× win (single executions swing higher due to warmup and
+/// pipeline-init variance).
 ///
 /// Why merge wins despite doing more raw advances per row: sequential's per-output
 /// cost compounds across K-1 cascading probe steps (each step pays pipeline overhead
@@ -855,12 +904,17 @@ fn merge_wins_multi_attr_filter() {
 /// Sequential expected to win by ~200×. A merge plan here would be
 /// catastrophic — the test is the primary guard against that.
 ///
-/// Actually observed (profile dump at test scale, opt mode):
-///   forced sequential: 123 µs total — join step: 1 seek + 1 adv (1 row)
-///   forced merge:      628 µs total — join step: 2 seeks + 2003 advs (1 row)
-///                                    →  sequential wins by 5.1×
-/// Planner picks sequential. **Test PASSES.** The merge step is forced to
-/// scan the entire 2000-entry inner range looking for the 1 matching value
+/// Actually observed (profile dump at test scale, opt mode; merge is a pure
+/// 2-iter unbound intersection under FORCE_MERGE_INTERSECTION + FORCE_HAS_REVERSE):
+///   forced sequential:  87 µs total — chain (unbound + bound):
+///       step 0 (unbound has):   1 seek +    2 advances (1 row)
+///       step 3 (bound has):     1 seek +    1 advance  (1 row)
+///   forced merge:      578 µs total — single 2-iter merge on $1:
+///       step 0 (2× Reverse[has], both unbound, sort_by=$1):
+///                                2 seeks + 2003 advances (1 row)
+///                                       →  sequential wins by 6.6×
+/// Planner picks sequential. **Test PASSES.** The merge is forced to scan
+/// the entire 2000-entry inner range looking for the 1 matching value
 /// (2003 advances) — exactly the catastrophic O(N_inner) work this test
 /// guards against. Sequential's bind-from probe lands the value in 1 seek.
 #[test]
@@ -923,13 +977,23 @@ fn sequential_wins_tiny_outer_huge_inner() {
 /// 700; merge pays ~100 + 2000 (both iters walk inner range to find 100
 /// overlapping values). Sequential expected to win by ~3×.
 ///
-/// Actually observed (profile dump at test scale, opt mode):
-///   forced sequential: 937 µs total — join step: 1.0 seek + 1.0 adv per row (100 rows)
-///   forced merge:      2.89 ms total — join step: 3.0 seeks + 7.9 adv per row
-///                                       →  sequential wins by 3.1×
+/// Actually observed (profile dump at test scale, opt mode; merge is a HYBRID
+/// here even under combined forcing — the planner can't enumerate a pure 2-iter
+/// unbound merge for this asymmetric data shape because the small outer scan is
+/// cheaper than the full $1 scan even with merge cost zeroed):
+///   forced sequential: 925 µs total — chain (unbound + bound):
+///       step 0 (unbound has):    1 seek +  200 advances (100 rows)
+///       step 3 (bound has):    100 seeks +  100 advances (100 rows)
+///   forced merge:     3.03 ms total — hybrid (outer entity scan + bound merge):
+///       step 0 (Reverse[$0 isa owner_1] scan):
+///                                1 seek +  100 advances (100 rows)
+///       step 1 (bound-input merge on $1 with $0 bound):
+///                              297 seeks + 793 advances (100 rows)
+///                                       →  sequential wins by 3.3×
 /// Planner picks sequential. **Test PASSES.** The blend penalty in `Cost::join`
-/// correctly steers the planner here. Per-row counters match symmetric_balanced
-/// closely (3 seeks + ~8 advances in the merge step regardless of waste).
+/// correctly steers the planner here. Note: pure-merge forcing degrades to
+/// hybrid here, so the "merge" runtime above reflects bound-input merge cost,
+/// not the textbook pure 2-iter intersection.
 #[test]
 fn sequential_wins_subset_coverage() {
     const N_OUTER: usize = 100;
@@ -989,14 +1053,20 @@ fn sequential_wins_subset_coverage() {
 /// Expected (cost model): sequential ≈ 2100 outer + 100×tight = ~2700;
 /// merge ≈ 2 × 2100 = ~4200. Sequential expected to win by ~1.5×.
 ///
-/// Actually observed (profile dump at test scale, opt mode):
-///   forced sequential: 882 µs total — join step: 1.0 seek + 1.0 adv per row (100 rows)
-///   forced merge:      3.31 ms total — join step: 3.0 seeks + 26.0 adv per row
-///                                       →  sequential wins by 3.8×
-/// Planner picks sequential. **Test PASSES.** Noise inflates the per-row
-/// advance count from ~8 (subset_coverage) to ~26 here — the merge has to
-/// walk past every noise entry in the bloated value range, while sequential's
-/// bind-from probe seeks directly to each matched value (still 1+1 per row).
+/// Actually observed (profile dump at test scale, opt mode; merge is a pure
+/// 2-iter unbound intersection under FORCE_MERGE_INTERSECTION + FORCE_HAS_REVERSE):
+///   forced sequential: 857 µs total — chain (unbound + bound):
+///       step 0 (unbound has):    1 seek +  200 advances (100 rows)
+///       step 3 (bound has):    100 seeks +  100 advances (100 rows)
+///   forced merge:    1.97 ms total — single 2-iter merge on $1:
+///       step 0 (2× Reverse[has], both unbound, sort_by=$1):
+///                                2 seeks + 4400 advances (100 rows)
+///                                = 0.02 seeks/row + 44 advances/row
+///                                       →  sequential wins by 2.3×
+/// Planner picks sequential. **Test PASSES.** Noise inflates the merge's
+/// per-row advance count to ~44 (the merge walks past every noise entry in
+/// the bloated value range to confirm non-match), while sequential's bound
+/// probe seeks directly to each matched value (still 1+1 per row).
 #[test]
 fn sequential_wins_noisy_inner() {
     const N_QUERY: usize = 100;
@@ -1058,14 +1128,22 @@ fn sequential_wins_noisy_inner() {
 /// Expected (cost model): sequential pays ~10 outer + 10×tight ≈ 60;
 /// merge pays ~10 + 2000 ≈ 2010. Sequential expected to win by ~30×.
 ///
-/// Actually observed (profile dump at test scale, opt mode):
-///   forced sequential: 149 µs total — join step: 2.0 seeks + 1.0 adv per row (5 rows)
-///   forced merge:      327 µs total — join step: 4.4 seeks + 18.6 adv per row
-///                                    →  sequential wins by 2.2×
-/// Planner picks sequential. **Test PASSES.** Merge's per-row work scales
-/// with the wasted inner-range walks (the outer's 10 values are far apart
-/// in the 2000-value inner domain), giving ~19 advances/row vs sequential's
-/// 1. The wall-clock gap stays small only because absolute times are tiny.
+/// Actually observed (profile dump at test scale, opt mode; merge is a HYBRID
+/// here even under combined forcing — same reason as subset_coverage: small
+/// outer × huge inner makes outer-scan plans win the planner search even with
+/// merge cost zeroed):
+///   forced sequential: 144 µs total — chain (unbound + bound):
+///       step 0 (unbound has):    1 seek +   20 advances (10 rows)
+///       step 3 (bound has):     10 seeks +   5 advances (5 rows)
+///   forced merge:    323 µs total — hybrid (outer entity scan + bound merge):
+///       step 0 (Reverse[$0 isa owner_1] scan):
+///                                1 seek +   10 advances (10 rows)
+///       step 1 (bound-input merge on $1 with $0 bound):
+///                               22 seeks +  93 advances (5 rows)
+///                                       →  sequential wins by 2.2×
+/// Planner picks sequential. **Test PASSES.** As with subset_coverage, the
+/// pure-merge forcing degrades to hybrid here. The wall-clock gap stays small
+/// because absolute times are tiny.
 #[test]
 fn sequential_wins_asymmetric_coverage() {
     const N_OUTER: usize = 10;

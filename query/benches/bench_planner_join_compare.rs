@@ -298,9 +298,17 @@ fn apply_mode(mode: Mode) {
     unsafe {
         std::env::remove_var("FORCE_MERGE_INTERSECTION");
         std::env::remove_var("FORCE_NO_MERGE_INTERSECTION");
+        std::env::remove_var("FORCE_HAS_REVERSE");
         match mode {
             Mode::Natural => {}
-            Mode::ForceMerge => std::env::set_var("FORCE_MERGE_INTERSECTION", "1"),
+            Mode::ForceMerge => {
+                // Combine: ForceMerge zeros the join cost; HasReverse forces unbound Has
+                // patterns to use the Reverse direction (without this, canonical/reverse
+                // tie-break in symmetric data picks Canonical, which joins on owner instead
+                // of on the attribute variable — no pure 2-iter merge possible).
+                std::env::set_var("FORCE_MERGE_INTERSECTION", "1");
+                std::env::set_var("FORCE_HAS_REVERSE", "1");
+            }
             Mode::ForceNoMerge => std::env::set_var("FORCE_NO_MERGE_INTERSECTION", "1"),
         }
     }
