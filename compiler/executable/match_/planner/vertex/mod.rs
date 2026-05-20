@@ -266,7 +266,15 @@ impl Cost {
         let cost_self = SEEK_ITERATOR_RELATIVE_COST + self_out_cost * num_seeks_each;
         let cost_other = SEEK_ITERATOR_RELATIVE_COST + other_out_cost * num_seeks_each;
 
-        Self { cost: cost_self + cost_other, io_ratio }
+        // Cartesian-fanout charge: when io_ratio > num_seeks_each, the merge produces
+        // (io_ratio - num_seeks_each) extra outputs per driver row beyond the primary
+        // matches. Each such output costs at least one ADVANCE on the bigger side
+        // (it advances while the smaller side stays put). num_seeks_each already
+        // pays per primary match, so we only need to charge the surplus.
+        let cartesian_extras = (io_ratio - num_seeks_each).max(0.0);
+        let cartesian_cost = cartesian_extras * ADVANCE_ITERATOR_RELATIVE_COST;
+
+        Self { cost: cost_self + cost_other + cartesian_cost, io_ratio }
     }
 
     pub(crate) fn combine_parallel(self, other: Self) -> Self {

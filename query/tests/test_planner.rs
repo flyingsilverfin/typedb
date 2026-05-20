@@ -54,7 +54,7 @@
 //! - `merge_wins_multi_attr_filter`          — K patterns on one entity        [PASSES: merge actually wins runtime ~1.3-1.8×]
 //! - `merge_wins_symmetric_balanced`         — 1:1 baseline, full coverage    [FAILS: planner picks seq (correctly per runtime)]
 //! - `merge_wins_moderate_cartesian`         — 10:1 per-value fan-out         [FAILS: planner picks seq (correctly per runtime)]
-//! - `merge_wins_heavy_cartesian`            — 50:1 per-value fan-out         [PASSES: planner picks merge, but merge is 3× SLOWER]
+//! - `merge_wins_heavy_cartesian`            — 50:1 per-value fan-out         [PASSES: planner picks seq after the cartesian-fanout fix in Cost::join]
 //! - `merge_wins_at_scale_with_fanout`       — moderate fan-out, higher card  [FAILS: planner picks seq (correctly per runtime)]
 //!
 //! Sequential-must-win scenarios (planner correctly picks sequential):
@@ -613,10 +613,15 @@ fn merge_wins_moderate_cartesian() {
 /// Heavy per-value fan-out. Both sides 500 owners cyclic over 10 distinct
 /// values (50 owners per value per side). Output = 10 × 50 × 50 = 25000 rows.
 ///
-/// Expected (cost model): sequential pays ~500×(5+50)=27500 (each probe walks
-/// the 50-entry per-value cluster); merge pays ~1000 + per-value cartesian.
-/// Merge expected to win by ~25× — this is the regime where the cartesian
-/// sub-iter most clearly should pay off.
+/// Originally encoded as a merge-wins case on theoretical grounds (50:1 per-value
+/// fan-out — "cartesian sub-iter should amortize"), but the bench and a planner
+/// trace audit both showed sequential is faster at runtime AND cheaper by raw
+/// I/O cost. The cost model's `Cost::join` formula was under-counting the work
+/// done by cartesian outputs on the larger side of an asymmetric merge (only
+/// `num_seeks_each = min(self.io, other.io)` advances charged per side,
+/// regardless of `io_ratio_result`). After the cartesian-fanout fix in
+/// `Cost::join` (extra `(io_ratio - num_seeks_each) × ADVANCE` term), the
+/// planner correctly picks sequential here.
 ///
 /// Actually observed (profile dump at test scale, opt mode; merge is a pure
 /// 2-iter unbound intersection under FORCE_MERGE_INTERSECTION + FORCE_HAS_REVERSE.
@@ -630,10 +635,9 @@ fn merge_wins_moderate_cartesian() {
 ///                               972 seeks + 98946 advances (25000 rows) — cost 103806
 ///       total I/O cost: 103806
 ///       →  runtime: sequential beats merge 2.5×; I/O cost agrees: seq 3.6× cheaper
-/// **Planner mis-picks merge despite raw I/O cost favoring sequential**: the cost
-/// model's blend/io_ratio adjustments must over-credit merge for this shape (or
-/// under-estimate the per-emit work). **Test currently PASSES its plan-shape
-/// assertion** (planner does pick merge) but the choice is empirically wrong.
+/// Planner picks sequential (after the Cost::join cartesian-fanout fix).
+/// **Test PASSES** — assertion flipped from `!merges.is_empty()` to
+/// `merges.is_empty()` to match the empirically correct plan choice.
 #[test]
 fn merge_wins_heavy_cartesian() {
     const N_OWNERS: usize = 500;
@@ -667,10 +671,13 @@ fn merge_wins_heavy_cartesian() {
     let pipeline = compile_read(&context, &two_owner_join_query());
     let merges = multi_iter_intersection_steps(&pipeline);
     assert!(
-        !merges.is_empty(),
-        "heavy_cartesian: planner should pick a merge intersection \
-         (50:1 per-value fan-out — sequential per-row probe cost dominates); \
-         found none",
+        merges.is_empty(),
+        "heavy_cartesian: planner should pick sequential here. \
+         Despite 50:1 per-value fan-out, runtime favors sequential by ~2.5× and \
+         the Cost::join cartesian-fanout fix correctly prices the merge step's \
+         per-driver-row work. A merge pick here would be a regression. \
+         Found {} multi-iter merge step(s)",
+        merges.len(),
     );
 
     let (rows, profile) = execute_read(pipeline);
