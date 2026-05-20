@@ -473,24 +473,43 @@ fn add_noise_owners(spec: &mut DataSpec, n_noise_types: usize, per_type: usize, 
 /// pays ~500×(5+1)=3000 cost units; merge pays ~1000 (one co-walk over the
 /// 500-entry storage range). Merge expected to win by ~3×.
 ///
-/// Actually observed (profile dump at test scale, opt mode; merge is a pure
-/// 2-iter unbound intersection under FORCE_MERGE_INTERSECTION + FORCE_HAS_REVERSE.
+/// Actually observed (planner trace + profile dump at test scale, opt mode.
 /// I/O cost = seeks×SEEK + advances×ADVANCE with SEEK=5, ADVANCE=1):
-///   forced sequential: 4.14 ms — chain (unbound + bound):
-///       step 0 (unbound has):    1 seek + 1000 advances (500 rows) — cost 1005
-///       step 3 (bound has):    500 seeks +  500 advances (500 rows) — cost 3000
-///       total I/O cost: 4005
-///   forced merge:      5.14 ms — single 2-iter merge on $1:
-///       step 0 (2× Reverse[has], unbound, sort_by=$1):
-///                                2 seeks + 2000 advances (500 rows) — cost 2010
-///       total I/O cost: 2010
-///       →  runtime: sequential wins 1.24×;  I/O cost says merge is 2.0× cheaper
+///
+///   What the PLANNER sees (from beam-search trace):
+///   - Sequential chain plan: outer drive `$2 has $1` (cost 1035, io 500)
+///     chained with bound probe `$0 has $1` (cost 6, io 1):
+///         total planner cost = 1035 + 6 × 500 = 4035
+///   - Hybrid merge plan: outer entity scan `$0 isa owner_1` (cost 505, io 500)
+///     chained with bound-input merge step on $1 (cost 18.01, io 1):
+///         total planner cost = 505 + 18.01 × 500 = 9510
+///   Planner picks sequential (2.36× cheaper). It does NOT consider a truly
+///   pure 2-iter unbound merge for this query — the planner's enumeration
+///   always picks an outer driver before allowing a multi-iter merge step,
+///   so a "no outer scan, just merge both reverse-has iters" plan is not in
+///   the candidate set for queries with isa-constrained variables on both sides.
+///
+///   What the BENCH measures (under FORCE_MERGE_INTERSECTION + FORCE_HAS_REVERSE,
+///   which artificially zeros join cost AND forces Reverse direction on unbound
+///   has — together these produce the pure 2-iter merge plan that the planner
+///   would otherwise not enumerate):
+///   - forced sequential: 4.14 ms — chain (unbound + bound):
+///         step 0 (unbound has):    1 seek + 1000 advances (500 rows) — cost 1005
+///         step 3 (bound has):    500 seeks +  500 advances (500 rows) — cost 3000
+///         post-hoc I/O cost: 4005 (consistent with planner's 4035 estimate)
+///   - forced merge:      5.14 ms — single 2-iter merge on $1:
+///         step 0 (2× Reverse[has], unbound, sort_by=$1):
+///                                  2 seeks + 2000 advances (500 rows) — cost 2010
+///         post-hoc I/O cost: 2010 (this plan is NOT in the planner's enumeration)
+///     →  runtime: sequential wins 1.24×
+///
 /// Planner picks sequential. **Test currently FAILS its plan-shape assertion**
-/// (the planner's pick is empirically correct; the assertion encodes the
-/// theoretical expectation we want to revisit once IntersectionStep is faster).
-/// Note: the cost model would prefer merge here based on raw I/O ops, but the
-/// IntersectionStep's per-emit constant overhead is high enough that sequential
-/// still wins in wall-clock.
+/// (the assertion encodes an aspirational expectation that the planner should
+/// pick merge; the planner's actual pick is empirically correct given the plans
+/// it does enumerate). For the planner to ever pick the pure-merge plan, the
+/// enumeration would need to allow merge-from-scratch starts (treat the merge
+/// of two unbound iters as a valid initial step), AND the cost model would need
+/// to credit the pure-merge plan correctly relative to the hybrid.
 #[test]
 fn merge_wins_symmetric_balanced() {
     const N: usize = 500;
