@@ -10,7 +10,6 @@ use std::{
     collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet},
     fmt,
     hash::Hash,
-    iter,
     sync::Arc,
 };
 
@@ -57,9 +56,9 @@ use crate::{
                 ConjunctionExecutableBuilder, DisjunctionBuilder, ExpressionBuilder, FunctionCallBuilder,
                 IntersectionBuilder, NegationBuilder, OptionalBuilder, StepBuilder, StepInstructionsBuilder,
                 vertex::{
-                    ComparisonVertex, Cost, CostMetaData, Costed, Direction, DisjunctionVertex, ExpressionVertex,
-                    FunctionCallVertex, Input, IsVertex, LinksDeduplicationVertex, NegationVertex, OptionalVertex,
-                    PlannerVertex, UnsatisfiableVertex,
+                    ComparisonVertex, Cost, CostChoices, CostMetaData, Costed, Direction, DisjunctionVertex,
+                    ExpressionVertex, FunctionCallVertex, Input, IsVertex, LinksDeduplicationVertex, NegationVertex,
+                    OptionalVertex, PlannerVertex, UnsatisfiableVertex,
                     constraint::{
                         ConstraintVertex, HasPlanner, IidPlanner, IndexedRelationPlanner, IsaPlanner, LinksPlanner,
                         OwnsPlanner, PlaysPlanner, RelatesPlanner, SubPlanner, TypeListPlanner,
@@ -888,59 +887,41 @@ impl PartialCostPlan {
                 }
             })
             .flat_map(move |(extension, join_var)| {
-                // EXPERIMENT: yield up to two beam children per (extension, join_var):
-                //   - primary: planner's default direction choice
-                //   - alternative: opposite direction (only when no join-var constraint
-                //     forces a specific direction, and only when the planner returned a
-                //     Direction metadata — i.e., for Has/Links/IndexedRelation/Isa).
-                // The beam then picks whichever's cheaper. For symmetric data where
-                // canonical_if's tie-break collapses to Canonical, this allows the Reverse
-                // direction to survive — which is what unlocks attribute-axis merges.
-                let make_step = |force_dir: Option<Direction>| -> Result<(StepExtension, Option<Direction>), QueryPlanningError> {
-                    let (added_cost, meta_data) = if join_var.is_none() {
-                        self.compute_added_cost(graph, extension, &all_available_vars, join_var, force_dir)?
-                    } else {
-                        self.compute_added_cost(graph, extension, &self.vertex_ordering, join_var, force_dir)?
-                    };
-                    let mut cost_before_extension = self.cumulative_cost;
-                    if join_var.is_none() {
-                        cost_before_extension = cost_before_extension.chain(self.ongoing_step_cost);
-                    }
-                    let cost_including_extension = cost_before_extension.chain(added_cost);
-                    let heuristic = cost_including_extension.chain(self.heuristic_plan_completion_cost(extension, graph));
-                    let chosen_dir = match meta_data {
-                        CostMetaData::Direction(d) => Some(d),
-                        _ => None,
-                    };
-                    Ok((StepExtension {
-                        pattern_id: extension,
-                        pattern_metadata: meta_data,
-                        step_cost: added_cost,
-                        step_join_var: join_var,
-                        heuristic,
-                    }, chosen_dir))
+                // Ask the constraint how many evaluation choices it wants the beam to
+                // consider. Constraints like Has return Pair(canonical, reverse) so both
+                // direction candidates survive into beam ranking; most return Single. The
+                // join logic in `cost_and_metadata_choices` ensures pair-emission is gated
+                // by the constraint itself (e.g., Has suppresses the alternative when
+                // fix_dir is already pinned by a join).
+                let input_vars = if join_var.is_none() { &all_available_vars[..] } else { &self.vertex_ordering[..] };
+                let choices_result = self.compute_added_cost_choices(graph, extension, input_vars, join_var);
+
+                let cost_before_extension_base = self.cumulative_cost;
+                let cost_before_extension = if join_var.is_none() {
+                    cost_before_extension_base.chain(self.ongoing_step_cost)
+                } else {
+                    cost_before_extension_base
                 };
 
-                let primary = make_step(None);
-                let alternative = match &primary {
-                    Ok((_, Some(d))) if join_var.is_none() => {
-                        let opposite = match d {
-                            Direction::Canonical => Direction::Reverse,
-                            Direction::Reverse => Direction::Canonical,
-                        };
-                        // Only emit the alternative if it actually differs from the primary
-                        // (e.g., when the constraint truly supports both directions).
-                        let alt = make_step(Some(opposite));
-                        match &alt {
-                            Ok((alt_ext, Some(alt_dir))) if Some(*alt_dir) != Some(*d) => Some(alt),
-                            _ => None,
-                        }
-                    }
-                    _ => None,
+                let steps: Vec<Result<StepExtension, QueryPlanningError>> = match choices_result {
+                    Err(e) => vec![Err(e)],
+                    Ok(choices) => choices
+                        .iter()
+                        .map(|(added_cost, meta_data)| {
+                            let cost_including_extension = cost_before_extension.chain(added_cost);
+                            let heuristic = cost_including_extension
+                                .chain(self.heuristic_plan_completion_cost(extension, graph));
+                            Ok(StepExtension {
+                                pattern_id: extension,
+                                pattern_metadata: meta_data,
+                                step_cost: added_cost,
+                                step_join_var: join_var,
+                                heuristic,
+                            })
+                        })
+                        .collect(),
                 };
-
-                iter::once(primary.map(|(ext, _)| ext))
-                    .chain(alternative.map(|r| r.map(|(ext, _)| ext)))
+                steps.into_iter()
             })
     }
 
@@ -1019,7 +1000,6 @@ impl PartialCostPlan {
         pattern: PatternVertexId,
         input_vars: &[VertexId],
         join_var: Option<VariableVertexId>,
-        force_direction: Option<Direction>,  // EXPERIMENT: override default direction
     ) -> Result<(Cost, CostMetaData), QueryPlanningError> {
         let planner = &graph.elements[&VertexId::Pattern(pattern)];
         let (updated_cost, extension_metadata) = match planner {
@@ -1029,24 +1009,57 @@ impl PartialCostPlan {
                         .as_variable()
                         .unwrap()
                         .restricted_expected_output_size(&self.vertex_ordering);
-                    // force_direction overrides the join-var-derived default if set.
-                    let fixed_direction = force_direction.map(Some).unwrap_or_else(|| {
-                        constraint.direction_from_join_var(
-                            join_var,
-                            &self.ongoing_step_produced_vars,
-                            &self.all_produced_vars,
-                        )
-                    });
+                    let fixed_direction = constraint.direction_from_join_var(
+                        join_var,
+                        &self.ongoing_step_produced_vars,
+                        &self.all_produced_vars,
+                    ); // TODO: we only allow unbounded regular joins for now
                     let (constraint_cost, meta_data) =
                         constraint.cost_and_metadata(input_vars, fixed_direction, graph)?;
                     (self.ongoing_step_cost.join(constraint_cost, total_join_size), meta_data)
                 } else {
-                    constraint.cost_and_metadata(input_vars, force_direction, graph)?
+                    constraint.cost_and_metadata(input_vars, None, graph)?
                 }
             }
-            planner_vertex => planner_vertex.cost_and_metadata(input_vars, force_direction, graph)?,
+            planner_vertex => planner_vertex.cost_and_metadata(input_vars, None, graph)?,
         };
         Ok((updated_cost, extension_metadata))
+    }
+
+    /// Like `compute_added_cost`, but returns the full set of viable (cost, metadata)
+    /// choices for this extension. Most constraints return `Single`; ones that support
+    /// multiple evaluation directions (Has) return `Pair(canonical, reverse)` so the beam
+    /// can keep alternatives alive.
+    fn compute_added_cost_choices(
+        &self,
+        graph: &Graph<'_>,
+        pattern: PatternVertexId,
+        input_vars: &[VertexId],
+        join_var: Option<VariableVertexId>,
+    ) -> Result<CostChoices, QueryPlanningError> {
+        let planner = &graph.elements[&VertexId::Pattern(pattern)];
+        match planner {
+            PlannerVertex::Constraint(constraint) => {
+                if let Some(join_var) = join_var {
+                    // Direction is pinned by the join axis — only one choice.
+                    let total_join_size = graph.elements[&VertexId::Variable(join_var)]
+                        .as_variable()
+                        .unwrap()
+                        .restricted_expected_output_size(&self.vertex_ordering);
+                    let fixed_direction = constraint.direction_from_join_var(
+                        join_var,
+                        &self.ongoing_step_produced_vars,
+                        &self.all_produced_vars,
+                    );
+                    let (constraint_cost, meta_data) =
+                        constraint.cost_and_metadata(input_vars, fixed_direction, graph)?;
+                    Ok(CostChoices::Single(self.ongoing_step_cost.join(constraint_cost, total_join_size), meta_data))
+                } else {
+                    constraint.cost_and_metadata_choices(input_vars, None, graph)
+                }
+            }
+            planner_vertex => planner_vertex.cost_and_metadata_choices(input_vars, None, graph),
+        }
     }
 
     fn heuristic_plan_completion_cost(&self, pattern: PatternVertexId, graph: &Graph<'_>) -> Cost {
