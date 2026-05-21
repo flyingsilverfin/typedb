@@ -872,7 +872,38 @@ fn main() {
         |ctx| { define_two_owner_schema(ctx); load_data(ctx, build_symmetric_spec(5_000, 500)); },
     ));
     println!();
+    } // end if !skip_legacy
 
+    // === Large-scale variants of merge_wins_* shapes (BENCH_LARGE_SCALE=1) ====================
+    // Same shapes as the merge_wins_* scenarios above but at 2-5× scale, to see whether
+    // merge's structural O(N+M) catches up to sequential's O(N) at production scale.
+    if std::env::var("BENCH_LARGE_SCALE").map(|v| v == "1").unwrap_or(false) {
+        results.push(run_scenario(
+            "symmetric_balanced_10000", "10000x10000 owners 1:1 full coverage", 20,
+            |ctx| { define_two_owner_schema(ctx); load_data(ctx, build_symmetric_spec(10_000, 10_000)); },
+        ));
+        println!();
+
+        results.push(run_scenario(
+            "moderate_cartesian_5000_500", "5000x5000 owners, 500 distinct (10:1 fan-out)", 15,
+            |ctx| { define_two_owner_schema(ctx); load_data(ctx, build_symmetric_spec(5_000, 500)); },
+        ));
+        println!();
+
+        results.push(run_scenario(
+            "heavy_cartesian_5000_100", "5000x5000 owners, 100 distinct (50:1 fan-out)", 5,
+            |ctx| { define_two_owner_schema(ctx); load_data(ctx, build_symmetric_spec(5_000, 100)); },
+        ));
+        println!();
+
+        results.push(run_scenario(
+            "at_scale_with_fanout_10000", "10000x10000 owners, 1000 distinct (10:1 fan-out)", 5,
+            |ctx| { define_two_owner_schema(ctx); load_data(ctx, build_symmetric_spec(10_000, 1_000)); },
+        ));
+        println!();
+    }
+
+    if !skip_legacy {
     // === Sequential-must-win shapes (per test_planner.rs) ====================================
 
     const N_INNER: usize = 5_000;
