@@ -293,46 +293,6 @@ pub(super) trait Costed {
         fix_dir: Option<Direction>,
         graph: &Graph<'_>,
     ) -> Result<(Cost, CostMetaData), QueryPlanningError>;
-
-    /// Return the choice(s) the planner should consider for this constraint when ranking
-    /// candidates in the beam. Most constraints have a single best choice; constraints with
-    /// multiple structurally-distinct evaluation strategies (e.g., Has can iterate the
-    /// has-edge index canonically — sorted by owner — or in reverse — sorted by attribute)
-    /// can return `Pair(primary, alternative)` so that both candidates get a chance to
-    /// survive beam pruning. The downstream join-axis logic depends on direction, so
-    /// keeping both alive lets later steps pick whichever unlocks a cheaper join.
-    ///
-    /// Default impl delegates to `cost_and_metadata` and wraps in `Single`. Constraints
-    /// that want to expose alternatives should override.
-    fn cost_and_metadata_choices(
-        &self,
-        vertex_ordering: &[VertexId],
-        fix_dir: Option<Direction>,
-        graph: &Graph<'_>,
-    ) -> Result<CostChoices, QueryPlanningError> {
-        let (cost, meta) = self.cost_and_metadata(vertex_ordering, fix_dir, graph)?;
-        Ok(CostChoices::Single(cost, meta))
-    }
-}
-
-/// One or two viable (cost, metadata) candidates for a pattern. The beam search uses this
-/// to fan out alternative-direction plans when a constraint supports more than one
-/// evaluation direction (currently: Has).
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum CostChoices {
-    Single(Cost, CostMetaData),
-    Pair((Cost, CostMetaData), (Cost, CostMetaData)),
-}
-
-impl CostChoices {
-    /// Iterate over all viable choices.
-    pub(crate) fn iter(&self) -> impl Iterator<Item = (Cost, CostMetaData)> {
-        let (a, b) = match *self {
-            Self::Single(c, m) => ((c, m), None),
-            Self::Pair(p, alt) => (p, Some(alt)),
-        };
-        std::iter::once(a).chain(b)
-    }
 }
 
 impl Costed for PlannerVertex<'_> {
@@ -357,24 +317,6 @@ impl Costed for PlannerVertex<'_> {
             Self::Disjunction(planner) => planner.cost_and_metadata(vertex_ordering, fix_dir, graph),
             Self::Optional(planner) => planner.cost_and_metadata(vertex_ordering, fix_dir, graph),
             Self::Unsatisfiable(planner) => planner.cost_and_metadata(vertex_ordering, fix_dir, graph),
-        }
-    }
-
-    fn cost_and_metadata_choices(
-        &self,
-        vertex_ordering: &[VertexId],
-        fix_dir: Option<Direction>,
-        graph: &Graph<'_>,
-    ) -> Result<CostChoices, QueryPlanningError> {
-        match self {
-            // Constraint is the only variant where multiple directions are structurally
-            // meaningful — delegate to its own choices method.
-            Self::Constraint(vertex) => vertex.cost_and_metadata_choices(vertex_ordering, fix_dir, graph),
-            // All other variants have a single choice; use the default.
-            _ => {
-                let (cost, meta) = self.cost_and_metadata(vertex_ordering, fix_dir, graph)?;
-                Ok(CostChoices::Single(cost, meta))
-            }
         }
     }
 }

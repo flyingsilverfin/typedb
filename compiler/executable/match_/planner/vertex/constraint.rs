@@ -212,27 +212,6 @@ impl Costed for ConstraintVertex<'_> {
             Self::Plays(inner) => inner.cost_and_metadata(vertex_ordering, fix_dir, graph),
         }
     }
-
-    fn cost_and_metadata_choices(
-        &self,
-        vertex_ordering: &[VertexId],
-        fix_dir: Option<crate::executable::match_::planner::vertex::Direction>,
-        graph: &Graph<'_>,
-    ) -> Result<crate::executable::match_::planner::vertex::CostChoices, QueryPlanningError> {
-        match self {
-            // Constraints with structurally distinct evaluation directions surface both
-            // candidates so the beam can keep alternatives alive — this unlocks axis-
-            // switching merges that the tie-breaking default would suppress.
-            Self::Has(inner) => inner.cost_and_metadata_choices(vertex_ordering, fix_dir, graph),
-            Self::Links(inner) => inner.cost_and_metadata_choices(vertex_ordering, fix_dir, graph),
-            Self::IndexedRelation(inner) => inner.cost_and_metadata_choices(vertex_ordering, fix_dir, graph),
-            // All others have a single best evaluation direction; use the default.
-            _ => {
-                let (cost, meta) = self.cost_and_metadata(vertex_ordering, fix_dir, graph)?;
-                Ok(crate::executable::match_::planner::vertex::CostChoices::Single(cost, meta))
-            }
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -732,31 +711,6 @@ impl Costed for HasPlanner<'_> {
         };
         Ok((Cost { cost, io_ratio }, CostMetaData::Direction(direction)))
     }
-
-    /// Expose both direction candidates when the planner hasn't already pinned a direction
-    /// via `fix_dir`. Canonical-direction Has iterates the has-edge index sorted by owner;
-    /// Reverse-direction iterates sorted by attribute. The two enable different join axes
-    /// downstream — Canonical joins on owner, Reverse joins on attribute. Surfacing both
-    /// lets the beam keep alternatives alive even when their immediate costs are equal
-    /// (which is the common case for symmetric data — and exactly where the planner needs
-    /// the alternative direction to discover attribute-axis merges).
-    fn cost_and_metadata_choices(
-        &self,
-        inputs: &[VertexId],
-        fix_dir: Option<Direction>,
-        graph: &Graph<'_>,
-    ) -> Result<crate::executable::match_::planner::vertex::CostChoices, QueryPlanningError> {
-        // If direction is already pinned (e.g., by a join constraint), no alternative.
-        if fix_dir.is_some() {
-            let (cost, meta) = self.cost_and_metadata(inputs, fix_dir, graph)?;
-            return Ok(crate::executable::match_::planner::vertex::CostChoices::Single(cost, meta));
-        }
-        // Both directions are valid; compute each and return as a pair so the beam can
-        // rank them and (with direction included in the plan hash) keep both alive.
-        let primary = self.cost_and_metadata(inputs, Some(Direction::Canonical), graph)?;
-        let alternative = self.cost_and_metadata(inputs, Some(Direction::Reverse), graph)?;
-        Ok(crate::executable::match_::planner::vertex::CostChoices::Pair(primary, alternative))
-    }
 }
 
 #[derive(Clone)]
@@ -999,24 +953,6 @@ impl Costed for LinksPlanner<'_> {
         }
         Ok((Cost { cost, io_ratio }, CostMetaData::Direction(direction)))
     }
-
-    /// Same logic as HasPlanner: Links supports canonical (relation-first) and reverse
-    /// (player-first) iteration; keeping both candidates alive lets the beam pick the one
-    /// that unlocks the best downstream join axis.
-    fn cost_and_metadata_choices(
-        &self,
-        inputs: &[VertexId],
-        fix_dir: Option<Direction>,
-        graph: &Graph<'_>,
-    ) -> Result<crate::executable::match_::planner::vertex::CostChoices, QueryPlanningError> {
-        if fix_dir.is_some() {
-            let (cost, meta) = self.cost_and_metadata(inputs, fix_dir, graph)?;
-            return Ok(crate::executable::match_::planner::vertex::CostChoices::Single(cost, meta));
-        }
-        let primary = self.cost_and_metadata(inputs, Some(Direction::Canonical), graph)?;
-        let alternative = self.cost_and_metadata(inputs, Some(Direction::Reverse), graph)?;
-        Ok(crate::executable::match_::planner::vertex::CostChoices::Pair(primary, alternative))
-    }
 }
 
 #[derive(Clone)]
@@ -1233,24 +1169,6 @@ impl Costed for IndexedRelationPlanner<'_> {
             cost = OPEN_ITERATOR_RELATIVE_COST + ADVANCE_ITERATOR_RELATIVE_COST * scan_size_reverse;
         }
         Ok((Cost { cost, io_ratio }, CostMetaData::Direction(direction)))
-    }
-
-    /// Same logic as HasPlanner: IndexedRelation supports canonical (player_1 → player_2)
-    /// and reverse (player_2 → player_1) iteration; surface both so the beam keeps the
-    /// alternative axis alive.
-    fn cost_and_metadata_choices(
-        &self,
-        inputs: &[VertexId],
-        fix_dir: Option<Direction>,
-        graph: &Graph<'_>,
-    ) -> Result<crate::executable::match_::planner::vertex::CostChoices, QueryPlanningError> {
-        if fix_dir.is_some() {
-            let (cost, meta) = self.cost_and_metadata(inputs, fix_dir, graph)?;
-            return Ok(crate::executable::match_::planner::vertex::CostChoices::Single(cost, meta));
-        }
-        let primary = self.cost_and_metadata(inputs, Some(Direction::Canonical), graph)?;
-        let alternative = self.cost_and_metadata(inputs, Some(Direction::Reverse), graph)?;
-        Ok(crate::executable::match_::planner::vertex::CostChoices::Pair(primary, alternative))
     }
 }
 
