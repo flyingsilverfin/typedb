@@ -330,7 +330,7 @@ pub enum CostMetaData {
     None,
 }
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Direction {
     Canonical,
     Reverse,

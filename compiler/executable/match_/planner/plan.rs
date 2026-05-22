@@ -10,7 +10,6 @@ use std::{
     collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet},
     fmt,
     hash::Hash,
-    iter,
     sync::Arc,
 };
 
@@ -887,60 +886,35 @@ impl PartialCostPlan {
                     vec![(extension, None), (extension, join_var)].into_iter()
                 }
             })
-            .flat_map(move |(extension, join_var)| {
-                // EXPERIMENT: yield up to two beam children per (extension, join_var):
-                //   - primary: planner's default direction choice
-                //   - alternative: opposite direction (only when no join-var constraint
-                //     forces a specific direction, and only when the planner returned a
-                //     Direction metadata — i.e., for Has/Links/IndexedRelation/Isa).
-                // The beam then picks whichever's cheaper. For symmetric data where
-                // canonical_if's tie-break collapses to Canonical, this allows the Reverse
-                // direction to survive — which is what unlocks attribute-axis merges.
-                let make_step = |force_dir: Option<Direction>| -> Result<(StepExtension, Option<Direction>), QueryPlanningError> {
-                    let (added_cost, meta_data) = if join_var.is_none() {
-                        self.compute_added_cost(graph, extension, &all_available_vars, join_var, force_dir)?
-                    } else {
-                        self.compute_added_cost(graph, extension, &self.vertex_ordering, join_var, force_dir)?
-                    };
-                    let mut cost_before_extension = self.cumulative_cost;
-                    if join_var.is_none() {
-                        cost_before_extension = cost_before_extension.chain(self.ongoing_step_cost);
-                    }
-                    let cost_including_extension = cost_before_extension.chain(added_cost);
-                    let heuristic = cost_including_extension.chain(self.heuristic_plan_completion_cost(extension, graph));
-                    let chosen_dir = match meta_data {
-                        CostMetaData::Direction(d) => Some(d),
-                        _ => None,
-                    };
-                    Ok((StepExtension {
-                        pattern_id: extension,
-                        pattern_metadata: meta_data,
-                        step_cost: added_cost,
-                        step_join_var: join_var,
-                        heuristic,
-                    }, chosen_dir))
-                };
+            .map(move |(extension, join_var)| {
+                let added_cost: Cost;
+                let meta_data: CostMetaData;
 
-                let primary = make_step(None);
-                let alternative = match &primary {
-                    Ok((_, Some(d))) if join_var.is_none() => {
-                        let opposite = match d {
-                            Direction::Canonical => Direction::Reverse,
-                            Direction::Reverse => Direction::Canonical,
-                        };
-                        // Only emit the alternative if it actually differs from the primary
-                        // (e.g., when the constraint truly supports both directions).
-                        let alt = make_step(Some(opposite));
-                        match &alt {
-                            Ok((alt_ext, Some(alt_dir))) if Some(*alt_dir) != Some(*d) => Some(alt),
-                            _ => None,
-                        }
-                    }
-                    _ => None,
-                };
+                if join_var.is_none() {
+                    (added_cost, meta_data) =
+                        self.compute_added_cost(graph, extension, &all_available_vars, join_var)?;
+                } else {
+                    (added_cost, meta_data) =
+                        self.compute_added_cost(graph, extension, &self.vertex_ordering, join_var)?;
+                }
 
-                iter::once(primary.map(|(ext, _)| ext))
-                    .chain(alternative.map(|r| r.map(|(ext, _)| ext)))
+                let mut cost_before_extension = self.cumulative_cost;
+                if join_var.is_none() {
+                    // Complete ongoing step
+                    cost_before_extension = cost_before_extension.chain(self.ongoing_step_cost);
+                }
+
+                let cost_including_extension = cost_before_extension.chain(added_cost);
+
+                let heuristic = cost_including_extension.chain(self.heuristic_plan_completion_cost(extension, graph));
+
+                Ok(StepExtension {
+                    pattern_id: extension,
+                    pattern_metadata: meta_data,
+                    step_cost: added_cost,
+                    step_join_var: join_var,
+                    heuristic,
+                })
             })
     }
 
@@ -1019,7 +993,6 @@ impl PartialCostPlan {
         pattern: PatternVertexId,
         input_vars: &[VertexId],
         join_var: Option<VariableVertexId>,
-        force_direction: Option<Direction>,  // EXPERIMENT: override default direction
     ) -> Result<(Cost, CostMetaData), QueryPlanningError> {
         let planner = &graph.elements[&VertexId::Pattern(pattern)];
         let (updated_cost, extension_metadata) = match planner {
@@ -1029,22 +1002,19 @@ impl PartialCostPlan {
                         .as_variable()
                         .unwrap()
                         .restricted_expected_output_size(&self.vertex_ordering);
-                    // force_direction overrides the join-var-derived default if set.
-                    let fixed_direction = force_direction.map(Some).unwrap_or_else(|| {
-                        constraint.direction_from_join_var(
-                            join_var,
-                            &self.ongoing_step_produced_vars,
-                            &self.all_produced_vars,
-                        )
-                    });
+                    let fixed_direction = constraint.direction_from_join_var(
+                        join_var,
+                        &self.ongoing_step_produced_vars,
+                        &self.all_produced_vars,
+                    ); // TODO: we only allow unbounded regular joins for now
                     let (constraint_cost, meta_data) =
                         constraint.cost_and_metadata(input_vars, fixed_direction, graph)?;
                     (self.ongoing_step_cost.join(constraint_cost, total_join_size), meta_data)
                 } else {
-                    constraint.cost_and_metadata(input_vars, force_direction, graph)?
+                    constraint.cost_and_metadata(input_vars, None, graph)?
                 }
             }
-            planner_vertex => planner_vertex.cost_and_metadata(input_vars, force_direction, graph)?,
+            planner_vertex => planner_vertex.cost_and_metadata(input_vars, None, graph)?,
         };
         Ok((updated_cost, extension_metadata))
     }
@@ -1210,27 +1180,11 @@ impl PartialCostPlan {
     }
 
     fn hash(&self) -> PartialPlanHash {
-        // EXPERIMENT companion: include per-pattern direction in the hash so plans that
-        // differ only in direction-of-a-placed-pattern are NOT deduped to a single state.
-        // Two such plans might enable different join opportunities downstream — e.g., a
-        // Reverse-direction Has joins on the attribute, while Canonical joins on the
-        // owner. Without including direction here, the beam's dedupe collapses one
-        // alternative into the other (whichever was inserted first), defeating the
-        // direction-fanout in extensions_iter.
-        let pattern_directions: BTreeMap<PatternVertexId, Direction> = self
-            .pattern_metadata
-            .iter()
-            .filter_map(|(&pid, md)| match md {
-                CostMetaData::Direction(d) => Some((pid, *d)),
-                _ => None,
-            })
-            .collect();
         PartialPlanHash {
             n_remaining_patterns: self.remaining_patterns.len() as u32,
             planned_patterns: self.vertex_ordering.iter().filter_map(|v| v.as_pattern_id()).collect::<BTreeSet<_>>(),
             ongoing_step_join_var: self.ongoing_step_join_var,
             ongoing_non_trivial_patterns: self.ongoing_step.iter().copied().collect::<BTreeSet<_>>(),
-            pattern_directions,
         }
     }
 }
@@ -1255,9 +1209,6 @@ pub(super) struct PartialPlanHash {
     planned_patterns: BTreeSet<PatternVertexId>,
     ongoing_non_trivial_patterns: BTreeSet<PatternVertexId>,
     ongoing_step_join_var: Option<VariableVertexId>,
-    // Per-pattern direction for all placed patterns; ensures two plans differing only
-    // in a pattern's direction survive the beam dedupe as distinct candidates.
-    pattern_directions: BTreeMap<PatternVertexId, Direction>,
 }
 
 #[derive(Clone, PartialEq, Debug)]
