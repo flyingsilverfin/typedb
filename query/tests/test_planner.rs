@@ -498,16 +498,18 @@ fn add_noise_owners(spec: &mut DataSpec, n_noise_types: usize, per_type: usize, 
 ///   has — together these produce the pure 2-iter merge plan that the planner
 ///   would otherwise not enumerate. Post-rebase onto merge-skip-kmerge-and-peekable,
 ///   which dropped redundant iterator-stack layers in multi-iter Has merge):
-///   - forced sequential: 4.39 ms — chain (unbound + bound):
+///   - forced sequential: 2.67 ms — chain (unbound + bound):
 ///         step 0 (unbound has):    1 seek + 1000 advances (500 rows) — cost 1005
 ///         step 3 (bound has):    500 seeks +  500 advances (500 rows) — cost 3000
 ///         post-hoc I/O cost: 4005 (consistent with planner's 4035 estimate)
-///   - forced merge:      2.49 ms — single 2-iter merge on $1:
+///   - forced merge:      1.67 ms — single 2-iter merge on $1:
 ///         step 0 (2× Reverse[has], unbound, sort_by=$1):
 ///                                  2 seeks + 2000 advances (500 rows) — cost 2010
 ///         post-hoc I/O cost: 2010 (this plan is NOT in the planner's enumeration)
-///         per-row cost dropped from 7.6 µs/row pre-rebase to 2.7 µs/row post-rebase
-///     →  runtime: **merge wins 1.76×** (was sequential-1.24× pre-rebase)
+///         per-row cost ~1.7 µs/row post-rebase (was 7.6 µs/row pre-rebase)
+///     →  runtime: **merge wins 1.60×** (consistent direction since the rebase;
+///        Value/Tuple enum size reductions and KMergeBy boxing on the new base
+///        sped up both plans, merge slightly more so it still wins comfortably)
 ///
 /// Planner picks sequential. **Test currently FAILS its plan-shape assertion**.
 /// Post-rebase the empirical picture has flipped: the pure 2-iter merge is now
@@ -592,17 +594,18 @@ fn merge_wins_symmetric_balanced() {
 ///   always picks an outer driver before allowing a multi-iter merge step.
 ///
 ///   What the BENCH measures (post-rebase onto merge-skip-kmerge-and-peekable):
-///   - forced sequential: 16.64 ms — chain (unbound + bound):
+///   - forced sequential: 10.53 ms — chain (unbound + bound):
 ///         step 0 (unbound has):    1 seek + 1000 advances (500 rows)  — cost 1005
 ///         step 3 (bound has):    500 seeks + 5000 advances (5000 rows) — cost 7500
 ///         post-hoc I/O cost: 8505 (matches planner's 8535 estimate)
-///   - forced merge:      27.94 ms — pure 2-iter merge on $1 (FORCE_HAS_REVERSE):
+///   - forced merge:      17.13 ms — pure 2-iter merge on $1 (FORCE_HAS_REVERSE):
 ///         step 0 (2× Reverse[has], unbound, sort_by=$1):
-///                              1092 seeks + 23438 advances (5000 rows) — cost 28898
-///         post-hoc I/O cost: 28898 (this plan is NOT in the planner's enumeration)
-///         per-row cost dropped from 7.5 µs/row pre-rebase to 2.9 µs/row post-rebase
-///     →  runtime: sequential wins 1.68× (was 3.0× pre-rebase — gap halved)
-///        bench I/O agrees: sequential ~3.4× cheaper
+///                              1092 seeks + 12638 advances (5000 rows) — cost 18098
+///         post-hoc I/O cost: 18098 (this plan is NOT in the planner's enumeration;
+///         advance count dropped from 23438 → 12638 post-rebase as the executor's
+///         per-emit work was cut roughly in half)
+///         per-row cost ~1.6 µs/row post-rebase (was 7.5 µs/row pre-rebase)
+///     →  runtime: sequential wins 1.63×; bench I/O agrees: sequential ~2.1× cheaper
 ///
 /// Planner picks sequential. **Test currently FAILS its plan-shape assertion**.
 /// Under 10:1 fan-out, the merge's cartesian sub-iter reopens add ~1000 seeks
@@ -686,17 +689,18 @@ fn merge_wins_moderate_cartesian() {
 ///   pick lines up with what the bench measures.
 ///
 ///   What the BENCH measures (post-rebase onto merge-skip-kmerge-and-peekable):
-///   - forced sequential:  76.28 ms — chain (unbound + bound):
+///   - forced sequential:  46.65 ms — chain (unbound + bound):
 ///         step 0 (unbound has):    1 seek + 1000 advances (500 rows)    — cost 1005
 ///         step 2 (bound has):    500 seeks + 25000 advances (25000 rows) — cost 27500
 ///         post-hoc I/O cost: 28505 (matches planner's 28535 estimate)
-///   - forced merge:      110.12 ms — pure 2-iter merge on $1 (FORCE_HAS_REVERSE):
+///   - forced merge:      73.12 ms — pure 2-iter merge on $1 (FORCE_HAS_REVERSE):
 ///         step 0 (2× Reverse[has], unbound, sort_by=$1):
-///                               972 seeks + 98478 advances (25000 rows) — cost 103338
-///         post-hoc I/O cost: 103338 (this plan is NOT in the planner's enumeration)
-///         per-row cost dropped from 5.1 µs/row pre-rebase to 2.1 µs/row post-rebase
-///     →  runtime: sequential wins 1.44× (was 2.5× pre-rebase — gap halved)
-///        bench I/O agrees: seq ~3.6× cheaper
+///                               972 seeks + 52478 advances (25000 rows) — cost 57338
+///         post-hoc I/O cost: 57338 (this plan is NOT in the planner's enumeration;
+///         advance count dropped from 98478 → 52478 post-rebase — the executor's
+///         per-emit work in cartesian-fanout merges was nearly halved)
+///         per-row cost ~1.0 µs/row post-rebase (was 5.1 µs/row pre-rebase)
+///     →  runtime: sequential wins 1.57×; bench I/O agrees: seq ~2.0× cheaper
 ///
 /// Planner picks sequential (after the Cost::join cartesian-fanout fix).
 /// **Test PASSES** — assertion flipped from `!merges.is_empty()` to
@@ -776,17 +780,16 @@ fn merge_wins_heavy_cartesian() {
 ///   candidate set (enumeration requires an outer driver before multi-iter merge).
 ///
 ///   What the BENCH measures (post-rebase onto merge-skip-kmerge-and-peekable):
-///   - forced sequential: 34.60 ms — chain (unbound + bound):
+///   - forced sequential: 20.84 ms — chain (unbound + bound):
 ///         step 0 (unbound has):     1 seek +  2000 advances (1000 rows)  — cost 2005
 ///         step 3 (bound has):    1000 seeks + 10000 advances (10000 rows) — cost 15000
 ///         post-hoc I/O cost: 17005 (matches planner's 17065 estimate)
-///   - forced merge:      47.60 ms — pure 2-iter merge on $1 (FORCE_HAS_REVERSE):
+///   - forced merge:      37.01 ms — pure 2-iter merge on $1 (FORCE_HAS_REVERSE):
 ///         step 0 (2× Reverse[has], unbound, sort_by=$1):
-///                              2192 seeks + 25288 advances (10000 rows) — cost 36248
-///         post-hoc I/O cost: 36248 (this plan is NOT in the planner's enumeration)
-///         per-row cost dropped from 6.8 µs/row pre-rebase to 2.4 µs/row post-rebase
-///     →  runtime: sequential wins 1.38× (was 2.9× pre-rebase — gap halved)
-///        bench I/O agrees: seq ~2.1× cheaper
+///                              2192 seeks + 47088 advances (10000 rows) — cost 58048
+///         post-hoc I/O cost: 58048 (this plan is NOT in the planner's enumeration)
+///         per-row cost ~2.1 µs/row post-rebase (was 6.8 µs/row pre-rebase)
+///     →  runtime: sequential wins 1.78×; bench I/O agrees: seq ~3.4× cheaper
 ///
 /// Planner picks sequential. **Test currently FAILS its plan-shape assertion**.
 /// Per-row counters mirror moderate_cartesian almost exactly — scaling N doesn't
@@ -936,17 +939,16 @@ fn build_multi_attr_spec(n_owners: usize, k_attrs: usize, m_values: usize) -> Da
 ///
 ///   What the BENCH measures (under forcing knobs):
 ///   Numbers below are post-rebase onto merge-skip-kmerge-and-peekable.
-///   - forced sequential: 2.84 ms — cascade of 3 join steps:
+///   - forced sequential: 2.29 ms — cascade of 3 join steps:
 ///         step [1] drive attr_0 (unbound):     1 seek +  334 advances — cost 339
 ///         step [3] probe attr_1 (bound by $0): 334 seeks +  112 advances — cost 1782
 ///         step [5] probe attr_2 (bound by $0): 112 seeks +    0 advances — cost 560
 ///         post-hoc I/O cost: ~2681 (+ literal-materialization steps ~11)
-///   - forced merge:      1.03 ms — single multi-iter intersection step:
+///   - forced merge:      0.95 ms — single multi-iter intersection step:
 ///         step [2] merge iters (sort_by=$0, bound by query literals only):
 ///                                              225 seeks + 1338 advances — cost 2463
 ///         post-hoc I/O cost: ~2485 (+ literal-materialization steps ~22)
-///     →  runtime: merge wins 2.76× (was 2.95× pre-rebase — both plans got
-///        slightly faster, ratio basically unchanged); bench I/O agrees: merge ~8% cheaper
+///     →  runtime: merge wins 2.40×; bench I/O agrees: merge ~8% cheaper
 ///
 /// Planner picks merge. **Test PASSES.** First confirmed merge-wins shape in the
 /// suite: intersection over entity-id (not attribute value), multiple iterators of
@@ -1022,17 +1024,17 @@ fn merge_wins_multi_attr_filter() {
 ///   start so the merge candidate is always bound-input here.
 ///
 ///   What the BENCH measures (post-rebase onto merge-skip-kmerge-and-peekable):
-///   - forced sequential:  89 µs — chain (unbound + bound):
+///   - forced sequential:  85 µs — chain (unbound + bound):
 ///         step 0 (unbound has):   1 seek +    2 advances (1 row) — cost 7
 ///         step 3 (bound has):     1 seek +    1 advance  (1 row) — cost 6
 ///         post-hoc I/O cost: 13 (matches planner's 13.06 estimate)
-///   - forced merge:      565 µs — pure 2-iter merge on $1 (FORCE_HAS_REVERSE):
+///   - forced merge:      583 µs — pure 2-iter merge on $1 (FORCE_HAS_REVERSE):
 ///         step 0 (2× Reverse[has], unbound, sort_by=$1):
 ///                                  2 seeks + 2003 advances (1 row) — cost 2013
 ///         post-hoc I/O cost: 2013 (this plan is NOT in the planner's enumeration)
-///     →  runtime: sequential wins 6.3× (essentially unchanged from pre-rebase
-///        6.6× — the merge-skip optimization helps per-emit cost but here the
-///        cost is dominated by the 2003-advance scan, not per-emit overhead)
+///     →  runtime: sequential wins 6.9× (essentially unchanged from previous
+///        runs — the cost here is dominated by the 2003-advance inner scan,
+///        not by per-emit overhead, so executor improvements don't help much)
 ///
 /// Planner picks sequential. **Test PASSES.** Pure-merge forcing exposes the
 /// catastrophic O(N_inner) work this test guards against (2003 advances for 1
@@ -1114,18 +1116,18 @@ fn sequential_wins_tiny_outer_huge_inner() {
 ///   scan even with merge cost zeroed.
 ///
 ///   What the BENCH measures (post-rebase onto merge-skip-kmerge-and-peekable):
-///   - forced sequential: 960 µs — chain (unbound + bound):
+///   - forced sequential: 547 µs — chain (unbound + bound):
 ///         step 0 (unbound has):    1 seek +  200 advances (100 rows) — cost 205
 ///         step 3 (bound has):    100 seeks +  100 advances (100 rows) — cost 600
 ///         post-hoc I/O cost: 805 (matches planner's 811 estimate)
-///   - forced merge:     2.55 ms — hybrid (outer entity scan + bound merge):
+///   - forced merge:     1.17 ms — hybrid (outer entity scan + bound merge):
 ///         step 0 (Reverse[$0 isa owner_1] scan):
 ///                                  1 seek +  100 advances (100 rows) — cost 105
 ///         step 1 (bound-input merge on $1 with $0 bound):
-///                                ~297 seeks + ~793 advances — cost ~2278
-///         post-hoc I/O cost: ~2383 (close to planner's 1810 hybrid-merge estimate;
+///                                ~298 seeks + ~597 advances — cost ~2087
+///         post-hoc I/O cost: ~2192 (close to planner's 1810 hybrid-merge estimate;
 ///                                   the extra is per-row merge overhead)
-///     →  runtime: sequential wins 2.66× (was 3.3× pre-rebase — gap shrunk modestly)
+///     →  runtime: sequential wins 2.14×
 ///
 /// Planner picks sequential. **Test PASSES.** Pure-merge forcing degrades to
 /// hybrid here, so the "merge" runtime above reflects bound-input merge cost,
@@ -1205,18 +1207,17 @@ fn sequential_wins_subset_coverage() {
 ///   model AND in the bench, so they agree decisively here.
 ///
 ///   What the BENCH measures (post-rebase onto merge-skip-kmerge-and-peekable):
-///   - forced sequential: 960 µs — chain (unbound + bound):
+///   - forced sequential: 657 µs — chain (unbound + bound):
 ///         step 0 (unbound has):    1 seek +  200 advances (100 rows) — cost 205
 ///         step 3 (bound has):    100 seeks +  100 advances (100 rows) — cost 600
 ///         post-hoc I/O cost: 805 (matches planner's 811 estimate)
-///   - forced merge:    1.90 ms — pure 2-iter merge on $1 (FORCE_HAS_REVERSE):
+///   - forced merge:    1.33 ms — pure 2-iter merge on $1 (FORCE_HAS_REVERSE):
 ///         step 0 (2× Reverse[has], unbound, sort_by=$1):
 ///                                  2 seeks + 4400 advances (100 rows) — cost 4410
 ///         post-hoc I/O cost: 4410 (this plan is NOT in the planner's enumeration)
-///         per-row cost dropped from 17.2 µs/row pre-rebase to 14.6 µs/row post-rebase
-///     →  runtime: sequential wins 1.98× (was 2.3× pre-rebase — gap shrunk modestly;
-///        the noise-bloated scan dominates here, so the per-emit optimization helps
-///        less); bench I/O agrees: seq 5.5× cheaper
+///         per-row cost ~11.2 µs/row post-rebase (was 17.2 µs/row earlier)
+///     →  runtime: sequential wins 2.02× (steady — the noise-bloated scan still
+///        dominates per-emit cost here); bench I/O agrees: seq 5.5× cheaper
 ///
 /// Planner picks sequential. **Test PASSES.** Noise inflates the merge's
 /// per-row advance count to ~44 (the merge walks past every noise entry in
@@ -1298,18 +1299,19 @@ fn sequential_wins_noisy_inner() {
 ///   is not enumerated because the small outer scan dominates the search.
 ///
 ///   What the BENCH measures (post-rebase onto merge-skip-kmerge-and-peekable):
-///   - forced sequential: 142 µs — chain (unbound + bound):
+///   - forced sequential: 166 µs — chain (unbound + bound):
 ///         step 0 (unbound has):    1 seek +   20 advances (10 rows) — cost 25
 ///         step 3 (bound has):     10 seeks +    5 advances (5 rows) — cost 55
 ///         post-hoc I/O cost: 80 (matches planner's 85.6 estimate)
-///   - forced merge:    283 µs — hybrid (outer entity scan + bound merge):
+///   - forced merge:    200 µs — hybrid (outer entity scan + bound merge):
 ///         step 0 (Reverse[$0 isa owner_1] scan):
 ///                                  1 seek +   10 advances (10 rows) — cost 15
 ///         step 1 (bound-input merge on $1 with $0 bound):
-///                                ~22 seeks +  ~93 advances (5 rows) — cost ~203
-///         post-hoc I/O cost: ~218 (close to planner's 185.3 hybrid-merge estimate)
-///     →  runtime: sequential wins 2.0× (was 2.2× pre-rebase — slight improvement
-///        from merge-skip-kmerge); bench I/O agrees: seq 2.7× cheaper
+///                                ~23 seeks +  ~87 advances (5 rows) — cost ~202
+///         post-hoc I/O cost: ~217 (close to planner's 185.3 hybrid-merge estimate)
+///     →  runtime: sequential wins 1.21× (gap collapsed from 2.0× pre-rebase;
+///        absolute times are tiny — both at hundreds of µs — and single-execution
+///        noise dominates the ratio. bench I/O still favors seq 2.7× cheaper)
 ///
 /// Planner picks sequential. **Test PASSES.** As with subset_coverage, the
 /// pure-merge forcing degrades to hybrid here. The wall-clock gap stays small
