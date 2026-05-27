@@ -171,26 +171,23 @@ impl<'a> fmt::Display for PlannerVertex<'a> {
     }
 }
 
-/// Per-output cost for one side of a sort-merge join, modelled as a two-point blend
+/// Per-output cost for one side of a sort-merge join, modelled as a blend
 /// between lockstep advance and zipper-style catch-up seek.
 ///
 /// In `find_intersection` (executor), each output is produced by one of two patterns:
-/// - **Lockstep**: after the previous match, this side's `advance_past` lands on
-///   an entry whose value matches the other side's peek. No catch-up call fires;
-///   the storage cost is just the advance itself, captured as `expected = cost /
-///   io_ratio` (this absorbs any post-filter waste the iterator walks past
-///   internally, e.g. owner-type rejects between matches).
-/// - **Catch-up seek**: peeks disagree; the lagging side calls
-///   `advance_until_first_unbound_is(target)` which dispatches to
-///   `iterator.seek(target)` — a real storage seek costing `SEEK_ITERATOR_RELATIVE_COST`.
-///   The seek lands on (or past) the match in O(log N), independent of post-filter
-///   waste, so this arm is `SEEK`, not `SEEK + expected`.
+/// - **Lockstep**: after the previous intersection, this side's `advance_past` lands on
+///   an entry whose value matches the other side's peek.
+///   The storage cost is just the advance itself, captured as `expected = cost /
+///   io_ratio` (this absorbs any post-filter ignores the iterator walks past
+///   internally, e.g. owner-type rejects between intersections).
+/// - **Catch-up seek**: peeks disagree; the lagging side seeks.
 ///
-/// `p_seek` is the per-side probability that the next match requires the catch-up
-/// arm. Estimated as the fraction of this side's entries that aren't part of the
-/// join output: `max(0, io_ratio - join_size) / io_ratio`. When a side has
-/// "decoys" (entries the other side doesn't have), each match-search likely
-/// advances onto a decoy and has to seek past it.
+/// `p_seek` is the per-side probability that the next intersection requires a catch-up
+/// seek.
+///
+/// In short, if we are in a dense intersection where every value is matched
+/// we end up never seeking (p_seek = 0), so we just pay the advancing cost
+/// If we have a low likelyhood of a match, we may also have to pay a full seek cost
 fn per_match_cost(cost: f64, io_ratio: f64, p_seek: f64) -> f64 {
     let expected = cost / io_ratio;
     let p_lockstep = 1.0 - p_seek;
@@ -229,17 +226,11 @@ impl Cost {
         let io_ratio = f64::max(self.io_ratio * other.io_ratio / join_size, Cost::MIN_IO_RATIO);
         let num_seeks_each = f64::min(self.io_ratio, other.io_ratio);
 
-        // Per-side per-match cost: each output requires one of two storage patterns:
-        //  - lockstep advance (cost ≈ cost/io_ratio = `expected`), when the side's next
-        //    entry happens to match the other side's peek
-        //  - catch-up seek (cost ≈ SEEK), when peeks disagree and the lagging side
-        //    has to `iterator.seek(target)` to skip past its non-match entries
-        //
-        // We weight by `p_seek`: the fraction of this side's entries that aren't part
-        // of the join output. A side whose io_ratio exceeds the join size has "decoys"
+        // `p_seek`: the fraction of this side's entries that aren't part
+        // of the join output. A side whose io_ratio exceeds the join size has mismatches
         // — entries the other side doesn't have — and each match-search likely advances
-        // onto one, triggering the catch-up arm. A side perfectly covered by the join
-        // domain (io_ratio ≤ join_size) has p_seek = 0 and stays in the lockstep arm.
+        // onto one, triggering a seek. A side perfectly covered by the join
+        // domain (io_ratio ≤ join_size) has p_seek = 0 and stays in lockstep.
         let p_seek_self = ((self.io_ratio - join_size) / self.io_ratio).max(0.0);
         let p_seek_other = ((other.io_ratio - join_size) / other.io_ratio).max(0.0);
         let self_out_cost = per_match_cost(self.cost, self.io_ratio, p_seek_self);

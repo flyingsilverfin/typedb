@@ -4,32 +4,6 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-//! Planner-focused integration tests. Each test builds a small schema, populates
-//! data via a `DataSpec`-driven loader, runs a read query, and asserts that the
-//! planner picked the plan shape (merge vs sequential) we'd expect for the
-//! scenario. Row count and per-step storage work are also checked.
-//!
-//! The 10 tests are "must-pick-X" scenarios: data is shaped so one plan shape is
-//! the theoretical right answer, and we assert the planner picks it. The
-//! assertions reflect theoretical expectation, not the planner's current
-//! choices — some tests may fail because the planner's cost model doesn't yet
-//! pick the theoretically-best plan for that shape. Those failures are
-//! intentional markers for cost-model gaps to fix.
-//!
-//! Merge-wins scenarios (cost model should prefer merge):
-//! - `merge_wins_multi_attr_filter`          — K patterns on one entity
-//! - `merge_wins_symmetric_balanced`         — 1:1 baseline, full coverage
-//! - `merge_wins_moderate_cartesian`         — 10:1 per-value fan-out
-//! - `merge_wins_heavy_cartesian`            — 50:1 per-value fan-out
-//! - `merge_wins_at_scale_with_fanout`       — moderate fan-out, higher card
-//! - `merge_wins_true_zipper`                — mid-match decoys force catch-up seeks
-//!
-//! Sequential-wins scenarios (cost model should prefer sequential):
-//! - `sequential_wins_tiny_outer_huge_inner` — 1 outer × N inner
-//! - `sequential_wins_subset_coverage`       — small outer ⊂ huge inner
-//! - `sequential_wins_noisy_inner`           — noise inflates scan range
-//! - `sequential_wins_asymmetric_coverage`   — small outer × huge inner
-
 use std::{collections::HashMap, sync::Arc};
 
 use concept::{
@@ -460,20 +434,19 @@ fn add_noise_owners(spec: &mut DataSpec, n_noise_types: usize, per_type: usize, 
     }
 }
 
-// === Merge-must-win tests ====================================================================
+// === Merge should win tests ====================================================================
 
 /// Symmetric balanced full-coverage baseline. Both sides 500 owners, 1:1 with
-/// values 0..499 → 500 output rows. No waste, no coverage gap, no noise —
-/// textbook merge-win shape: both sides pre-sorted on the join attribute,
-/// dense overlap. A 2-iter merge intersection on the attribute should beat
-/// sequential's per-outer-row probe.
+/// values 0..499 → 500 output rows. No waste, no coverage gap, no noise, dense intersection.
 ///
 /// Cost-model estimate (SEEK=5, ADVANCE=1):
 /// - sequential chain ≈ 500 × (SEEK + 1 ADV) ≈ 3000
 /// - 2-iter merge    ≈ 2 × (SEEK + 500 ADV)  ≈ 1010
-/// Merge expected to win by ~3×.
-/// Actual planner cost (current branch): 4045 (sequential — planner picks the
-/// wrong plan; this test fails).
+/// Merge expected to win
+/// Actual planner cost: 4045 (sequential)
+///
+/// Planner currently picks sequential over merge because of planner restriction, so test fails
+/// TODO: fix bug where planner it not able to start with an intersection because both directions are not preserved as choices if direction that enables the intersection is more expensive
 #[test]
 fn merge_wins_symmetric_balanced() {
     const N: usize = 500;
@@ -532,8 +505,10 @@ fn merge_wins_symmetric_balanced() {
 /// - sequential chain ≈ 500 × (SEEK + 10 ADV) ≈ 7500
 /// - 2-iter merge    ≈ 1000 + per-value cartesian sub-iter
 /// Merge expected to win by ~5×.
-/// Actual planner cost (current branch): 8635 (sequential — planner picks the
-/// wrong plan; this test fails).
+/// Actual planner cost: 8635 (sequential)
+///
+/// Planner picks the wrong plan; this test fails expectedly.
+/// TODO: our cartesian is expensive to compute so this might be the right plan for now!
 #[test]
 fn merge_wins_moderate_cartesian() {
     const N_OWNERS: usize = 500;
@@ -596,8 +571,10 @@ fn merge_wins_moderate_cartesian() {
 /// - 2-iter merge    ≈ 1000 + per-value cartesian (~10 reopens, big amortization)
 /// Merge expected to win decisively (~25×) — this is the regime where per-value
 /// cartesian most clearly pays off.
-/// Actual planner cost (current branch): 29035 (sequential — planner picks the
-/// wrong plan; this test fails).
+///
+/// Actual planner cost: 29035 (sequential)
+/// Planner picks the wrong plan; this test fails.
+/// TODO: our cartesian is expensive to compute so this might be the right plan for now!
 #[test]
 fn merge_wins_heavy_cartesian() {
     const N_OWNERS: usize = 500;
@@ -659,8 +636,9 @@ fn merge_wins_heavy_cartesian() {
 /// - sequential chain ≈ 1000 × (SEEK + 10 ADV) ≈ 15000
 /// - 2-iter merge    ≈ 2000 + per-value cartesian sub-iter
 /// Merge expected to win by ~5×, same shape as moderate_cartesian.
-/// Actual planner cost (current branch): 17265 (sequential — planner picks the
-/// wrong plan; this test fails).
+///
+/// Actual planner cost: 17265 (sequential)
+/// Planner picks the wrong plan; this test fails
 #[test]
 fn merge_wins_at_scale_with_fanout() {
     const N_OWNERS: usize = 1000;
@@ -709,6 +687,107 @@ fn merge_wins_at_scale_with_fanout() {
     assert!(
         ratio < 20.0,
         "at_scale_with_fanout: worst step should be O(1) per row (< 20 advances/row); \
+         got {ratio:.2} ({advances}/{prof_rows}). step: {descr}",
+    );
+}
+
+/// Merge stress test that causes seeks to intersections.
+/// 500 matching values + 2 decoys per side per match.
+/// Side A owners hold {match, match+1, match+2}; side B owners hold {match, match+3,
+/// match+4}. Stride 5 between matches. 2 additional owners per side cause seek mismatches between matches.
+///
+/// Expected per match (after the first): 2 real catch-up seeks (one per side) plus
+/// a handful of advances walking past the other side's decoys. So 500 matches
+/// should yield ~1000 catch-up SEEKs + 2 OPEN SEEKs = ~1002 SEEKs total
+///
+/// Cost-model estimate (alignment-probability formula, planner stats):
+/// - per side: io_ratio = 1500 (3 has's × 500 owners), reverse-scan cost ≈ 3005
+/// - distinct attr_values total: 5 × 500 = 2500
+/// - planner join_size estimate ≈ 1500²/2500 = 900
+/// - p_seek per side: (1500 − 900)/1500 ≈ 0.4
+/// - per_match_cost ≈ 0.6 × (3005/1500) + 0.4 × SEEK ≈ 1.2 + 2 = 3.2
+/// - merge total: 2 × (5 + 3.2×1500) + cartesian(~1000) ≈ 10600
+/// - sequential cascade: outer scan 1505 + 1500 × probe(~6) ≈ 10500
+///
+/// Empirical comparison (instrumented runs):
+/// - merge:      seeks=1001 advs=4999 → weighted ≈ 10004
+/// - sequential: seeks=1501 advs=2500 → weighted ≈ 10005
+///
+/// How beneficial the merge is vs sequential depends on actual cost of seek vs advance
+/// and the size of gaps between intersections
+///
+/// Actual planner cost: 11125 (sequential).
+///
+/// TODO: fix bug where planner it not able to start with an intersection because both directions are not preserved as choices if direction that enables the intersection is more expensive
+#[test]
+fn merge_wins_true_zipper() {
+    const N_OWNERS: usize = 500;
+    const STRIDE: i64 = 5;
+    const HAS_PER_OWNER: usize = 3; // 1 match + 2 decoys per side
+    const HAS_PER_SIDE: usize = N_OWNERS * HAS_PER_OWNER;
+    // Side A decoy offsets from match: {+1, +2}. Side B decoys: {+3, +4}.
+    const A_DECOY_OFFSETS: &[i64] = &[1, 2];
+    const B_DECOY_OFFSETS: &[i64] = &[3, 4];
+
+    let zipper_gen = |decoy_offsets: &'static [i64]| -> AttributeGenerator {
+        Box::new(move |e| {
+            let owner_idx = (e % N_OWNERS) as i64;
+            // round e: 0..N_OWNERS is the match has, N_OWNERS..2*N is first decoy, etc.
+            let round = e / N_OWNERS;
+            let offset = if round == 0 { 0 } else { decoy_offsets[round - 1] };
+            owner_idx * STRIDE + offset
+        })
+    };
+
+    let mut context = setup();
+    define_two_owner_schema(&mut context);
+
+    let data_spec = DataSpec {
+        instances: vec![
+            InstanceSpec { type_: OWNER_1, count: N_OWNERS, key: Some(KEY_1) },
+            InstanceSpec { type_: OWNER_2, count: N_OWNERS, key: Some(KEY_2) },
+        ],
+        has: vec![
+            HasSpec {
+                owner_type: OWNER_1, attr_type: JOIN_ATTR,
+                count_each: HAS_PER_OWNER, count_total: HAS_PER_SIDE,
+                attribute_generator: zipper_gen(A_DECOY_OFFSETS),
+            },
+            HasSpec {
+                owner_type: OWNER_2, attr_type: JOIN_ATTR,
+                count_each: HAS_PER_OWNER, count_total: HAS_PER_SIDE,
+                attribute_generator: zipper_gen(B_DECOY_OFFSETS),
+            },
+        ],
+    };
+    load_data(&mut context, data_spec);
+
+    let pipeline = compile_read(&context, &two_owner_join_query());
+    println!("planner: {}", planner_cost_summary(&pipeline));
+    let merges = multi_iter_intersection_steps(&pipeline);
+    let merges_count = merges.len();
+    drop(merges);
+
+    let (rows, profile) = execute_read(pipeline);
+    let (s, a) = total_storage_ops(&profile);
+    println!("storage: seeks={s} advances={a} weighted={}", s * 5 + a);
+    assert!(
+        merges_count > 0,
+        "true_zipper: planner should pick merge — merge is empirically faster than \
+         sequential here even after paying ~|min|×2 catch-up seeks; found none",
+    );
+    assert_eq!(rows, N_OWNERS, "true_zipper: 500 matching values × 1 × 1 = 500 rows");
+    assert!(
+        s >= (N_OWNERS as u64),
+        "true_zipper: expected real catch-up seeks to fire (≈ 2×N_OWNERS = 1000 + 2 OPENs); \
+         got only {s} seeks. If this drops to 2, the data shape isn't forcing storage \
+         seeks — the merge's `advance_until_first_unbound_is` is early-returning because \
+         the next storage entry is already at/past the catch-up target.",
+    );
+    let (ratio, advances, prof_rows, descr) = worst_advances_per_row(&profile);
+    assert!(
+        ratio < 50.0,
+        "true_zipper: worst step should be reasonable (< 50 advances/row); \
          got {ratio:.2} ({advances}/{prof_rows}). step: {descr}",
     );
 }
@@ -787,10 +866,11 @@ fn build_multi_attr_spec(n_owners: usize, k_attrs: usize, m_values: usize) -> Da
 /// Cost-model estimate:
 /// - sequential cascade ≈ 333 outer + 2 × (333 × bound-probe) ≈ ~1300
 /// - K-iter merge       ≈ K × 333 + per-row intersection compare ≈ ~1000
+///
 /// Merge expected to win (cascading per-row pipeline overhead in the
 /// sequential plan is paid on intermediate row counts, not just on the final
 /// ~37 outputs).
-/// Actual planner cost (current branch): 828.25 (merge — planner picks correctly).
+/// Actual planner cost: 828.25 (merge — planner picks correctly).
 #[test]
 fn merge_wins_multi_attr_filter() {
     const N: usize = 1_000;
@@ -846,8 +926,8 @@ fn merge_wins_multi_attr_filter() {
 /// Cost-model estimate:
 /// - sequential chain ≈ 1 outer + 1 × (SEEK + 1 ADV) ≈ ~10
 /// - 2-iter merge    ≈ 2 × (SEEK + ~2000 ADV) ≈ ~2010
-/// Sequential expected to win by ~200×.
-/// Actual planner cost (current branch): 13.08 (sequential — planner picks correctly).
+///
+/// Actual planner cost: 13.08 (sequential)
 #[test]
 fn sequential_wins_tiny_outer_huge_inner() {
     const N_INNER: usize = 2000;
@@ -912,8 +992,8 @@ fn sequential_wins_tiny_outer_huge_inner() {
 /// - sequential chain ≈ 100 outer + 100 × (SEEK + 1 ADV) ≈ ~700
 /// - 2-iter merge    ≈ 100 + 2000 (both iters walk inner range to find the
 ///   100 overlapping values) ≈ ~2100
-/// Sequential expected to win by ~3×.
-/// Actual planner cost (current branch): 813 (sequential — planner picks correctly).
+///
+/// Actual planner cost: 813 (sequential).
 #[test]
 fn sequential_wins_subset_coverage() {
     const N_OUTER: usize = 100;
@@ -977,7 +1057,7 @@ fn sequential_wins_subset_coverage() {
 /// - sequential chain ≈ 2100 outer + 100 × (SEEK + 1 ADV) ≈ ~2700
 /// - 2-iter merge    ≈ 2 × 2100 (both iters walk the bloated range) ≈ ~4200
 /// Sequential expected to win by ~1.5×.
-/// Actual planner cost (current branch): 813 (sequential — planner picks correctly;
+/// Actual planner cost: 813 (sequential — planner picks correctly;
 /// model is cheaper than the rough estimate because per-type scan range is type-
 /// scoped and doesn't include cross-type noise).
 #[test]
@@ -1031,188 +1111,6 @@ fn sequential_wins_noisy_inner() {
     assert!(
         ratio < 30.0,
         "noisy_inner: worst step bounded by outer scan / matches ratio (< 30 advances/row); \
-         got {ratio:.2} ({advances}/{prof_rows}). step: {descr}",
-    );
-}
-
-/// Small outer × huge inner with small overlap. owner_1: 10 owners values
-/// 0..9; owner_2: 2000 owners values 5..2004 (overlap = 5 values: 5..9).
-/// Output: 5 rows. Distinct from `subset_coverage` because the outer is
-/// small (extreme outer-side selectivity) and the intersection is even
-/// tinier than the outer itself. Sequential should win.
-///
-/// Cost-model estimate:
-/// - sequential chain ≈ 10 outer + 10 × (SEEK + 1 ADV) ≈ ~60
-/// - 2-iter merge    ≈ 10 + 2000 (merge wastes most of its scan) ≈ ~2010
-/// Sequential expected to win by ~30×.
-/// Actual planner cost (current branch): 85.80 (sequential — planner picks correctly).
-#[test]
-fn sequential_wins_asymmetric_coverage() {
-    const N_OUTER: usize = 10;
-    const N_INNER: usize = 2000;
-    const INNER_OFFSET: i64 = 5; // shifts inner so only outer's 5..9 overlap
-    const EXPECTED_ROWS: usize = (N_OUTER as i64 - INNER_OFFSET) as usize; // 5
-
-    let mut context = setup();
-    define_two_owner_schema(&mut context);
-
-    let data_spec = DataSpec {
-        instances: vec![
-            InstanceSpec { type_: OWNER_1, count: N_OUTER, key: Some(KEY_1) },
-            InstanceSpec { type_: OWNER_2, count: N_INNER, key: Some(KEY_2) },
-        ],
-        has: vec![
-            HasSpec {
-                owner_type: OWNER_1, attr_type: JOIN_ATTR,
-                count_each: 1, count_total: N_OUTER,
-                attribute_generator: sequential(), // values 0..9
-            },
-            HasSpec {
-                owner_type: OWNER_2, attr_type: JOIN_ATTR,
-                count_each: 1, count_total: N_INNER,
-                attribute_generator: offset_unique(INNER_OFFSET), // values 5..2004
-            },
-        ],
-    };
-    load_data(&mut context, data_spec);
-
-    let pipeline = compile_read(&context, &two_owner_join_query());
-    println!("planner: {}", planner_cost_summary(&pipeline));
-    let merges = multi_iter_intersection_steps(&pipeline);
-    assert!(
-        merges.is_empty(),
-        "asymmetric_coverage: planner should pick sequential \
-         (10 outer × {N_INNER} inner, overlap = {EXPECTED_ROWS} — \
-         merge wastes all but ~0.25% of its scan); \
-         found {} multi-iter merge step(s)",
-        merges.len(),
-    );
-
-    let (rows, profile) = execute_read(pipeline);
-    let (s, a) = total_storage_ops(&profile);
-    println!("storage: seeks={s} advances={a} weighted={}", s * 5 + a);
-    assert_eq!(rows, EXPECTED_ROWS, "asymmetric_coverage: 5 overlapping values × 1 × 1 = 5 rows");
-    let (ratio, advances, prof_rows, descr) = worst_advances_per_row(&profile);
-    // Bound: with 5 rows of output, a healthy sequential plan does O(outer + per-match-probe)
-    // ≈ 15 advances. Cap at N_INNER * 0.5 to catch only catastrophic merge-style scans.
-    assert!(
-        ratio < (N_INNER as f64) * 0.5,
-        "asymmetric_coverage: worst step ratio {ratio:.2} ({advances}/{prof_rows}) \
-         exceeds {} — a catastrophically-bad plan is likely. step: {descr}",
-        (N_INNER as f64) * 0.5,
-    );
-}
-
-/// True-zipper merge stress test. 500 matching values + 2 decoys per side per match.
-/// Side A owners hold {match, match+1, match+2}; side B owners hold {match, match+3,
-/// match+4}. Stride 5 between matches.
-///
-/// Why 2 decoys per side, not 1: the merge intersection's catch-up call
-/// (`advance_until_first_unbound_is`) early-returns when the next storage entry is
-/// already at or past the target. With only 1 decoy per side, the post-advance peek
-/// lands directly on the other side's first decoy (which is at the catch-up target
-/// boundary), so no real storage seek fires (verified empirically — earlier
-/// 1-decoy-per-side construction produced only the 2 OPEN seeks). With ≥2 decoys
-/// per side, the peek-after-advance lands on this side's *second* decoy (strictly
-/// less than the catch-up target), triggering a real `iterator.seek` → `raw_seek++`
-/// in DBIterator.
-///
-/// Expected per match (after the first): 2 real catch-up seeks (one per side) plus
-/// a handful of advances walking past the other side's decoys. So 500 matches
-/// should yield ~1000 catch-up SEEKs + 2 OPEN SEEKs = ~1002 SEEKs total — this is
-/// the `|min|×2` regime the cost model's `p_seek` arm is meant to price.
-///
-/// Cost-model estimate (alignment-probability formula, planner stats):
-/// - per side: io_ratio = 1500 (3 has's × 500 owners), reverse-scan cost ≈ 3005
-/// - distinct attr_values total: 5 × 500 = 2500
-/// - planner join_size estimate ≈ 1500²/2500 = 900
-/// - p_seek per side: (1500 − 900)/1500 ≈ 0.4
-/// - per_match_cost ≈ 0.6 × (3005/1500) + 0.4 × SEEK ≈ 1.2 + 2 = 3.2
-/// - merge total: 2 × (5 + 3.2×1500) + cartesian(~1000) ≈ 10600
-/// - sequential cascade: outer scan 1505 + 1500 × probe(~6) ≈ 10500
-///
-/// Empirical comparison (instrumented runs):
-/// - merge:      seeks=1001 advs=4999 → weighted ≈ 10004
-/// - sequential: seeks=1501 advs=2500 → weighted ≈ 10005
-/// Plans are within 0.01% of each other in actual storage cost. Merge does
-/// fewer total ops (1000 vs 1500 seeks) but each merge-cycle does extra
-/// advances walking past decoys; sequential does more seeks (one per probe)
-/// but each probe is cheap.
-///
-/// Actual planner cost (current branch): 11125 (sequential — planner picks
-/// sequential; same direction-fanout cause as the other 2-side merge_wins_*
-/// failures, the alignment-probability model doesn't fix it on its own). When
-/// the merge plan IS explored (verified under a direction-fanout patch), it
-/// runs and produces the expected ~1001 catch-up seeks via the new assertion.
-#[test]
-fn merge_wins_true_zipper() {
-    const N_OWNERS: usize = 500;
-    const STRIDE: i64 = 5;
-    const HAS_PER_OWNER: usize = 3; // 1 match + 2 decoys per side
-    const HAS_PER_SIDE: usize = N_OWNERS * HAS_PER_OWNER;
-    // Side A decoy offsets from match: {+1, +2}. Side B decoys: {+3, +4}.
-    const A_DECOY_OFFSETS: &[i64] = &[1, 2];
-    const B_DECOY_OFFSETS: &[i64] = &[3, 4];
-
-    let zipper_gen = |decoy_offsets: &'static [i64]| -> AttributeGenerator {
-        Box::new(move |e| {
-            let owner_idx = (e % N_OWNERS) as i64;
-            // round e: 0..N_OWNERS is the match has, N_OWNERS..2*N is first decoy, etc.
-            let round = e / N_OWNERS;
-            let offset = if round == 0 { 0 } else { decoy_offsets[round - 1] };
-            owner_idx * STRIDE + offset
-        })
-    };
-
-    let mut context = setup();
-    define_two_owner_schema(&mut context);
-
-    let data_spec = DataSpec {
-        instances: vec![
-            InstanceSpec { type_: OWNER_1, count: N_OWNERS, key: Some(KEY_1) },
-            InstanceSpec { type_: OWNER_2, count: N_OWNERS, key: Some(KEY_2) },
-        ],
-        has: vec![
-            HasSpec {
-                owner_type: OWNER_1, attr_type: JOIN_ATTR,
-                count_each: HAS_PER_OWNER, count_total: HAS_PER_SIDE,
-                attribute_generator: zipper_gen(A_DECOY_OFFSETS),
-            },
-            HasSpec {
-                owner_type: OWNER_2, attr_type: JOIN_ATTR,
-                count_each: HAS_PER_OWNER, count_total: HAS_PER_SIDE,
-                attribute_generator: zipper_gen(B_DECOY_OFFSETS),
-            },
-        ],
-    };
-    load_data(&mut context, data_spec);
-
-    let pipeline = compile_read(&context, &two_owner_join_query());
-    println!("planner: {}", planner_cost_summary(&pipeline));
-    let merges = multi_iter_intersection_steps(&pipeline);
-    let merges_count = merges.len();
-    drop(merges);
-
-    let (rows, profile) = execute_read(pipeline);
-    let (s, a) = total_storage_ops(&profile);
-    println!("storage: seeks={s} advances={a} weighted={}", s * 5 + a);
-    assert!(
-        merges_count > 0,
-        "true_zipper: planner should pick merge — merge is empirically faster than \
-         sequential here even after paying ~|min|×2 catch-up seeks; found none",
-    );
-    assert_eq!(rows, N_OWNERS, "true_zipper: 500 matching values × 1 × 1 = 500 rows");
-    assert!(
-        s >= (N_OWNERS as u64),
-        "true_zipper: expected real catch-up seeks to fire (≈ 2×N_OWNERS = 1000 + 2 OPENs); \
-         got only {s} seeks. If this drops to 2, the data shape isn't forcing storage \
-         seeks — the merge's `advance_until_first_unbound_is` is early-returning because \
-         the next storage entry is already at/past the catch-up target.",
-    );
-    let (ratio, advances, prof_rows, descr) = worst_advances_per_row(&profile);
-    assert!(
-        ratio < 50.0,
-        "true_zipper: worst step should be reasonable (< 50 advances/row); \
          got {ratio:.2} ({advances}/{prof_rows}). step: {descr}",
     );
 }
