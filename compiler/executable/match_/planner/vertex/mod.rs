@@ -246,19 +246,6 @@ impl Cost {
         // `1 - X.io_ratio / join_size` — that's what triggers X's expensive scan past its
         // post-filter waste. The cost of the trigger is bounded by X's own waste, so the
         // penalty stays zero when X has no waste (waste ≤ expected → clamped to expected).
-        // Bench escape hatches (no-op when env vars unset → production unaffected):
-        //   FORCE_MERGE_INTERSECTION=1 — make this join return cost=0, so the planner
-        //     always picks merge over a chain alternative when a merge is structurally
-        //     available. Used to A/B merge-vs-sequential on the same data.
-        //   FORCE_NO_MERGE_INTERSECTION=1 — make this join return cost=INFINITY, so
-        //     the planner always rejects merge in favor of chain.
-        if std::env::var("FORCE_MERGE_INTERSECTION").is_ok() {
-            let io_ratio = f64::max(self.io_ratio * other.io_ratio / join_size, Cost::MIN_IO_RATIO);
-            return Self { cost: 0.0, io_ratio };
-        }
-        if std::env::var("FORCE_NO_MERGE_INTERSECTION").is_ok() {
-            return Self::INFINITY;
-        }
         let p_unmatched_self = (1.0 - self.io_ratio / join_size).max(0.0);
         let p_unmatched_other = (1.0 - other.io_ratio / join_size).max(0.0);
         let self_out_cost = blended_out_cost(self.cost, self.io_ratio, p_unmatched_self);
