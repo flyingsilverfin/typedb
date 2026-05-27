@@ -4,19 +4,19 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use options::{ServerQueryOptions, TransactionOptions};
+use options::{ServiceQueryOptions, ServiceTransactionOptions};
 use resource::constants::server::{
     DEFAULT_ANSWER_COUNT_LIMIT_GRPC, DEFAULT_INCLUDE_INSTANCE_TYPES, DEFAULT_PREFETCH_SIZE,
     DEFAULT_SCHEMA_LOCK_ACQUIRE_TIMEOUT_MILLIS, DEFAULT_TRANSACTION_PARALLEL, DEFAULT_TRANSACTION_TIMEOUT_MILLIS,
 };
 use typedb_protocol::options::{Query as QueryOptionsProto, Transaction as TransactionOptionsProto};
 
-pub(crate) fn transaction_options_from_proto(proto: Option<TransactionOptionsProto>) -> TransactionOptions {
+pub(crate) fn transaction_options_from_proto(proto: Option<TransactionOptionsProto>) -> ServiceTransactionOptions {
     let Some(proto) = proto else {
-        return TransactionOptions::default();
+        return ServiceTransactionOptions::default();
     };
 
-    TransactionOptions {
+    ServiceTransactionOptions {
         parallel: proto.parallel.unwrap_or(DEFAULT_TRANSACTION_PARALLEL),
         schema_lock_acquire_timeout_millis: proto
             .schema_lock_acquire_timeout_millis
@@ -25,12 +25,12 @@ pub(crate) fn transaction_options_from_proto(proto: Option<TransactionOptionsPro
     }
 }
 
-pub(crate) fn query_options_from_proto(proto: Option<QueryOptionsProto>) -> ServerQueryOptions {
+pub(crate) fn query_options_from_proto(proto: Option<QueryOptionsProto>) -> ServiceQueryOptions {
     let Some(proto) = proto else {
-        return ServerQueryOptions::default_grpc();
+        return ServiceQueryOptions::default_grpc();
     };
 
-    ServerQueryOptions {
+    ServiceQueryOptions {
         include_instance_types: proto.include_instance_types.unwrap_or(DEFAULT_INCLUDE_INSTANCE_TYPES),
         answer_count_limit: DEFAULT_ANSWER_COUNT_LIMIT_GRPC,
         prefetch_size: proto.prefetch_size.map(|value| value as usize).unwrap_or(DEFAULT_PREFETCH_SIZE),

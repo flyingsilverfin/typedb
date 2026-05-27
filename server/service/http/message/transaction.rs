@@ -6,7 +6,7 @@
 
 use axum::response::{IntoResponse, Response};
 use http::StatusCode;
-use options::TransactionOptions;
+use options::ServiceTransactionOptions;
 use resource::constants::server::{
     DEFAULT_SCHEMA_LOCK_ACQUIRE_TIMEOUT_MILLIS, DEFAULT_TRANSACTION_PARALLEL, DEFAULT_TRANSACTION_TIMEOUT_MILLIS,
 };
@@ -42,9 +42,9 @@ impl Default for TransactionOptionsPayload {
     }
 }
 
-impl Into<TransactionOptions> for TransactionOptionsPayload {
-    fn into(self) -> TransactionOptions {
-        TransactionOptions {
+impl Into<ServiceTransactionOptions> for TransactionOptionsPayload {
+    fn into(self) -> ServiceTransactionOptions {
+        ServiceTransactionOptions {
             parallel: DEFAULT_TRANSACTION_PARALLEL,
             schema_lock_acquire_timeout_millis: self
                 .schema_lock_acquire_timeout_millis

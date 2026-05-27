@@ -86,6 +86,9 @@ features = {}
 	[dependencies.function]
 		workspace = true
 
+	[dependencies.options]
+		workspace = true
+
 	[dependencies.typeql]
 		workspace = true
 

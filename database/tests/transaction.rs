@@ -46,25 +46,25 @@ fn create_database(databases_path: &TempDir) -> Arc<Database<WALClient>> {
 }
 
 fn open_schema(database: Arc<Database<WALClient>>) -> TransactionSchema<WALClient> {
-    let open_result = TransactionSchema::open(database, TransactionOptions::default());
+    let open_result = TransactionSchema::open(database, ServiceTransactionOptions::default());
     assert_ok!(open_result);
     open_result.unwrap()
 }
 
 fn open_write(database: Arc<Database<WALClient>>) -> TransactionWrite<WALClient> {
-    let open_result = TransactionWrite::open(database, TransactionOptions::default());
+    let open_result = TransactionWrite::open(database, ServiceTransactionOptions::default());
     assert_ok!(open_result);
     open_result.unwrap()
 }
 
 fn open_read(database: Arc<Database<WALClient>>) -> TransactionRead<WALClient> {
-    let open_result = TransactionRead::open(database, TransactionOptions::default());
+    let open_result = TransactionRead::open(database, ServiceTransactionOptions::default());
     assert_ok!(open_result);
     open_result.unwrap()
 }
 
 fn transaction_sleep_timeout() -> Duration {
-    let lock_timeout_millis = TransactionOptions::default().schema_lock_acquire_timeout_millis;
+    let lock_timeout_millis = ServiceTransactionOptions::default().schema_lock_acquire_timeout_millis;
     let timeout_diff_millis = 5000;
     assert!(
         lock_timeout_millis > timeout_diff_millis,
@@ -169,7 +169,7 @@ fn schema_transaction_does_not_block_concurrent_schema_transactions_after_freein
 
             let task2 = tokio::spawn(async move {
                 notify_transaction1_ready_clone.notified().await;
-                let _tx_schema = TransactionSchema::open(database_clone, TransactionOptions::default()).unwrap();
+                let _tx_schema = TransactionSchema::open(database_clone, ServiceTransactionOptions::default()).unwrap();
             });
 
             tokio::try_join!(task1, task2)
@@ -189,7 +189,7 @@ fn schema_transaction_blocks_concurrent_schema_transactions() {
         let _tx_schema = open_schema(database_clone);
 
         tokio::spawn(async move {
-            let error = TransactionSchema::open(database, TransactionOptions::default()).unwrap_err();
+            let error = TransactionSchema::open(database, ServiceTransactionOptions::default()).unwrap_err();
             assert_transaction_timeout!(error);
         })
         .await
@@ -204,7 +204,7 @@ fn schema_transaction_blocks_concurrent_write_transactions() {
     let database = create_database(&databases_path);
 
     let _tx_schema = open_schema(database.clone());
-    let write_error = TransactionWrite::open(database, TransactionOptions::default()).unwrap_err();
+    let write_error = TransactionWrite::open(database, ServiceTransactionOptions::default()).unwrap_err();
     let error_str = format!("{write_error:?}");
     assert!(error_str.contains("Transaction timeout"));
 }
@@ -261,7 +261,7 @@ fn schema_transaction_can_be_opened_after_prior_timeout_error() {
 
             let task2 = tokio::spawn(async move {
                 let database_clone = database.clone();
-                let error = TransactionSchema::open(database_clone, TransactionOptions::default()).unwrap_err();
+                let error = TransactionSchema::open(database_clone, ServiceTransactionOptions::default()).unwrap_err();
                 assert_transaction_timeout!(error);
                 notify_transaction2_failed.notify_one();
                 notify_transaction1_done_clone.notified().await;
@@ -359,7 +359,7 @@ fn schema_transaction_rollback_does_not_unblock_concurrent_schema_transactions()
 
             let task2 = tokio::spawn(async move {
                 notify_transaction1_ready_clone.notified().await;
-                let error = TransactionSchema::open(database_clone, TransactionOptions::default()).unwrap_err();
+                let error = TransactionSchema::open(database_clone, ServiceTransactionOptions::default()).unwrap_err();
                 assert_transaction_timeout!(error);
                 notify_can_drop.notify_one();
             });
@@ -455,7 +455,7 @@ fn schema_transaction_rollback_does_not_unblock_concurrent_write_transactions() 
 
             let task2 = tokio::spawn(async move {
                 notify_transaction1_ready_clone.notified().await;
-                let error = TransactionWrite::open(database_clone, TransactionOptions::default()).unwrap_err();
+                let error = TransactionWrite::open(database_clone, ServiceTransactionOptions::default()).unwrap_err();
                 assert_transaction_timeout!(error);
                 notify_can_drop.notify_one();
             });
@@ -490,7 +490,7 @@ fn write_transaction_does_not_block_concurrent_schema_transactions_after_freeing
 
             let task2 = tokio::spawn(async move {
                 notify_transaction1_ready_clone.notified().await;
-                let _tx_schema = TransactionSchema::open(database_clone, TransactionOptions::default()).unwrap();
+                let _tx_schema = TransactionSchema::open(database_clone, ServiceTransactionOptions::default()).unwrap();
             });
 
             tokio::try_join!(task1, task2)
@@ -521,7 +521,7 @@ fn write_transaction_blocks_concurrent_schema_transactions() {
 
             let task2 = tokio::spawn(async move {
                 notify_transaction1_ready_clone.notified().await;
-                let error = TransactionSchema::open(database_clone, TransactionOptions::default()).unwrap_err();
+                let error = TransactionSchema::open(database_clone, ServiceTransactionOptions::default()).unwrap_err();
                 assert_transaction_timeout!(error);
                 notify_can_drop.notify_one();
             });
@@ -617,7 +617,7 @@ fn write_transaction_rollback_does_not_unblock_concurrent_schema_transactions() 
 
             let task2 = tokio::spawn(async move {
                 notify_transaction1_ready_clone.notified().await;
-                let error = TransactionSchema::open(database_clone, TransactionOptions::default()).unwrap_err();
+                let error = TransactionSchema::open(database_clone, ServiceTransactionOptions::default()).unwrap_err();
                 assert_transaction_timeout!(error);
                 notify_can_drop.notify_one();
             });
@@ -727,7 +727,7 @@ fn blocked_schema_transactions_progress_one_at_a_time() {
         let mut receiver5 = sender.subscribe();
 
         const MULTIPLIER: u64 = 18; // Big multiplier for small machines
-        let full_timeout_millis = TransactionOptions::default().schema_lock_acquire_timeout_millis;
+        let full_timeout_millis = ServiceTransactionOptions::default().schema_lock_acquire_timeout_millis;
         let timeout_millis = Duration::from_millis(full_timeout_millis / MULTIPLIER);
 
         let task2 = tokio::spawn(async move {
@@ -801,7 +801,7 @@ fn blocked_write_transactions_progress_together() {
         let mut receiver5 = sender.subscribe();
 
         const MULTIPLIER: u64 = 18; // Big multiplier for small machines
-        let full_timeout_millis = TransactionOptions::default().schema_lock_acquire_timeout_millis;
+        let full_timeout_millis = ServiceTransactionOptions::default().schema_lock_acquire_timeout_millis;
         let timeout_millis = Duration::from_millis(full_timeout_millis / MULTIPLIER);
 
         let task2 = tokio::spawn(async move {
@@ -876,7 +876,7 @@ fn blocked_schema_and_write_transactions_can_progress_in_different_orders() {
             let mut receiver5 = sender.subscribe();
 
             const MULTIPLIER: u64 = 18; // Big multiplier for small machines
-            let full_timeout_millis = TransactionOptions::default().schema_lock_acquire_timeout_millis;
+            let full_timeout_millis = ServiceTransactionOptions::default().schema_lock_acquire_timeout_millis;
             let timeout_millis = Duration::from_millis(full_timeout_millis / MULTIPLIER);
 
             let task_write = tokio::spawn(async move {

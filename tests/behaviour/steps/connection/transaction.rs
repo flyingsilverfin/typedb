@@ -16,7 +16,7 @@ use error::TypeDBError;
 use futures::future::join_all;
 use itertools::Either;
 use macro_rules_attribute::apply;
-use options::TransactionOptions;
+use options::ServiceTransactionOptions;
 use query::options::QueryOptions;
 use params::{self, check_boolean};
 use server::Server;
@@ -33,13 +33,13 @@ async fn server_open_transaction_for_database(
     let database = server.database_manager().database(database_name).expect("Expected database");
     match tx_name.as_str() {
         "read" => ActiveTransaction::Read(
-            TransactionRead::open(database, TransactionOptions::default()).expect("Read transaction"),
+            TransactionRead::open(database, ServiceTransactionOptions::default()).expect("Read transaction"),
         ),
         "write" => ActiveTransaction::Write(
-            TransactionWrite::open(database, TransactionOptions::default()).expect("Write transaction"),
+            TransactionWrite::open(database, ServiceTransactionOptions::default()).expect("Write transaction"),
         ),
         "schema" => ActiveTransaction::Schema(
-            TransactionSchema::open(database, TransactionOptions::default()).expect("Schema transaction"),
+            TransactionSchema::open(database, ServiceTransactionOptions::default()).expect("Schema transaction"),
         ),
         _ => unreachable!("Unrecognised transaction type"),
     }
@@ -199,7 +199,7 @@ fn execute_schema_transaction(
     reimport: Arc<Database<WALClient>>,
     types_syntax: &str,
 ) -> Result<(), Box<dyn TypeDBError>> {
-    let mut transaction = TransactionSchema::open(reimport, TransactionOptions::default())
+    let mut transaction = TransactionSchema::open(reimport, ServiceTransactionOptions::default())
         .map_err(|err| Box::new(err) as Box<dyn TypeDBError>)?;
     let schema_define = format!("define\n{}", types_syntax);
     transaction
@@ -225,7 +225,7 @@ fn execute_schema_transaction(
 }
 
 fn get_types_syntax(database: Arc<Database<WALClient>>) -> String {
-    let transaction = TransactionRead::open(database, TransactionOptions::default()).unwrap();
+    let transaction = TransactionRead::open(database, ServiceTransactionOptions::default()).unwrap();
     transaction.type_manager.get_types_syntax(transaction.snapshot()).unwrap()
 }
 

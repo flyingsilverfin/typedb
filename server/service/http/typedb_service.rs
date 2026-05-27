@@ -15,7 +15,7 @@ use axum::{
 use concurrency::{IntervalTaskParameters, TokioTaskSpawner};
 use diagnostics::metrics::ActionKind;
 use http::StatusCode;
-use options::{ServerQueryOptions, TransactionOptions};
+use options::{ServiceQueryOptions, ServiceTransactionOptions};
 use resource::constants::common::SECONDS_IN_MINUTE;
 use system::concepts::{Credential, User};
 use tokio::{
@@ -108,7 +108,7 @@ impl HTTPTypeDBService {
     ) -> Result<(TransactionInfo, u64), HttpServiceError> {
         let (request_sender, request_stream) = channel(TRANSACTION_REQUEST_BUFFER_SIZE);
         let options =
-            payload.transaction_options.map(|options| options.into()).unwrap_or_else(|| TransactionOptions::default());
+            payload.transaction_options.map(|options| options.into()).unwrap_or_else(|| ServiceTransactionOptions::default());
         let transaction_timeout_millis = options.transaction_timeout_millis;
         let mut transaction_service = TransactionService::new(service.server_state.clone(), request_stream);
 

@@ -146,7 +146,7 @@ fn create_database(schema: &str) -> (TempDir, Arc<Database<WALClient>>) {
     let database = dbm.database(DB_NAME).unwrap();
 
     let schema_query = typeql::parse_query(schema).unwrap().into_structure().into_schema();
-    let tx = TransactionSchema::open(database.clone(), TransactionOptions::default()).unwrap();
+    let tx = TransactionSchema::open(database.clone(), ServiceTransactionOptions::default()).unwrap();
     let (tx, result) = execute_schema_query(tx, schema_query, schema.to_string());
     result.unwrap();
     let (mut profile, intent) = tx.finalise();
@@ -160,7 +160,7 @@ fn seed_persons(database: &Arc<Database<WALClient>>, count: usize) {
     let mut offset = 0;
     while offset < count {
         let n = std::cmp::min(batch_size, count - offset);
-        let mut tx = TransactionWrite::open(database.clone(), TransactionOptions::default()).unwrap();
+        let mut tx = TransactionWrite::open(database.clone(), ServiceTransactionOptions::default()).unwrap();
         for i in 0..n {
             let id = offset + i;
             let age: u32 = (id % 100) as u32;
@@ -168,7 +168,7 @@ fn seed_persons(database: &Arc<Database<WALClient>>, count: usize) {
             let pipeline = typeql::parse_query(&query_str).unwrap().into_structure().into_pipeline();
             let (returned_tx, result) = execute_write_query_in_write(
                 tx,
-                ServerQueryOptions::default_grpc(),
+                ServiceQueryOptions::default_grpc(),
                 pipeline,
                 None::<GivenRowsSimple>,
                 query_str,
@@ -188,7 +188,7 @@ fn seed_friendships(database: &Arc<Database<WALClient>>, person_count: usize, fr
     let mut offset = 0;
     while offset < friendship_count {
         let n = std::cmp::min(batch_size, friendship_count - offset);
-        let mut tx = TransactionWrite::open(database.clone(), TransactionOptions::default()).unwrap();
+        let mut tx = TransactionWrite::open(database.clone(), ServiceTransactionOptions::default()).unwrap();
         for i in 0..n {
             let idx = offset + i;
             let a_id = idx % person_count;
@@ -223,7 +223,7 @@ fn execute_insert_batch(
     timings: &PhaseTimings,
 ) {
     let t0 = Instant::now();
-    let mut tx = TransactionWrite::open(database.clone(), TransactionOptions::default()).unwrap();
+    let mut tx = TransactionWrite::open(database.clone(), ServiceTransactionOptions::default()).unwrap();
     let t1 = Instant::now();
 
     let mut rng = Xoshiro256Plus::from_seed_u64(rand::random());
@@ -234,7 +234,7 @@ fn execute_insert_batch(
         let pipeline = typeql::parse_query(&query_str).unwrap().into_structure().into_pipeline();
         let (returned_tx, result) = execute_write_query_in_write(
             tx,
-            ServerQueryOptions::default_grpc(),
+            ServiceQueryOptions::default_grpc(),
             pipeline,
             None::<GivenRowsSimple>,
             query_str,
@@ -260,7 +260,7 @@ fn execute_update_batch(
     timings: &PhaseTimings,
 ) {
     let t0 = Instant::now();
-    let mut tx = TransactionWrite::open(database.clone(), TransactionOptions::default()).unwrap();
+    let mut tx = TransactionWrite::open(database.clone(), ServiceTransactionOptions::default()).unwrap();
     let t1 = Instant::now();
 
     let mut rng = Xoshiro256Plus::from_seed_u64(rand::random());
@@ -271,7 +271,7 @@ fn execute_update_batch(
         let pipeline = typeql::parse_query(&query_str).unwrap().into_structure().into_pipeline();
         let (returned_tx, result) = execute_write_query_in_write(
             tx,
-            ServerQueryOptions::default_grpc(),
+            ServiceQueryOptions::default_grpc(),
             pipeline,
             None::<GivenRowsSimple>,
             query_str,
@@ -297,7 +297,7 @@ fn execute_relation_batch(
     timings: &PhaseTimings,
 ) {
     let t0 = Instant::now();
-    let mut tx = TransactionWrite::open(database.clone(), TransactionOptions::default()).unwrap();
+    let mut tx = TransactionWrite::open(database.clone(), ServiceTransactionOptions::default()).unwrap();
     let t1 = Instant::now();
 
     for i in 0..ops_per_tx {
@@ -310,7 +310,7 @@ fn execute_relation_batch(
         let pipeline = typeql::parse_query(&query_str).unwrap().into_structure().into_pipeline();
         let (returned_tx, result) = execute_write_query_in_write(
             tx,
-            ServerQueryOptions::default_grpc(),
+            ServiceQueryOptions::default_grpc(),
             pipeline,
             None::<GivenRowsSimple>,
             query_str,
@@ -331,7 +331,7 @@ fn execute_relation_batch(
 // --- Read transaction helper ---
 
 fn execute_read_query(database: &Arc<Database<WALClient>>, query_str: &str) {
-    let tx = TransactionRead::open(database.clone(), TransactionOptions::default()).unwrap();
+    let tx = TransactionRead::open(database.clone(), ServiceTransactionOptions::default()).unwrap();
     let TransactionRead { snapshot, query_manager, type_manager, thing_manager, function_manager, .. } = &tx;
     let query = typeql::parse_query(query_str).unwrap().into_structure().into_pipeline();
     let pipeline = query_manager

@@ -53,7 +53,7 @@ fn statistics_synchronization_under_concurrent_load() {
         let database = dbm.database(DB_NAME).unwrap();
 
         let schema_query = typeql::parse_query(SCHEMA).unwrap().into_structure().into_schema();
-        let tx = TransactionSchema::open(database.clone(), TransactionOptions::default()).unwrap();
+        let tx = TransactionSchema::open(database.clone(), ServiceTransactionOptions::default()).unwrap();
         let (tx, result) = execute_schema_query(tx, schema_query, SCHEMA.to_string());
         result.unwrap();
         let (mut profile, intent) = tx.finalise();
@@ -88,14 +88,14 @@ fn statistics_synchronization_under_concurrent_load() {
 }
 
 fn run_insert_batch(database: &Arc<Database<WALClient>>, batch_id: usize) {
-    let mut tx = TransactionWrite::open(database.clone(), TransactionOptions::default()).unwrap();
+    let mut tx = TransactionWrite::open(database.clone(), ServiceTransactionOptions::default()).unwrap();
     for i in 0..OPS_PER_BATCH {
         let id = batch_id * OPS_PER_BATCH + i;
         let query_str = format!(r#"insert $p isa person, has name "person_{id}", has age {id};"#);
         let pipeline = typeql::parse_query(&query_str).unwrap().into_structure().into_pipeline();
         let (returned_tx, result) = execute_write_query_in_write(
             tx,
-            ServerQueryOptions::default_grpc(),
+            ServiceQueryOptions::default_grpc(),
             pipeline,
             None::<GivenRowsSimple>,
             query_str,

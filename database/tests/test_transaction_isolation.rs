@@ -35,7 +35,7 @@ fn create_reset_database() -> (TempDir, Arc<Database<WALClient>>) {
 
 fn commit_schema(database: Arc<Database<WALClient>>, schema: &str) {
     let parsed = typeql::parse_query(schema).unwrap().into_structure().into_schema();
-    let tx = TransactionSchema::open(database, TransactionOptions::default()).unwrap();
+    let tx = TransactionSchema::open(database, ServiceTransactionOptions::default()).unwrap();
     let (tx, result) = execute_schema_query(tx, parsed, schema.to_string());
     result.unwrap();
     let (mut profile, intent) = tx.finalise();
@@ -43,21 +43,21 @@ fn commit_schema(database: Arc<Database<WALClient>>, schema: &str) {
 }
 
 fn commit_write_query(database: Arc<Database<WALClient>>, query: &str) {
-    let mut tx = TransactionWrite::open(database, TransactionOptions::default()).unwrap();
+    let mut tx = TransactionWrite::open(database, ServiceTransactionOptions::default()).unwrap();
     tx = run_write(tx, query);
     let (mut profile, intent) = tx.finalise();
     intent.unwrap().commit(profile.commit_profile()).unwrap();
 }
 
 fn open_write(database: Arc<Database<WALClient>>) -> TransactionWrite<WALClient> {
-    TransactionWrite::open(database, TransactionOptions::default()).unwrap()
+    TransactionWrite::open(database, ServiceTransactionOptions::default()).unwrap()
 }
 
 fn run_write(tx: TransactionWrite<WALClient>, query: &str) -> TransactionWrite<WALClient> {
     let pipeline = typeql::parse_query(query).unwrap().into_structure().into_pipeline();
     let (tx, result) = execute_write_query_in_write(
         tx,
-        ServerQueryOptions::default_grpc(),
+        ServiceQueryOptions::default_grpc(),
         pipeline,
         None::<GivenRowsSimple>,
         query.to_string(),

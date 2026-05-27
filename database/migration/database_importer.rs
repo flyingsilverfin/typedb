@@ -40,7 +40,7 @@ use concept::{
 };
 use encoding::value::{label::Label, value::Value};
 use error::{TypeDBError, typedb_error};
-use options::TransactionOptions;
+use options::ServiceTransactionOptions;
 use query::error::QueryError;
 use resource::{
     constants::{common::SECONDS_IN_DAY, snapshot::BUFFER_KEY_INLINE},
@@ -999,8 +999,8 @@ impl DatabaseImporter {
         .expect("Expected schema transaction commit completion")
     }
 
-    fn transaction_options() -> TransactionOptions {
-        TransactionOptions {
+    fn transaction_options() -> ServiceTransactionOptions {
+        ServiceTransactionOptions {
             parallel: Self::OPTIONS_PARALLEL,
             schema_lock_acquire_timeout_millis: Self::OPTIONS_SCHEMA_LOCK_ACQUIRE_TIMEOUT_MILLIS,
             transaction_timeout_millis: Self::OPTIONS_TRANSACTION_TIMEOUT_MILLIS,

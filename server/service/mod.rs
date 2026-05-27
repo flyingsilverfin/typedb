@@ -7,7 +7,7 @@
 use compiler::query_structure::{PipelineStructure, QueryStructureConjunctionID};
 use concept::error::ConceptReadError;
 pub use grpc::{IntoGrpcStatus, IntoProtocolErrorMessage, migration::import_service::DatabaseImportService};
-use options::ServerQueryOptions;
+use options::ServiceQueryOptions;
 use serde::{Deserialize, Serialize};
 
 pub mod admin;
@@ -41,7 +41,7 @@ pub(crate) enum IncludeInvolvedBlocks {
 }
 
 pub(crate) fn may_encode_pipeline_structure<T>(
-    options: &ServerQueryOptions,
+    options: &ServiceQueryOptions,
     pipeline: Option<&PipelineStructure>,
     encoder: impl Fn(&PipelineStructure) -> Result<T, Box<ConceptReadError>>,
 ) -> Result<(Option<T>, IncludeInvolvedBlocks), Box<ConceptReadError>> {

@@ -14,7 +14,7 @@ use std::{
 use async_trait::async_trait;
 use concurrency::{IntervalTaskParameters, TokioTaskSpawner};
 use database::{database_manager::DatabaseManager, transaction::TransactionId};
-use options::TransactionOptions;
+use options::ServiceTransactionOptions;
 use resource::constants::common::SECONDS_IN_MINUTE;
 use tokio::sync::{RwLock, mpsc::Sender};
 
@@ -37,7 +37,7 @@ pub trait TransactionOperator: Debug + Send + Sync {
         &self,
         database_name: &str,
         transaction_type: TransactionType,
-        options: TransactionOptions,
+        options: ServiceTransactionOptions,
         owner: String,
         close_sender: Sender<()>,
     ) -> Result<Transaction, ArcServerStateError>;
@@ -90,7 +90,7 @@ impl TransactionOperator for LocalTransactionOperator {
         &self,
         database_name: &str,
         transaction_type: TransactionType,
-        options: TransactionOptions,
+        options: ServiceTransactionOptions,
         owner: String,
         close_sender: Sender<()>,
     ) -> Result<Transaction, ArcServerStateError> {

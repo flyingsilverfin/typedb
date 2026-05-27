@@ -98,8 +98,6 @@ where
         &self.context
     }
 
-    /// Read-only access to the executor stages for plan inspection. Useful in tests
-    /// that want to assert on the chosen plan shape before consuming the pipeline.
     pub fn stages(&self) -> &[Nonterminals] {
         &self.stages
     }

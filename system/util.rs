@@ -17,7 +17,7 @@ pub mod transaction_util {
         },
     };
     use function::function_manager::FunctionManager;
-    use options::TransactionOptions;
+    use options::ServiceTransactionOptions;
     use query::query_manager::QueryManager;
     use resource::profile::TransactionProfile;
     use storage::{
@@ -48,7 +48,7 @@ pub mod transaction_util {
                 database,
                 transaction_options,
                 profile,
-            } = TransactionSchema::open(self.database.clone(), TransactionOptions::default()).unwrap(); // TODO
+            } = TransactionSchema::open(self.database.clone(), ServiceTransactionOptions::default()).unwrap(); // TODO
             let mut snapshot: SchemaSnapshot<WALClient> =
                 Arc::try_unwrap(snapshot).unwrap_or_else(|_| panic!("Expected unique ownership of snapshot"));
             let _result = fn_(&mut snapshot, &type_manager, &thing_manager, &function_manager, &query_manager);
@@ -68,7 +68,7 @@ pub mod transaction_util {
 
         pub fn read_transaction<T>(&self, fn_: impl Fn(TransactionRead<WALClient>) -> T) -> T {
             let tx: TransactionRead<WALClient> =
-                TransactionRead::open(self.database.clone(), TransactionOptions::default()).unwrap(); // TODO
+                TransactionRead::open(self.database.clone(), ServiceTransactionOptions::default()).unwrap(); // TODO
             fn_(tx)
         }
 
@@ -81,7 +81,7 @@ pub mod transaction_util {
                 Arc<FunctionManager>,
                 Arc<QueryManager>,
                 Arc<Database<WALClient>>,
-                TransactionOptions,
+                ServiceTransactionOptions,
             ) -> (T, Arc<WriteSnapshot<WALClient>>),
         ) -> (TransactionProfile, Result<T, DataCommitError>) {
             let TransactionWrite {
@@ -93,7 +93,7 @@ pub mod transaction_util {
                 database,
                 transaction_options,
                 profile,
-            } = TransactionWrite::open(self.database.clone(), TransactionOptions::default()).unwrap();
+            } = TransactionWrite::open(self.database.clone(), ServiceTransactionOptions::default()).unwrap();
             let (rows, snapshot) = fn_(
                 Arc::try_unwrap(snapshot).unwrap_or_else(|_| panic!("Expected unique ownership of snapshot")),
                 type_manager.clone(),
@@ -110,7 +110,7 @@ pub mod transaction_util {
                 function_manager,
                 query_manager,
                 database,
-                TransactionOptions::default(),
+                ServiceTransactionOptions::default(),
                 profile,
             );
             let (mut profile, finalise_result) = tx.finalise();

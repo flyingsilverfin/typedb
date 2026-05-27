@@ -88,7 +88,7 @@ impl LocalDatabaseOperator {
 }
 
 pub fn get_database_schema<D: DurabilityClient>(database: Arc<Database<D>>) -> Result<String, LocalServerStateError> {
-    let transaction = TransactionRead::open(database, options::TransactionOptions::default())
+    let transaction = TransactionRead::open(database, options::ServiceTransactionOptions::default())
         .map_err(|typedb_source| LocalServerStateError::FailedToOpenPrerequisiteTransaction { typedb_source })?;
     let schema = get_transaction_schema(&transaction)
         .map_err(|typedb_source| LocalServerStateError::DatabaseExport { typedb_source })?;
@@ -98,7 +98,7 @@ pub fn get_database_schema<D: DurabilityClient>(database: Arc<Database<D>>) -> R
 pub(crate) fn get_database_type_schema<D: DurabilityClient>(
     database: Arc<Database<D>>,
 ) -> Result<String, LocalServerStateError> {
-    let transaction = TransactionRead::open(database, options::TransactionOptions::default())
+    let transaction = TransactionRead::open(database, options::ServiceTransactionOptions::default())
         .map_err(|typedb_source| LocalServerStateError::FailedToOpenPrerequisiteTransaction { typedb_source })?;
     let type_schema = get_transaction_type_schema(&transaction)
         .map_err(|typedb_source| LocalServerStateError::DatabaseExport { typedb_source })?;

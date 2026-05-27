@@ -11,13 +11,13 @@ use resource::constants::server::{
 };
 
 #[derive(Debug)]
-pub struct TransactionOptions {
+pub struct ServiceTransactionOptions {
     pub parallel: bool,
     pub schema_lock_acquire_timeout_millis: u64,
     pub transaction_timeout_millis: u64,
 }
 
-impl Default for TransactionOptions {
+impl Default for ServiceTransactionOptions {
     fn default() -> Self {
         Self {
             parallel: DEFAULT_TRANSACTION_PARALLEL,
@@ -28,14 +28,14 @@ impl Default for TransactionOptions {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct ServerQueryOptions {
+pub struct ServiceQueryOptions {
     pub include_instance_types: bool,
     pub answer_count_limit: Option<usize>,
     pub prefetch_size: usize,
     pub include_query_structure: bool,
 }
 
-impl ServerQueryOptions {
+impl ServiceQueryOptions {
     pub fn default_grpc() -> Self {
         Self {
             include_instance_types: DEFAULT_INCLUDE_INSTANCE_TYPES,
@@ -53,4 +53,9 @@ impl ServerQueryOptions {
             include_query_structure: DEFAULT_INCLUDE_STRUCTURE_HTTP,
         }
     }
+}
+
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+pub struct QueryOptions {
+    pub force_query_profile: bool,
 }
