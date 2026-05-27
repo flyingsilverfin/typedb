@@ -171,29 +171,30 @@ impl<'a> fmt::Display for PlannerVertex<'a> {
     }
 }
 
-/// Per-output advance cost for one side of a sort-merge join, blended between the
-/// uniform-distribution expected value and the worst case driven by post-filter waste.
+/// Per-output cost for one side of a sort-merge join, modelled as a two-point blend
+/// between lockstep advance and zipper-style catch-up seek.
 ///
-/// `expected = cost / io_ratio`: amortized advances per output assuming matches are
-/// uniformly distributed in the iterator's scan range (same value used by the existing
-/// model).
+/// In `find_intersection` (executor), each output is produced by one of two patterns:
+/// - **Lockstep**: after the previous match, this side's `advance_past` lands on
+///   an entry whose value matches the other side's peek. No catch-up call fires;
+///   the storage cost is just the advance itself, captured as `expected = cost /
+///   io_ratio` (this absorbs any post-filter waste the iterator walks past
+///   internally, e.g. owner-type rejects between matches).
+/// - **Catch-up seek**: peeks disagree; the lagging side calls
+///   `advance_until_first_unbound_is(target)` which dispatches to
+///   `iterator.seek(target)` — a real storage seek costing `SEEK_ITERATOR_RELATIVE_COST`.
+///   The seek lands on (or past) the match in O(log N), independent of post-filter
+///   waste, so this arm is `SEEK`, not `SEEK + expected`.
 ///
-/// `worst = max(0, scan_size - io_ratio) * ADVANCE`: cost of advancing through the
-/// post-filter rejects between matches. Zero when the storage range is tight (no
-/// rejects), non-zero when there's a post-filter that can't be pushed into storage
-/// (e.g. owner-type filter when attribute-value is unbound). Clamped from below by
-/// `expected`: a probe cannot do better than the uniform-distribution amortized cost,
-/// so the "worst" case in the blend is at least `expected`.
-///
-/// `p_unmatched` is the fraction of this side's own coverage gap relative to the join
-/// variable's domain — i.e. how often the merge will ask this side for a value it
-/// doesn't have (literature: risk-aware optimization, Babcock & Chaudhuri 2005).
-fn blended_out_cost(cost: f64, io_ratio: f64, p_unmatched: f64) -> f64 {
+/// `p_seek` is the per-side probability that the next match requires the catch-up
+/// arm. Estimated as the fraction of this side's entries that aren't part of the
+/// join output: `max(0, io_ratio - join_size) / io_ratio`. When a side has
+/// "decoys" (entries the other side doesn't have), each match-search likely
+/// advances onto a decoy and has to seek past it.
+fn per_match_cost(cost: f64, io_ratio: f64, p_seek: f64) -> f64 {
     let expected = cost / io_ratio;
-    let scan_size = ((cost - OPEN_ITERATOR_RELATIVE_COST) / ADVANCE_ITERATOR_RELATIVE_COST).max(1.0);
-    let worst = ((scan_size - io_ratio).max(0.0) * ADVANCE_ITERATOR_RELATIVE_COST).max(expected);
-    let p_match = 1.0 - p_unmatched;
-    p_match * expected + p_unmatched * worst
+    let p_lockstep = 1.0 - p_seek;
+    p_lockstep * expected + p_seek * SEEK_ITERATOR_RELATIVE_COST
 }
 
 impl Cost {
@@ -226,30 +227,23 @@ impl Cost {
 
     pub(crate) fn join(self, other: Self, join_size: f64) -> Self {
         let io_ratio = f64::max(self.io_ratio * other.io_ratio / join_size, Cost::MIN_IO_RATIO);
-        let num_seeks_each = f64::min(self.io_ratio, other.io_ratio); // FIXME detect when seeks can be replaced by advancing
+        let num_seeks_each = f64::min(self.io_ratio, other.io_ratio);
 
-        // Uncertainty-weighted per-side advance cost.
+        // Per-side per-match cost: each output requires one of two storage patterns:
+        //  - lockstep advance (cost ≈ cost/io_ratio = `expected`), when the side's next
+        //    entry happens to match the other side's peek
+        //  - catch-up seek (cost ≈ SEEK), when peeks disagree and the lagging side
+        //    has to `iterator.seek(target)` to skip past its non-match entries
         //
-        // The "expected" per-output advance cost (cost / io_ratio) implicitly assumes uniform
-        // distribution: every seek lands on or near a match, advances are amortized over outputs.
-        // That's accurate for balanced merges and for selective lookups where the bigger side
-        // covers the join variable's full domain.
-        //
-        // It under-counts when (a) the bigger side has post-filter waste (scan_size > io_ratio:
-        // storage range covers rejected entries between matches) and (b) the smaller side may
-        // produce values past the bigger's coverage (bigger_io < join_size: failed probes that
-        // can't find a match must scan forward to confirm non-existence — storage can't bound
-        // such a scan when the value isn't bound and a post-filter is in play).
-        //
-        // Per-side blend: each side's gate is its own coverage gap of the join domain. The
-        // probability that the merge asks side X for a value X doesn't have is
-        // `1 - X.io_ratio / join_size` — that's what triggers X's expensive scan past its
-        // post-filter waste. The cost of the trigger is bounded by X's own waste, so the
-        // penalty stays zero when X has no waste (waste ≤ expected → clamped to expected).
-        let p_unmatched_self = (1.0 - self.io_ratio / join_size).max(0.0);
-        let p_unmatched_other = (1.0 - other.io_ratio / join_size).max(0.0);
-        let self_out_cost = blended_out_cost(self.cost, self.io_ratio, p_unmatched_self);
-        let other_out_cost = blended_out_cost(other.cost, other.io_ratio, p_unmatched_other);
+        // We weight by `p_seek`: the fraction of this side's entries that aren't part
+        // of the join output. A side whose io_ratio exceeds the join size has "decoys"
+        // — entries the other side doesn't have — and each match-search likely advances
+        // onto one, triggering the catch-up arm. A side perfectly covered by the join
+        // domain (io_ratio ≤ join_size) has p_seek = 0 and stays in the lockstep arm.
+        let p_seek_self = ((self.io_ratio - join_size) / self.io_ratio).max(0.0);
+        let p_seek_other = ((other.io_ratio - join_size) / other.io_ratio).max(0.0);
+        let self_out_cost = per_match_cost(self.cost, self.io_ratio, p_seek_self);
+        let other_out_cost = per_match_cost(other.cost, other.io_ratio, p_seek_other);
         let cost_self = SEEK_ITERATOR_RELATIVE_COST + self_out_cost * num_seeks_each;
         let cost_other = SEEK_ITERATOR_RELATIVE_COST + other_out_cost * num_seeks_each;
 

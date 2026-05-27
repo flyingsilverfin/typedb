@@ -9,7 +9,7 @@
 //! planner picked the plan shape (merge vs sequential) we'd expect for the
 //! scenario. Row count and per-step storage work are also checked.
 //!
-//! The 9 tests are "must-pick-X" scenarios: data is shaped so one plan shape is
+//! The 10 tests are "must-pick-X" scenarios: data is shaped so one plan shape is
 //! the theoretical right answer, and we assert the planner picks it. The
 //! assertions reflect theoretical expectation, not the planner's current
 //! choices — some tests may fail because the planner's cost model doesn't yet
@@ -22,6 +22,7 @@
 //! - `merge_wins_moderate_cartesian`         — 10:1 per-value fan-out
 //! - `merge_wins_heavy_cartesian`            — 50:1 per-value fan-out
 //! - `merge_wins_at_scale_with_fanout`       — moderate fan-out, higher card
+//! - `merge_wins_true_zipper`                — mid-match decoys force catch-up seeks
 //!
 //! Sequential-wins scenarios (cost model should prefer sequential):
 //! - `sequential_wins_tiny_outer_huge_inner` — 1 outer × N inner
@@ -743,7 +744,7 @@ fn build_multi_attr_spec(n_owners: usize, k_attrs: usize, m_values: usize) -> Da
 /// Merge expected to win (cascading per-row pipeline overhead in the
 /// sequential plan is paid on intermediate row counts, not just on the final
 /// ~37 outputs).
-/// Actual planner cost (current branch): 1373.62 (merge — planner picks correctly).
+/// Actual planner cost (current branch): 828.25 (merge — planner picks correctly).
 #[test]
 fn merge_wins_multi_attr_filter() {
     const N: usize = 1_000;
@@ -1043,5 +1044,93 @@ fn sequential_wins_asymmetric_coverage() {
         "asymmetric_coverage: worst step ratio {ratio:.2} ({advances}/{prof_rows}) \
          exceeds {} — a catastrophically-bad plan is likely. step: {descr}",
         (N_INNER as f64) * 0.5,
+    );
+}
+
+/// True-zipper merge stress test. Same 500 matching values as `symmetric_balanced`,
+/// but each owner has 2 has's: one on a "match" value (stride 10) and one on a
+/// per-side "decoy" value mid-way to the next match. Side A decoys are at match+3,
+/// side B decoys at match+7 — never aligned with each other.
+///
+/// What this exercises in the merge: after a match at value v, both iters advance
+/// past v and land on their respective decoys (v+3 and v+7). The merge compares
+/// peeks, sees they disagree, and calls `iterator.seek(target)` on the lagging
+/// side — a real storage SEEK. The leading side then has to seek past *its* decoy
+/// to the next match. So each of the 500 matches is preceded by ~2 catch-up SEEKs,
+/// scaling the merge's real cost as `2|min|×SEEK + advances` rather than the
+/// lockstep `2×OPEN + advances` that `symmetric_balanced` exercises.
+///
+/// Cost-model estimate (alignment-probability formula, planner stats):
+/// - per side: io_ratio = 1000 (2 has's × 500 owners), reverse-scan cost ≈ 2005
+/// - planner join_size estimate ≈ 1000²/1500 ≈ 667 (distinct-attr-value model)
+/// - p_seek per side: (1000 − 667)/1000 ≈ 0.33
+/// - per_match_cost: 0.67 × expected + 0.33 × SEEK ≈ 0.67×2 + 0.33×5 ≈ 3.0
+/// - merge total: 2 × (5 + 3.0×1000) + cartesian(~500) ≈ 6500
+/// - sequential (cascade): 1005 + 1000 × probe(~6) ≈ 7005
+///
+/// Empirically merge still wins (~6010 vs ~7005), so the assertion expects merge
+/// to be picked. The point of the test is the cost-model behavior — under the old
+/// `blended_out_cost` formula the merge alternative was priced at ~4530 (heavy
+/// under-pricing); under the new alignment-probability formula it's ~6500 (close
+/// to empirical). Useful as a regression target for the model's accuracy on
+/// non-aligned zipper shapes.
+/// Actual planner cost (current branch): 7585 (sequential — planner picks the
+/// wrong plan; same direction-fanout cause as the other merge_wins_* fails on
+/// 2-side has-joins, the alignment-probability model doesn't fix it).
+#[test]
+fn merge_wins_true_zipper() {
+    const N_OWNERS: usize = 500;
+    const STRIDE: i64 = 10;
+    const A_DECOY_OFFSET: i64 = 3;
+    const B_DECOY_OFFSET: i64 = 7;
+    const HAS_PER_SIDE: usize = N_OWNERS * 2;
+
+    let zipper_gen = |decoy_offset: i64| -> AttributeGenerator {
+        Box::new(move |e| {
+            let owner_idx = (e % N_OWNERS) as i64;
+            let offset = if e < N_OWNERS { 0 } else { decoy_offset };
+            owner_idx * STRIDE + offset
+        })
+    };
+
+    let mut context = setup();
+    define_two_owner_schema(&mut context);
+
+    let data_spec = DataSpec {
+        instances: vec![
+            InstanceSpec { type_: OWNER_1, count: N_OWNERS, key: Some(KEY_1) },
+            InstanceSpec { type_: OWNER_2, count: N_OWNERS, key: Some(KEY_2) },
+        ],
+        has: vec![
+            HasSpec {
+                owner_type: OWNER_1, attr_type: JOIN_ATTR,
+                count_each: 2, count_total: HAS_PER_SIDE,
+                attribute_generator: zipper_gen(A_DECOY_OFFSET),
+            },
+            HasSpec {
+                owner_type: OWNER_2, attr_type: JOIN_ATTR,
+                count_each: 2, count_total: HAS_PER_SIDE,
+                attribute_generator: zipper_gen(B_DECOY_OFFSET),
+            },
+        ],
+    };
+    load_data(&mut context, data_spec);
+
+    let pipeline = compile_read(&context, &two_owner_join_query());
+    println!("planner: {}", planner_cost_summary(&pipeline));
+    let merges = multi_iter_intersection_steps(&pipeline);
+    assert!(
+        !merges.is_empty(),
+        "true_zipper: planner should still pick merge — merge is empirically faster \
+         than sequential here (~6010 vs ~7005); found none",
+    );
+
+    let (rows, profile) = execute_read(pipeline);
+    assert_eq!(rows, N_OWNERS, "true_zipper: 500 matching values × 1 × 1 = 500 rows");
+    let (ratio, advances, prof_rows, descr) = worst_advances_per_row(&profile);
+    assert!(
+        ratio < 50.0,
+        "true_zipper: worst step should be reasonable (< 50 advances/row); \
+         got {ratio:.2} ({advances}/{prof_rows}). step: {descr}",
     );
 }
