@@ -329,6 +329,22 @@ fn multi_iter_intersection_steps<'a>(
         .collect()
 }
 
+/// Concatenated `PlannerStatistics` Display output across all match stages of the
+/// pipeline — matches what `QueryProfile` prints as the Conjunction line. Cheap
+/// proxy for "what did the planner actually decide the chosen plan would cost?";
+/// each test prints this so the actual numbers sit alongside the docstring estimate.
+fn planner_cost_summary(
+    pipeline: &Pipeline<ReadSnapshot<WALClient>, ReadPipelineStage<ReadSnapshot<WALClient>>>,
+) -> String {
+    pipeline
+        .stages()
+        .iter()
+        .filter_map(|s| s.as_match())
+        .map(|m| format!("{}", m.executable().planner_statistics()))
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
 // --- Two-owner schema & noise helpers -------------------------------------------------------
 
 const OWNER_1: &str = "owner_1";
@@ -417,6 +433,8 @@ fn add_noise_owners(spec: &mut DataSpec, n_noise_types: usize, per_type: usize, 
 /// - sequential chain ≈ 500 × (SEEK + 1 ADV) ≈ 3000
 /// - 2-iter merge    ≈ 2 × (SEEK + 500 ADV)  ≈ 1010
 /// Merge expected to win by ~3×.
+/// Actual planner cost (current branch): 4045 (sequential — planner picks the
+/// wrong plan; this test fails).
 #[test]
 fn merge_wins_symmetric_balanced() {
     const N: usize = 500;
@@ -445,6 +463,7 @@ fn merge_wins_symmetric_balanced() {
     load_data(&mut context, data_spec);
 
     let pipeline = compile_read(&context, &two_owner_join_query());
+    println!("planner: {}", planner_cost_summary(&pipeline));
     let merges = multi_iter_intersection_steps(&pipeline);
     assert!(
         !merges.is_empty(),
@@ -472,6 +491,8 @@ fn merge_wins_symmetric_balanced() {
 /// - sequential chain ≈ 500 × (SEEK + 10 ADV) ≈ 7500
 /// - 2-iter merge    ≈ 1000 + per-value cartesian sub-iter
 /// Merge expected to win by ~5×.
+/// Actual planner cost (current branch): 8635 (sequential — planner picks the
+/// wrong plan; this test fails).
 #[test]
 fn merge_wins_moderate_cartesian() {
     const N_OWNERS: usize = 500;
@@ -503,6 +524,7 @@ fn merge_wins_moderate_cartesian() {
     load_data(&mut context, data_spec);
 
     let pipeline = compile_read(&context, &two_owner_join_query());
+    println!("planner: {}", planner_cost_summary(&pipeline));
     let merges = multi_iter_intersection_steps(&pipeline);
     assert!(
         !merges.is_empty(),
@@ -531,6 +553,8 @@ fn merge_wins_moderate_cartesian() {
 /// - 2-iter merge    ≈ 1000 + per-value cartesian (~10 reopens, big amortization)
 /// Merge expected to win decisively (~25×) — this is the regime where per-value
 /// cartesian most clearly pays off.
+/// Actual planner cost (current branch): 29035 (sequential — planner picks the
+/// wrong plan; this test fails).
 #[test]
 fn merge_wins_heavy_cartesian() {
     const N_OWNERS: usize = 500;
@@ -562,6 +586,7 @@ fn merge_wins_heavy_cartesian() {
     load_data(&mut context, data_spec);
 
     let pipeline = compile_read(&context, &two_owner_join_query());
+    println!("planner: {}", planner_cost_summary(&pipeline));
     let merges = multi_iter_intersection_steps(&pipeline);
     assert!(
         !merges.is_empty(),
@@ -589,6 +614,8 @@ fn merge_wins_heavy_cartesian() {
 /// - sequential chain ≈ 1000 × (SEEK + 10 ADV) ≈ 15000
 /// - 2-iter merge    ≈ 2000 + per-value cartesian sub-iter
 /// Merge expected to win by ~5×, same shape as moderate_cartesian.
+/// Actual planner cost (current branch): 17265 (sequential — planner picks the
+/// wrong plan; this test fails).
 #[test]
 fn merge_wins_at_scale_with_fanout() {
     const N_OWNERS: usize = 1000;
@@ -620,6 +647,7 @@ fn merge_wins_at_scale_with_fanout() {
     load_data(&mut context, data_spec);
 
     let pipeline = compile_read(&context, &two_owner_join_query());
+    println!("planner: {}", planner_cost_summary(&pipeline));
     let merges = multi_iter_intersection_steps(&pipeline);
     assert!(
         !merges.is_empty(),
@@ -715,6 +743,7 @@ fn build_multi_attr_spec(n_owners: usize, k_attrs: usize, m_values: usize) -> Da
 /// Merge expected to win (cascading per-row pipeline overhead in the
 /// sequential plan is paid on intermediate row counts, not just on the final
 /// ~37 outputs).
+/// Actual planner cost (current branch): 1373.62 (merge — planner picks correctly).
 #[test]
 fn merge_wins_multi_attr_filter() {
     const N: usize = 1_000;
@@ -727,6 +756,7 @@ fn merge_wins_multi_attr_filter() {
     load_data(&mut context, build_multi_attr_spec(N, K, M));
 
     let pipeline = compile_read(&context, &multi_attr_query(K, 0));
+    println!("planner: {}", planner_cost_summary(&pipeline));
     let merges = multi_iter_intersection_steps(&pipeline);
     assert!(
         !merges.is_empty(),
@@ -768,6 +798,7 @@ fn merge_wins_multi_attr_filter() {
 /// - sequential chain ≈ 1 outer + 1 × (SEEK + 1 ADV) ≈ ~10
 /// - 2-iter merge    ≈ 2 × (SEEK + ~2000 ADV) ≈ ~2010
 /// Sequential expected to win by ~200×.
+/// Actual planner cost (current branch): 13.08 (sequential — planner picks correctly).
 #[test]
 fn sequential_wins_tiny_outer_huge_inner() {
     const N_INNER: usize = 2000;
@@ -796,6 +827,7 @@ fn sequential_wins_tiny_outer_huge_inner() {
     load_data(&mut context, data_spec);
 
     let pipeline = compile_read(&context, &two_owner_join_query());
+    println!("planner: {}", planner_cost_summary(&pipeline));
     let merges = multi_iter_intersection_steps(&pipeline);
     assert!(
         merges.is_empty(),
@@ -830,6 +862,7 @@ fn sequential_wins_tiny_outer_huge_inner() {
 /// - 2-iter merge    ≈ 100 + 2000 (both iters walk inner range to find the
 ///   100 overlapping values) ≈ ~2100
 /// Sequential expected to win by ~3×.
+/// Actual planner cost (current branch): 813 (sequential — planner picks correctly).
 #[test]
 fn sequential_wins_subset_coverage() {
     const N_OUTER: usize = 100;
@@ -859,6 +892,7 @@ fn sequential_wins_subset_coverage() {
     load_data(&mut context, data_spec);
 
     let pipeline = compile_read(&context, &two_owner_join_query());
+    println!("planner: {}", planner_cost_summary(&pipeline));
     let merges = multi_iter_intersection_steps(&pipeline);
     assert!(
         merges.is_empty(),
@@ -890,6 +924,9 @@ fn sequential_wins_subset_coverage() {
 /// - sequential chain ≈ 2100 outer + 100 × (SEEK + 1 ADV) ≈ ~2700
 /// - 2-iter merge    ≈ 2 × 2100 (both iters walk the bloated range) ≈ ~4200
 /// Sequential expected to win by ~1.5×.
+/// Actual planner cost (current branch): 813 (sequential — planner picks correctly;
+/// model is cheaper than the rough estimate because per-type scan range is type-
+/// scoped and doesn't include cross-type noise).
 #[test]
 fn sequential_wins_noisy_inner() {
     const N_QUERY: usize = 100;
@@ -923,6 +960,7 @@ fn sequential_wins_noisy_inner() {
     load_data(&mut context, spec);
 
     let pipeline = compile_read(&context, &two_owner_join_query());
+    println!("planner: {}", planner_cost_summary(&pipeline));
     let merges = multi_iter_intersection_steps(&pipeline);
     assert!(
         merges.is_empty(),
@@ -952,6 +990,7 @@ fn sequential_wins_noisy_inner() {
 /// - sequential chain ≈ 10 outer + 10 × (SEEK + 1 ADV) ≈ ~60
 /// - 2-iter merge    ≈ 10 + 2000 (merge wastes most of its scan) ≈ ~2010
 /// Sequential expected to win by ~30×.
+/// Actual planner cost (current branch): 85.80 (sequential — planner picks correctly).
 #[test]
 fn sequential_wins_asymmetric_coverage() {
     const N_OUTER: usize = 10;
@@ -983,6 +1022,7 @@ fn sequential_wins_asymmetric_coverage() {
     load_data(&mut context, data_spec);
 
     let pipeline = compile_read(&context, &two_owner_join_query());
+    println!("planner: {}", planner_cost_summary(&pipeline));
     let merges = multi_iter_intersection_steps(&pipeline);
     assert!(
         merges.is_empty(),
