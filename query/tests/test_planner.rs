@@ -431,6 +431,11 @@ fn add_noise_owners(spec: &mut DataSpec, n_noise_types: usize, per_type: usize, 
 /// textbook merge-win shape: both sides pre-sorted on the join attribute,
 /// dense overlap. A 2-iter merge intersection on the attribute should beat
 /// sequential's per-outer-row probe.
+///
+/// Cost-model estimate (SEEK=5, ADVANCE=1):
+/// - sequential chain ≈ 500 × (SEEK + 1 ADV) ≈ 3000
+/// - 2-iter merge    ≈ 2 × (SEEK + 500 ADV)  ≈ 1010
+/// Merge expected to win by ~3×.
 #[test]
 fn merge_wins_symmetric_balanced() {
     const N: usize = 500;
@@ -481,6 +486,11 @@ fn merge_wins_symmetric_balanced() {
 /// values (10 owners per value per side). Output = 50 × 10 × 10 = 5000 rows
 /// (cartesian within each value). Per-value cartesian should amortize merge's
 /// scan over many emits, so merge should win.
+///
+/// Cost-model estimate:
+/// - sequential chain ≈ 500 × (SEEK + 10 ADV) ≈ 7500
+/// - 2-iter merge    ≈ 1000 + per-value cartesian sub-iter
+/// Merge expected to win by ~5×.
 #[test]
 fn merge_wins_moderate_cartesian() {
     const N_OWNERS: usize = 500;
@@ -534,6 +544,12 @@ fn merge_wins_moderate_cartesian() {
 /// values (50 owners per value per side). Output = 10 × 50 × 50 = 25000 rows.
 /// Each output value has a per-side cartesian cluster, so merge's cartesian
 /// sub-iter should dominate sequential's per-outer probe.
+///
+/// Cost-model estimate:
+/// - sequential chain ≈ 500 × (SEEK + 50 ADV) ≈ 27500
+/// - 2-iter merge    ≈ 1000 + per-value cartesian (~10 reopens, big amortization)
+/// Merge expected to win decisively (~25×) — this is the regime where per-value
+/// cartesian most clearly pays off.
 #[test]
 fn merge_wins_heavy_cartesian() {
     const N_OWNERS: usize = 500;
@@ -587,6 +603,11 @@ fn merge_wins_heavy_cartesian() {
 /// 100 distinct values (10 owners per value per side). Output = 100 × 10 × 10
 /// = 10000 rows. Same regime as `moderate_cartesian` but at 2× scale — checks
 /// that the planner's pick stays consistent as cardinality grows.
+///
+/// Cost-model estimate:
+/// - sequential chain ≈ 1000 × (SEEK + 10 ADV) ≈ 15000
+/// - 2-iter merge    ≈ 2000 + per-value cartesian sub-iter
+/// Merge expected to win by ~5×, same shape as moderate_cartesian.
 #[test]
 fn merge_wins_at_scale_with_fanout() {
     const N_OWNERS: usize = 1000;
@@ -706,6 +727,13 @@ fn build_multi_attr_spec(n_owners: usize, k_attrs: usize, m_values: usize) -> Da
 /// from one filter and bind-from probe each of the other K-1 patterns per row.
 /// This is the canonical merge-wins shape (entity-id axis, equally selective
 /// per-attribute filters).
+///
+/// Cost-model estimate:
+/// - sequential cascade ≈ 333 outer + 2 × (333 × bound-probe) ≈ ~1300
+/// - K-iter merge       ≈ K × 333 + per-row intersection compare ≈ ~1000
+/// Merge expected to win (cascading per-row pipeline overhead in the
+/// sequential plan is paid on intermediate row counts, not just on the final
+/// ~37 outputs).
 #[test]
 fn merge_wins_multi_attr_filter() {
     const N: usize = 1_000;
@@ -754,6 +782,11 @@ fn merge_wins_multi_attr_filter() {
 /// have to scan the entire inner range for a single matching value;
 /// sequential's bind-from probe lands directly. Primary guard against
 /// catastrophic O(N_inner) merge picks.
+///
+/// Cost-model estimate:
+/// - sequential chain ≈ 1 outer + 1 × (SEEK + 1 ADV) ≈ ~10
+/// - 2-iter merge    ≈ 2 × (SEEK + ~2000 ADV) ≈ ~2010
+/// Sequential expected to win by ~200×.
 #[test]
 fn sequential_wins_tiny_outer_huge_inner() {
     const N_INNER: usize = 2000;
@@ -810,6 +843,12 @@ fn sequential_wins_tiny_outer_huge_inner() {
 /// (outer covers 5% of inner's value domain). Output: 100 rows. Regression
 /// test for the blend penalty on outer-side waste: the small outer should
 /// drive bound probes into inner, not the other way around.
+///
+/// Cost-model estimate:
+/// - sequential chain ≈ 100 outer + 100 × (SEEK + 1 ADV) ≈ ~700
+/// - 2-iter merge    ≈ 100 + 2000 (both iters walk inner range to find the
+///   100 overlapping values) ≈ ~2100
+/// Sequential expected to win by ~3×.
 #[test]
 fn sequential_wins_subset_coverage() {
     const N_OUTER: usize = 100;
@@ -865,6 +904,11 @@ fn sequential_wins_subset_coverage() {
 /// owner_1: 100 owners values 0..99; owner_2: 100 owners values 0..99 (full
 /// overlap with outer); plus 2000 noise entries with values 100..2099
 /// inflating the value range. Output: 100 rows. Sequential should win.
+///
+/// Cost-model estimate (noise puts the effective per-side scan at ~2100):
+/// - sequential chain ≈ 2100 outer + 100 × (SEEK + 1 ADV) ≈ ~2700
+/// - 2-iter merge    ≈ 2 × 2100 (both iters walk the bloated range) ≈ ~4200
+/// Sequential expected to win by ~1.5×.
 #[test]
 fn sequential_wins_noisy_inner() {
     const N_QUERY: usize = 100;
@@ -922,6 +966,11 @@ fn sequential_wins_noisy_inner() {
 /// Output: 5 rows. Distinct from `subset_coverage` because the outer is
 /// small (extreme outer-side selectivity) and the intersection is even
 /// tinier than the outer itself. Sequential should win.
+///
+/// Cost-model estimate:
+/// - sequential chain ≈ 10 outer + 10 × (SEEK + 1 ADV) ≈ ~60
+/// - 2-iter merge    ≈ 10 + 2000 (merge wastes most of its scan) ≈ ~2010
+/// Sequential expected to win by ~30×.
 #[test]
 fn sequential_wins_asymmetric_coverage() {
     const N_OUTER: usize = 10;
