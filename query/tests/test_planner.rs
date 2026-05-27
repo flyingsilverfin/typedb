@@ -276,6 +276,44 @@ fn load_data(context: &mut Context, spec: DataSpec) {
 
 // --- Helpers for inspecting QueryProfile ----------------------------------------------------
 
+/// Dump every step's description + storage counters. Useful for debugging which iter
+/// shape (canonical vs reverse, single vs merged) the planner actually built.
+fn dump_steps(profile: &QueryProfile) {
+    for (_id, stage) in profile.stage_profiles().read().unwrap().iter() {
+        if let Some(pattern) = stage.pattern_profile() {
+            visit_steps_in_pattern(&pattern, &mut |step| {
+                let descr = step.description().unwrap_or_default();
+                let rows = step.rows().unwrap_or(0);
+                let s = step.storage_counters().get_raw_seek().unwrap_or(0);
+                let a = step.storage_counters().get_raw_advance().unwrap_or(0);
+                println!("  step: rows={rows} seeks={s} advs={a} | {descr}");
+            });
+        }
+    }
+}
+
+/// Sum raw storage (seeks, advances) across all steps in all stage patterns of a profile.
+/// Useful for comparing the actual storage work between plan shapes — multiply by the
+/// planner's weights (SEEK=5, ADV=1) to get a "model-equivalent" runtime cost that can be
+/// compared to PlannerStatistics.
+fn total_storage_ops(profile: &QueryProfile) -> (u64, u64) {
+    let mut total_seeks = 0u64;
+    let mut total_advances = 0u64;
+    for (_id, stage) in profile.stage_profiles().read().unwrap().iter() {
+        if let Some(pattern) = stage.pattern_profile() {
+            visit_steps_in_pattern(&pattern, &mut |step| {
+                if let Some(seek) = step.storage_counters().get_raw_seek() {
+                    total_seeks += seek;
+                }
+                if let Some(adv) = step.storage_counters().get_raw_advance() {
+                    total_advances += adv;
+                }
+            });
+        }
+    }
+    (total_seeks, total_advances)
+}
+
 fn worst_advances_per_row(profile: &QueryProfile) -> (f64, u64, u64, String) {
     let mut worst: (f64, u64, u64, String) = (0.0, 0, 0, String::new());
     for (_id, stage) in profile.stage_profiles().read().unwrap().iter() {
@@ -474,6 +512,8 @@ fn merge_wins_symmetric_balanced() {
     );
 
     let (rows, profile) = execute_read(pipeline);
+    let (s, a) = total_storage_ops(&profile);
+    println!("storage: seeks={s} advances={a} weighted={}", s * 5 + a);
     assert_eq!(rows, N, "symmetric_balanced: 1:1 full coverage → N rows");
     let (ratio, advances, prof_rows, descr) = worst_advances_per_row(&profile);
     assert!(
@@ -535,6 +575,8 @@ fn merge_wins_moderate_cartesian() {
     );
 
     let (rows, profile) = execute_read(pipeline);
+    let (s, a) = total_storage_ops(&profile);
+    println!("storage: seeks={s} advances={a} weighted={}", s * 5 + a);
     assert_eq!(rows, EXPECTED_ROWS, "moderate_cartesian: 50 values × 10 × 10 = 5000 rows");
     let (ratio, advances, prof_rows, descr) = worst_advances_per_row(&profile);
     assert!(
@@ -597,6 +639,8 @@ fn merge_wins_heavy_cartesian() {
     );
 
     let (rows, profile) = execute_read(pipeline);
+    let (s, a) = total_storage_ops(&profile);
+    println!("storage: seeks={s} advances={a} weighted={}", s * 5 + a);
     assert_eq!(rows, EXPECTED_ROWS, "heavy_cartesian: 10 values × 50 × 50 = 25000 rows");
     let (ratio, advances, prof_rows, descr) = worst_advances_per_row(&profile);
     assert!(
@@ -658,6 +702,8 @@ fn merge_wins_at_scale_with_fanout() {
     );
 
     let (rows, profile) = execute_read(pipeline);
+    let (s, a) = total_storage_ops(&profile);
+    println!("storage: seeks={s} advances={a} weighted={}", s * 5 + a);
     assert_eq!(rows, EXPECTED_ROWS, "at_scale_with_fanout: 100 values × 10 × 10 = 10000 rows");
     let (ratio, advances, prof_rows, descr) = worst_advances_per_row(&profile);
     assert!(
@@ -767,6 +813,8 @@ fn merge_wins_multi_attr_filter() {
     );
 
     let (rows, profile) = execute_read(pipeline);
+    let (s, a) = total_storage_ops(&profile);
+    println!("storage: seeks={s} advances={a} weighted={}", s * 5 + a);
     // Each base-M combination appears floor(N / M^K) or ceil(N / M^K) times due to
     // integer arithmetic in the digit-position generator. Allow ±a few rows of slack.
     let lo = EXPECTED_ROWS.saturating_sub(2);
@@ -839,6 +887,8 @@ fn sequential_wins_tiny_outer_huge_inner() {
     );
 
     let (rows, profile) = execute_read(pipeline);
+    let (s, a) = total_storage_ops(&profile);
+    println!("storage: seeks={s} advances={a} weighted={}", s * 5 + a);
     assert_eq!(rows, 1, "tiny_outer_huge_inner: 1 outer × 1 matching inner = 1 row");
     // Worst-step ratio: with 1 row of output, ratio = advances. Bound generously
     // to catch only catastrophic plans (a merge would do ~2000 advances on its
@@ -905,6 +955,8 @@ fn sequential_wins_subset_coverage() {
     );
 
     let (rows, profile) = execute_read(pipeline);
+    let (s, a) = total_storage_ops(&profile);
+    println!("storage: seeks={s} advances={a} weighted={}", s * 5 + a);
     assert_eq!(rows, N_OUTER, "subset_coverage: outer ⊂ inner → N_OUTER rows");
     let (ratio, advances, prof_rows, descr) = worst_advances_per_row(&profile);
     assert!(
@@ -972,6 +1024,8 @@ fn sequential_wins_noisy_inner() {
     );
 
     let (rows, profile) = execute_read(pipeline);
+    let (s, a) = total_storage_ops(&profile);
+    println!("storage: seeks={s} advances={a} weighted={}", s * 5 + a);
     assert_eq!(rows, N_QUERY, "noisy_inner: query sides fully overlap → N_QUERY rows");
     let (ratio, advances, prof_rows, descr) = worst_advances_per_row(&profile);
     assert!(
@@ -1035,6 +1089,8 @@ fn sequential_wins_asymmetric_coverage() {
     );
 
     let (rows, profile) = execute_read(pipeline);
+    let (s, a) = total_storage_ops(&profile);
+    println!("storage: seeks={s} advances={a} weighted={}", s * 5 + a);
     assert_eq!(rows, EXPECTED_ROWS, "asymmetric_coverage: 5 overlapping values × 1 × 1 = 5 rows");
     let (ratio, advances, prof_rows, descr) = worst_advances_per_row(&profile);
     // Bound: with 5 rows of output, a healthy sequential plan does O(outer + per-match-probe)
@@ -1047,48 +1103,63 @@ fn sequential_wins_asymmetric_coverage() {
     );
 }
 
-/// True-zipper merge stress test. Same 500 matching values as `symmetric_balanced`,
-/// but each owner has 2 has's: one on a "match" value (stride 10) and one on a
-/// per-side "decoy" value mid-way to the next match. Side A decoys are at match+3,
-/// side B decoys at match+7 — never aligned with each other.
+/// True-zipper merge stress test. 500 matching values + 2 decoys per side per match.
+/// Side A owners hold {match, match+1, match+2}; side B owners hold {match, match+3,
+/// match+4}. Stride 5 between matches.
 ///
-/// What this exercises in the merge: after a match at value v, both iters advance
-/// past v and land on their respective decoys (v+3 and v+7). The merge compares
-/// peeks, sees they disagree, and calls `iterator.seek(target)` on the lagging
-/// side — a real storage SEEK. The leading side then has to seek past *its* decoy
-/// to the next match. So each of the 500 matches is preceded by ~2 catch-up SEEKs,
-/// scaling the merge's real cost as `2|min|×SEEK + advances` rather than the
-/// lockstep `2×OPEN + advances` that `symmetric_balanced` exercises.
+/// Why 2 decoys per side, not 1: the merge intersection's catch-up call
+/// (`advance_until_first_unbound_is`) early-returns when the next storage entry is
+/// already at or past the target. With only 1 decoy per side, the post-advance peek
+/// lands directly on the other side's first decoy (which is at the catch-up target
+/// boundary), so no real storage seek fires (verified empirically — earlier
+/// 1-decoy-per-side construction produced only the 2 OPEN seeks). With ≥2 decoys
+/// per side, the peek-after-advance lands on this side's *second* decoy (strictly
+/// less than the catch-up target), triggering a real `iterator.seek` → `raw_seek++`
+/// in DBIterator.
+///
+/// Expected per match (after the first): 2 real catch-up seeks (one per side) plus
+/// a handful of advances walking past the other side's decoys. So 500 matches
+/// should yield ~1000 catch-up SEEKs + 2 OPEN SEEKs = ~1002 SEEKs total — this is
+/// the `|min|×2` regime the cost model's `p_seek` arm is meant to price.
 ///
 /// Cost-model estimate (alignment-probability formula, planner stats):
-/// - per side: io_ratio = 1000 (2 has's × 500 owners), reverse-scan cost ≈ 2005
-/// - planner join_size estimate ≈ 1000²/1500 ≈ 667 (distinct-attr-value model)
-/// - p_seek per side: (1000 − 667)/1000 ≈ 0.33
-/// - per_match_cost: 0.67 × expected + 0.33 × SEEK ≈ 0.67×2 + 0.33×5 ≈ 3.0
-/// - merge total: 2 × (5 + 3.0×1000) + cartesian(~500) ≈ 6500
-/// - sequential (cascade): 1005 + 1000 × probe(~6) ≈ 7005
+/// - per side: io_ratio = 1500 (3 has's × 500 owners), reverse-scan cost ≈ 3005
+/// - distinct attr_values total: 5 × 500 = 2500
+/// - planner join_size estimate ≈ 1500²/2500 = 900
+/// - p_seek per side: (1500 − 900)/1500 ≈ 0.4
+/// - per_match_cost ≈ 0.6 × (3005/1500) + 0.4 × SEEK ≈ 1.2 + 2 = 3.2
+/// - merge total: 2 × (5 + 3.2×1500) + cartesian(~1000) ≈ 10600
+/// - sequential cascade: outer scan 1505 + 1500 × probe(~6) ≈ 10500
 ///
-/// Empirically merge still wins (~6010 vs ~7005), so the assertion expects merge
-/// to be picked. The point of the test is the cost-model behavior — under the old
-/// `blended_out_cost` formula the merge alternative was priced at ~4530 (heavy
-/// under-pricing); under the new alignment-probability formula it's ~6500 (close
-/// to empirical). Useful as a regression target for the model's accuracy on
-/// non-aligned zipper shapes.
-/// Actual planner cost (current branch): 7585 (sequential — planner picks the
-/// wrong plan; same direction-fanout cause as the other merge_wins_* fails on
-/// 2-side has-joins, the alignment-probability model doesn't fix it).
+/// Empirical comparison (instrumented runs):
+/// - merge:      seeks=1001 advs=4999 → weighted ≈ 10004
+/// - sequential: seeks=1501 advs=2500 → weighted ≈ 10005
+/// Plans are within 0.01% of each other in actual storage cost. Merge does
+/// fewer total ops (1000 vs 1500 seeks) but each merge-cycle does extra
+/// advances walking past decoys; sequential does more seeks (one per probe)
+/// but each probe is cheap.
+///
+/// Actual planner cost (current branch): 11125 (sequential — planner picks
+/// sequential; same direction-fanout cause as the other 2-side merge_wins_*
+/// failures, the alignment-probability model doesn't fix it on its own). When
+/// the merge plan IS explored (verified under a direction-fanout patch), it
+/// runs and produces the expected ~1001 catch-up seeks via the new assertion.
 #[test]
 fn merge_wins_true_zipper() {
     const N_OWNERS: usize = 500;
-    const STRIDE: i64 = 10;
-    const A_DECOY_OFFSET: i64 = 3;
-    const B_DECOY_OFFSET: i64 = 7;
-    const HAS_PER_SIDE: usize = N_OWNERS * 2;
+    const STRIDE: i64 = 5;
+    const HAS_PER_OWNER: usize = 3; // 1 match + 2 decoys per side
+    const HAS_PER_SIDE: usize = N_OWNERS * HAS_PER_OWNER;
+    // Side A decoy offsets from match: {+1, +2}. Side B decoys: {+3, +4}.
+    const A_DECOY_OFFSETS: &[i64] = &[1, 2];
+    const B_DECOY_OFFSETS: &[i64] = &[3, 4];
 
-    let zipper_gen = |decoy_offset: i64| -> AttributeGenerator {
+    let zipper_gen = |decoy_offsets: &'static [i64]| -> AttributeGenerator {
         Box::new(move |e| {
             let owner_idx = (e % N_OWNERS) as i64;
-            let offset = if e < N_OWNERS { 0 } else { decoy_offset };
+            // round e: 0..N_OWNERS is the match has, N_OWNERS..2*N is first decoy, etc.
+            let round = e / N_OWNERS;
+            let offset = if round == 0 { 0 } else { decoy_offsets[round - 1] };
             owner_idx * STRIDE + offset
         })
     };
@@ -1104,13 +1175,13 @@ fn merge_wins_true_zipper() {
         has: vec![
             HasSpec {
                 owner_type: OWNER_1, attr_type: JOIN_ATTR,
-                count_each: 2, count_total: HAS_PER_SIDE,
-                attribute_generator: zipper_gen(A_DECOY_OFFSET),
+                count_each: HAS_PER_OWNER, count_total: HAS_PER_SIDE,
+                attribute_generator: zipper_gen(A_DECOY_OFFSETS),
             },
             HasSpec {
                 owner_type: OWNER_2, attr_type: JOIN_ATTR,
-                count_each: 2, count_total: HAS_PER_SIDE,
-                attribute_generator: zipper_gen(B_DECOY_OFFSET),
+                count_each: HAS_PER_OWNER, count_total: HAS_PER_SIDE,
+                attribute_generator: zipper_gen(B_DECOY_OFFSETS),
             },
         ],
     };
@@ -1119,14 +1190,25 @@ fn merge_wins_true_zipper() {
     let pipeline = compile_read(&context, &two_owner_join_query());
     println!("planner: {}", planner_cost_summary(&pipeline));
     let merges = multi_iter_intersection_steps(&pipeline);
-    assert!(
-        !merges.is_empty(),
-        "true_zipper: planner should still pick merge — merge is empirically faster \
-         than sequential here (~6010 vs ~7005); found none",
-    );
+    let merges_count = merges.len();
+    drop(merges);
 
     let (rows, profile) = execute_read(pipeline);
+    let (s, a) = total_storage_ops(&profile);
+    println!("storage: seeks={s} advances={a} weighted={}", s * 5 + a);
+    assert!(
+        merges_count > 0,
+        "true_zipper: planner should pick merge — merge is empirically faster than \
+         sequential here even after paying ~|min|×2 catch-up seeks; found none",
+    );
     assert_eq!(rows, N_OWNERS, "true_zipper: 500 matching values × 1 × 1 = 500 rows");
+    assert!(
+        s >= (N_OWNERS as u64),
+        "true_zipper: expected real catch-up seeks to fire (≈ 2×N_OWNERS = 1000 + 2 OPENs); \
+         got only {s} seeks. If this drops to 2, the data shape isn't forcing storage \
+         seeks — the merge's `advance_until_first_unbound_is` is early-returning because \
+         the next storage entry is already at/past the catch-up target.",
+    );
     let (ratio, advances, prof_rows, descr) = worst_advances_per_row(&profile);
     assert!(
         ratio < 50.0,
