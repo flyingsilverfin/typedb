@@ -6,6 +6,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
+use compiler::executable::match_::planner::conjunction_executable::{ExecutionStep, IntersectionStep};
 use concept::{
     thing::{statistics::Statistics, thing_manager::ThingManager},
     type_::type_manager::{TypeManager, type_cache::TypeCache},
@@ -14,19 +15,22 @@ use durability::DurabilitySequenceNumber;
 use encoding::graph::{
     definition::definition_key_generator::DefinitionKeyGenerator, thing::vertex_generator::ThingVertexGenerator,
 };
-use compiler::executable::match_::planner::conjunction_executable::{ExecutionStep, IntersectionStep};
 use executor::{
     ExecutionInterrupt,
-    pipeline::stage::{ExecutionContext, StageIterator},
+    pipeline::{
+        pipeline::Pipeline,
+        stage::{ExecutionContext, ReadPipelineStage, StageIterator},
+    },
 };
-use executor::pipeline::pipeline::Pipeline;
-use executor::pipeline::stage::ReadPipelineStage;
 use function::function_manager::FunctionManager;
-use query::options::QueryOptions;
+use options::QueryOptions;
 use query::{query_cache::QueryCache, query_manager::QueryManager};
 use resource::profile::{CommitProfile, PatternProfile, QueryProfile, StepProfile, SubstepProfile};
-use storage::{MVCCStorage, durability_client::WALClient, snapshot::CommittableSnapshot};
-use storage::snapshot::ReadSnapshot;
+use storage::{
+    MVCCStorage,
+    durability_client::WALClient,
+    snapshot::{CommittableSnapshot, ReadSnapshot},
+};
 use test_utils::TempDir;
 use test_utils_concept::{load_managers, setup_concept_storage};
 use test_utils_encoding::create_core_storage;
@@ -112,7 +116,10 @@ fn commit_writes(context: &mut Context, queries: &[String]) {
     context.refresh();
 }
 
-fn compile_read(context: &Context, query: &str) -> Pipeline<ReadSnapshot<WALClient>, ReadPipelineStage<ReadSnapshot<WALClient>>> {
+fn compile_read(
+    context: &Context,
+    query: &str,
+) -> Pipeline<ReadSnapshot<WALClient>, ReadPipelineStage<ReadSnapshot<WALClient>>> {
     let snapshot = Arc::new(context.storage.clone().open_snapshot_read());
     let parsed_query = typeql::parse_query(query).unwrap().into_structure().into_pipeline();
     let pipeline = context
@@ -130,7 +137,9 @@ fn compile_read(context: &Context, query: &str) -> Pipeline<ReadSnapshot<WALClie
     pipeline
 }
 
-fn execute_read(pipeline: Pipeline<ReadSnapshot<WALClient>, ReadPipelineStage<ReadSnapshot<WALClient>>>) -> (usize, Arc<QueryProfile>) {
+fn execute_read(
+    pipeline: Pipeline<ReadSnapshot<WALClient>, ReadPipelineStage<ReadSnapshot<WALClient>>>,
+) -> (usize, Arc<QueryProfile>) {
     let (iterator, ExecutionContext { profile, .. }) =
         pipeline.into_rows_iterator(ExecutionInterrupt::new_uninterruptible()).unwrap();
     let rows = iterator.collect_owned().unwrap().len();
@@ -203,10 +212,7 @@ fn load_data(context: &mut Context, spec: DataSpec) {
 
     for HasSpec { owner_type, attr_type, count_each, count_total, attribute_generator } in &spec.has {
         let owner_count = instance_counts.get(owner_type).copied().unwrap_or(0);
-        assert!(
-            owner_count > 0,
-            "HasSpec references owner_type '{owner_type}' with no prior InstanceSpec inserts",
-        );
+        assert!(owner_count > 0, "HasSpec references owner_type '{owner_type}' with no prior InstanceSpec inserts",);
         let max_edges = owner_count.saturating_mul(*count_each);
         assert!(
             *count_total <= max_edges,
@@ -217,12 +223,8 @@ fn load_data(context: &mut Context, spec: DataSpec) {
         }
         // HasSpec needs to address individual owners by key value, so the owner type
         // must have had a `key` set on its InstanceSpec.
-        let key_label = spec
-            .instances
-            .iter()
-            .find(|i| i.type_ == *owner_type)
-            .and_then(|i| i.key)
-            .unwrap_or_else(|| {
+        let key_label =
+            spec.instances.iter().find(|i| i.type_ == *owner_type).and_then(|i| i.key).unwrap_or_else(|| {
                 panic!(
                     "HasSpec owner_type '{owner_type}' has no InstanceSpec with a key; \
                      can't address individual owners without one"
@@ -396,11 +398,7 @@ const NOISE_KEY: &str = "noise_id";
 /// for any owner type X, inflating merge's double-scan cost relative to sequential's
 /// outer-then-bind-from cost.
 fn define_two_owner_with_noise_schema(context: &mut Context, n_noise_types: usize) {
-    assert!(
-        n_noise_types <= NOISE_TYPES.len(),
-        "only {} noise types declared in NOISE_TYPES",
-        NOISE_TYPES.len()
-    );
+    assert!(n_noise_types <= NOISE_TYPES.len(), "only {} noise types declared in NOISE_TYPES", NOISE_TYPES.len());
     let mut schema = format!(
         "define \
           entity {OWNER_1} owns {KEY_1} @key, owns {JOIN_ATTR}; \
@@ -461,13 +459,17 @@ fn merge_wins_symmetric_balanced() {
         ],
         has: vec![
             HasSpec {
-                owner_type: OWNER_1, attr_type: JOIN_ATTR,
-                count_each: 1, count_total: N,
+                owner_type: OWNER_1,
+                attr_type: JOIN_ATTR,
+                count_each: 1,
+                count_total: N,
                 attribute_generator: sequential(),
             },
             HasSpec {
-                owner_type: OWNER_2, attr_type: JOIN_ATTR,
-                count_each: 1, count_total: N,
+                owner_type: OWNER_2,
+                attr_type: JOIN_ATTR,
+                count_each: 1,
+                count_total: N,
                 attribute_generator: sequential(),
             },
         ],
@@ -554,13 +556,17 @@ fn merge_wins_true_zipper() {
         ],
         has: vec![
             HasSpec {
-                owner_type: OWNER_1, attr_type: JOIN_ATTR,
-                count_each: HAS_PER_OWNER, count_total: HAS_PER_SIDE,
+                owner_type: OWNER_1,
+                attr_type: JOIN_ATTR,
+                count_each: HAS_PER_OWNER,
+                count_total: HAS_PER_SIDE,
                 attribute_generator: zipper_gen(A_DECOY_OFFSETS),
             },
             HasSpec {
-                owner_type: OWNER_2, attr_type: JOIN_ATTR,
-                count_each: HAS_PER_OWNER, count_total: HAS_PER_SIDE,
+                owner_type: OWNER_2,
+                attr_type: JOIN_ATTR,
+                count_each: HAS_PER_OWNER,
+                count_total: HAS_PER_SIDE,
                 attribute_generator: zipper_gen(B_DECOY_OFFSETS),
             },
         ],
@@ -627,13 +633,17 @@ fn merge_wins_moderate_cartesian() {
         ],
         has: vec![
             HasSpec {
-                owner_type: OWNER_1, attr_type: JOIN_ATTR,
-                count_each: 1, count_total: N_OWNERS,
+                owner_type: OWNER_1,
+                attr_type: JOIN_ATTR,
+                count_each: 1,
+                count_total: N_OWNERS,
                 attribute_generator: cyclic(DISTINCT_VALUES),
             },
             HasSpec {
-                owner_type: OWNER_2, attr_type: JOIN_ATTR,
-                count_each: 1, count_total: N_OWNERS,
+                owner_type: OWNER_2,
+                attr_type: JOIN_ATTR,
+                count_each: 1,
+                count_total: N_OWNERS,
                 attribute_generator: cyclic(DISTINCT_VALUES),
             },
         ],
@@ -693,13 +703,17 @@ fn merge_wins_heavy_cartesian() {
         ],
         has: vec![
             HasSpec {
-                owner_type: OWNER_1, attr_type: JOIN_ATTR,
-                count_each: 1, count_total: N_OWNERS,
+                owner_type: OWNER_1,
+                attr_type: JOIN_ATTR,
+                count_each: 1,
+                count_total: N_OWNERS,
                 attribute_generator: cyclic(DISTINCT_VALUES),
             },
             HasSpec {
-                owner_type: OWNER_2, attr_type: JOIN_ATTR,
-                count_each: 1, count_total: N_OWNERS,
+                owner_type: OWNER_2,
+                attr_type: JOIN_ATTR,
+                count_each: 1,
+                count_total: N_OWNERS,
                 attribute_generator: cyclic(DISTINCT_VALUES),
             },
         ],
@@ -728,14 +742,13 @@ fn merge_wins_heavy_cartesian() {
     );
 }
 
-
 // --- Multi-attribute filter helpers (single-entity, K-pattern intersection) -----------------
 
 const WIDGET: &str = "widget";
 const WIDGET_KEY: &str = "widget_key";
 const MULTI_ATTR_TYPES: &[&str] = &[
-    "m_attr_0", "m_attr_1", "m_attr_2", "m_attr_3", "m_attr_4",
-    "m_attr_5", "m_attr_6", "m_attr_7", "m_attr_8", "m_attr_9",
+    "m_attr_0", "m_attr_1", "m_attr_2", "m_attr_3", "m_attr_4", "m_attr_5", "m_attr_6", "m_attr_7", "m_attr_8",
+    "m_attr_9",
 ];
 
 fn define_multi_attr_schema(context: &mut Context, k_attrs: usize) {
@@ -772,8 +785,10 @@ fn build_multi_attr_spec(n_owners: usize, k_attrs: usize, m_values: usize) -> Da
         let divisor: usize = m_values.pow(i as u32);
         let modulus = m_values;
         spec.has.push(HasSpec {
-            owner_type: WIDGET, attr_type: MULTI_ATTR_TYPES[i],
-            count_each: 1, count_total: n_owners,
+            owner_type: WIDGET,
+            attr_type: MULTI_ATTR_TYPES[i],
+            count_each: 1,
+            count_total: n_owners,
             attribute_generator: Box::new(move |edge_idx| {
                 // With count_total = n_owners and count_each = 1, edge_idx == owner_idx.
                 ((edge_idx / divisor) % modulus) as i64
@@ -875,13 +890,17 @@ fn sequential_wins_tiny_outer_huge_inner() {
         ],
         has: vec![
             HasSpec {
-                owner_type: OWNER_1, attr_type: JOIN_ATTR,
-                count_each: 1, count_total: 1,
+                owner_type: OWNER_1,
+                attr_type: JOIN_ATTR,
+                count_each: 1,
+                count_total: 1,
                 attribute_generator: sequential(),
             },
             HasSpec {
-                owner_type: OWNER_2, attr_type: JOIN_ATTR,
-                count_each: 1, count_total: N_INNER,
+                owner_type: OWNER_2,
+                attr_type: JOIN_ATTR,
+                count_each: 1,
+                count_total: N_INNER,
                 attribute_generator: sequential(),
             },
         ],
@@ -942,13 +961,17 @@ fn sequential_wins_subset_coverage() {
         ],
         has: vec![
             HasSpec {
-                owner_type: OWNER_1, attr_type: JOIN_ATTR,
-                count_each: 1, count_total: N_OUTER,
+                owner_type: OWNER_1,
+                attr_type: JOIN_ATTR,
+                count_each: 1,
+                count_total: N_OUTER,
                 attribute_generator: sequential(), // values 0..99
             },
             HasSpec {
-                owner_type: OWNER_2, attr_type: JOIN_ATTR,
-                count_each: 1, count_total: N_INNER,
+                owner_type: OWNER_2,
+                attr_type: JOIN_ATTR,
+                count_each: 1,
+                count_total: N_INNER,
                 attribute_generator: sequential(), // values 0..1999, outer ⊂ inner
             },
         ],
@@ -1009,13 +1032,17 @@ fn sequential_wins_noisy_inner() {
         ],
         has: vec![
             HasSpec {
-                owner_type: OWNER_1, attr_type: JOIN_ATTR,
-                count_each: 1, count_total: N_QUERY,
+                owner_type: OWNER_1,
+                attr_type: JOIN_ATTR,
+                count_each: 1,
+                count_total: N_QUERY,
                 attribute_generator: sequential(), // values 0..99
             },
             HasSpec {
-                owner_type: OWNER_2, attr_type: JOIN_ATTR,
-                count_each: 1, count_total: N_QUERY,
+                owner_type: OWNER_2,
+                attr_type: JOIN_ATTR,
+                count_each: 1,
+                count_total: N_QUERY,
                 attribute_generator: sequential(), // values 0..99 (full overlap with owner_1)
             },
         ],

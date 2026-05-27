@@ -9,7 +9,7 @@ use database::{
     Database,
     transaction::{CommitIntent, SchemaCommitIntent},
 };
-use query::options::QueryOptions;
+use options::QueryOptions;
 use resource::{
     constants::server::{DEFAULT_USER_NAME, DEFAULT_USER_PASSWORD},
     internal_database_prefix,

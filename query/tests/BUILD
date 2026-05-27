@@ -12,6 +12,7 @@ deps = [
     "//common/bytes",
     "//common/error",
     "//common/lending_iterator",
+    "//common/options:options",
     "//compiler",
     "//durability",
     "//encoding",

@@ -200,7 +200,7 @@ fn seed_friendships(database: &Arc<Database<WALClient>>, person_count: usize, fr
             let pipeline = typeql::parse_query(&query_str).unwrap().into_structure().into_pipeline();
             let (returned_tx, result) = execute_write_query_in_write(
                 tx,
-                QueryOptions::default_grpc(),
+                ServiceQueryOptions::default_grpc(),
                 pipeline,
                 query_str,
                 ExecutionInterrupt::new_uninterruptible(),
