@@ -191,25 +191,6 @@ fn offset_unique(start: i64) -> AttributeGenerator {
     Box::new(move |i| i as i64 + start)
 }
 
-/// Sparse-sequential: yields 0, stride, 2*stride, ..., (N-1)*stride. Use on
-/// one side of a two-side join to create asymmetric value distributions so the
-/// merge intersection has to issue catch-up seeks (rather than walking both
-/// iterators in lockstep). Stride > 1 means the OTHER side's iterator has to
-/// advance past `stride-1` non-matching entries between each match.
-fn sparse(stride: usize) -> AttributeGenerator {
-    assert!(stride >= 1, "sparse stride must be >= 1");
-    Box::new(move |i| (i * stride) as i64)
-}
-
-/// Same shape as `cyclic` but with stride between distinct values. Used in
-/// cyclic-paired tests where one side has sparse-sequential values; cycling
-/// the other side over the matching value range preserves output cardinality
-/// (symmetric stride — no catch-up seeks fire, but the merge regime stays
-/// the same as the dense case).
-fn cyclic_sparse(modulus: usize, stride: usize) -> AttributeGenerator {
-    Box::new(move |i| ((i % modulus) * stride) as i64)
-}
-
 struct HasSpec {
     owner_type: &'static str,
     attr_type: &'static str,
