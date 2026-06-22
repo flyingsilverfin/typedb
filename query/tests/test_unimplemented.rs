@@ -54,7 +54,7 @@ fn setup_common(schema: &str) -> Context {
             &function_manager,
             define,
             schema,
-            QueryOptions::default(),
+            InternalQueryOptions::default(),
         )
         .unwrap();
     snapshot.commit(&mut CommitProfile::DISABLED).unwrap();
@@ -84,7 +84,7 @@ fn run_read_query(
             &match_,
             None::<GivenRowsSimple>,
             query,
-            QueryOptions::default(),
+            InternalQueryOptions::default(),
         )
         .map_err(|query_error| Either::Left(query_error))?;
     let rows_positions = pipeline.rows_positions().unwrap().clone();
@@ -112,7 +112,7 @@ fn run_write_query(
             &query_as_pipeline,
             None::<GivenRowsSimple>,
             query,
-            QueryOptions::default(),
+            InternalQueryOptions::default(),
         )
         .unwrap();
     let rows_positions = pipeline.rows_positions().unwrap().clone();

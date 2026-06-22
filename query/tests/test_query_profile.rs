@@ -49,7 +49,7 @@ fn define_schema(
             function_manager,
             schema_query,
             query_str,
-            QueryOptions::default(),
+            InternalQueryOptions::default(),
         )
         .unwrap();
     snapshot.commit(&mut CommitProfile::DISABLED).unwrap();

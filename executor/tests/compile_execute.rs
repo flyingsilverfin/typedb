@@ -74,7 +74,7 @@ fn setup(
             &function_manager,
             define,
             schema,
-            QueryOptions::default(),
+            InternalQueryOptions::default(),
         )
         .unwrap();
     snapshot.commit(&mut CommitProfile::DISABLED).unwrap();
@@ -90,7 +90,7 @@ fn setup(
             &query,
             None::<GivenRowsSimple>,
             data,
-            QueryOptions::default(),
+            InternalQueryOptions::default(),
         )
         .unwrap();
     let (mut iterator, ExecutionContext { snapshot, .. }) =

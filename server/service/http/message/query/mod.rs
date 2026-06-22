@@ -59,9 +59,9 @@ impl Default for QueryOptionsPayload {
     }
 }
 
-impl Into<ServiceQueryOptions> for QueryOptionsPayload {
-    fn into(self) -> ServiceQueryOptions {
-        ServiceQueryOptions {
+impl Into<QueryOptions> for QueryOptionsPayload {
+    fn into(self) -> QueryOptions {
+        QueryOptions {
             include_instance_types: self.include_instance_types.unwrap_or(DEFAULT_INCLUDE_INSTANCE_TYPES),
             answer_count_limit: self
                 .answer_count_limit

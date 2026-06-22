@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use encoding::graph::definition::definition_key_generator::DefinitionKeyGenerator;
 use function::function_manager::FunctionManager;
+use options::InternalQueryOptions;
 use options::QueryOptions;
 use query::query_manager::QueryManager;
 use resource::profile::CommitProfile;
@@ -38,7 +39,7 @@ fn basic() {
             &function_manager,
             schema_query,
             query_str,
-            QueryOptions::default(),
+            InternalQueryOptions::default(),
         )
         .unwrap();
     snapshot.commit(&mut CommitProfile::DISABLED).unwrap();

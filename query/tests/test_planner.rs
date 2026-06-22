@@ -23,7 +23,9 @@ use executor::{
     },
 };
 use function::function_manager::FunctionManager;
+use options::InternalQueryOptions;
 use options::QueryOptions;
+use query::given_rows::GivenRowsSimple;
 use query::{query_cache::QueryCache, query_manager::QueryManager};
 use resource::profile::{CommitProfile, PatternProfile, QueryProfile, StepProfile, SubstepProfile};
 use storage::{
@@ -85,7 +87,7 @@ fn define_schema(context: &mut Context, query: &str) {
             &context.function_manager,
             schema_query,
             query,
-            QueryOptions::default(),
+            InternalQueryOptions::default(),
         )
         .unwrap();
     snapshot.commit(&mut CommitProfile::DISABLED).unwrap();
@@ -104,8 +106,9 @@ fn commit_writes(context: &mut Context, queries: &[String]) {
                 context.thing_manager.clone(),
                 &context.function_manager,
                 &parsed_query,
+                None::<GivenRowsSimple>,
                 query,
-                QueryOptions::default(),
+                InternalQueryOptions::default(),
             )
             .unwrap();
         // into_rows_iterator executes eagerly
@@ -130,8 +133,9 @@ fn compile_read(
             context.thing_manager.clone(),
             &context.function_manager,
             &parsed_query,
+            None::<GivenRowsSimple>,
             query,
-            QueryOptions { force_query_profile: true },
+            InternalQueryOptions { force_query_profile: true },
         )
         .unwrap();
     pipeline

@@ -34,16 +34,16 @@ pub type WriteQueryResult = Result<WriteQueryAnswer, Box<QueryError>>;
 
 #[derive(Debug)]
 pub struct WriteQueryAnswer {
-    pub query_options: ServiceQueryOptions,
+    pub query_options: QueryOptions,
     pub answer: Either<WriteQueryBatchAnswer, WriteQueryDocumentsAnswer>,
 }
 
 impl WriteQueryAnswer {
-    fn new_batch(query_options: ServiceQueryOptions, answer: WriteQueryBatchAnswer) -> Self {
+    fn new_batch(query_options: QueryOptions, answer: WriteQueryBatchAnswer) -> Self {
         Self { query_options, answer: Either::Left(answer) }
     }
 
-    fn new_documents(query_options: ServiceQueryOptions, answer: WriteQueryDocumentsAnswer) -> Self {
+    fn new_documents(query_options: QueryOptions, answer: WriteQueryDocumentsAnswer) -> Self {
         Self { query_options, answer: Either::Right(answer) }
     }
 }
@@ -64,7 +64,7 @@ pub fn execute_schema_query(
                 &function_manager,
                 query,
                 &source_query,
-                QueryOptions::default(),
+                InternalQueryOptions::default(),
             )
         }
     )
@@ -72,7 +72,7 @@ pub fn execute_schema_query(
 
 pub fn execute_write_query_in_schema(
     transaction: TransactionSchema<WALClient>,
-    query_options: ServiceQueryOptions,
+    query_options: QueryOptions,
     pipeline: typeql::query::Pipeline,
     given_rows: Option<impl GivenRows>,
     source_query: String,
@@ -118,7 +118,7 @@ pub fn execute_write_query_in_schema(
 
 pub fn execute_write_query_in_write(
     transaction: TransactionWrite<WALClient>,
-    query_options: ServiceQueryOptions,
+    query_options: QueryOptions,
     pipeline: typeql::query::Pipeline,
     given_rows: Option<impl GivenRows>,
     source_query: String,
@@ -183,7 +183,7 @@ pub(crate) fn execute_write_query_in<Snapshot: WritableSnapshot + 'static>(
         &pipeline,
         given_rows,
         source_query,
-        QueryOptions::default(),
+        InternalQueryOptions::default(),
     );
     let pipeline = match result {
         Ok(pipeline) => pipeline,

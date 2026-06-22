@@ -49,7 +49,7 @@ fn setup() -> (
             &function_manager,
             schema_query,
             schema,
-            QueryOptions::default(),
+            InternalQueryOptions::default(),
         )
         .unwrap();
     snapshot.commit(&mut CommitProfile::DISABLED).unwrap();
@@ -75,7 +75,7 @@ fn pipeline_at_limit_is_accepted() {
         &pipeline,
         None::<GivenRowsSimple>,
         &query_str,
-        QueryOptions::default(),
+        InternalQueryOptions::default(),
     );
 
     assert!(result.is_ok());
@@ -99,7 +99,7 @@ fn pipeline_over_limit_is_rejected() {
         &pipeline,
         None::<GivenRowsSimple>,
         &query_str,
-        QueryOptions::default(),
+        InternalQueryOptions::default(),
     );
     let err = match result {
         Ok(_) => panic!("query with too many stages should fail"),

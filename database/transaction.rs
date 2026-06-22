@@ -20,7 +20,7 @@ use concept::{
 use durability::DurabilitySequenceNumber;
 use error::typedb_error;
 use function::{FunctionError, function_cache::FunctionCache, function_manager::FunctionManager};
-use options::ServiceTransactionOptions;
+use options::TransactionOptions;
 use query::query_manager::QueryManager;
 use resource::profile::{CommitProfile, TransactionProfile};
 use storage::{
@@ -53,14 +53,14 @@ pub struct TransactionRead<D> {
     pub function_manager: Arc<FunctionManager>,
     pub query_manager: Arc<QueryManager>,
     pub database: DatabaseDropGuard<D>,
-    transaction_options: ServiceTransactionOptions,
+    transaction_options: TransactionOptions,
     pub profile: TransactionProfile,
 }
 
 impl<D: DurabilityClient> TransactionRead<D> {
     pub fn open(
         database: Arc<Database<D>>,
-        transaction_options: ServiceTransactionOptions,
+        transaction_options: TransactionOptions,
     ) -> Result<Self, TransactionError> {
         // TODO: when we implement constructor `open_at`, to open a transaction in the past by
         //      time/sequence number, we need to check whether
@@ -121,14 +121,14 @@ pub struct TransactionWrite<D> {
     pub function_manager: Arc<FunctionManager>,
     pub query_manager: Arc<QueryManager>,
     pub database: DatabaseDropGuard<D>,
-    pub transaction_options: ServiceTransactionOptions,
+    pub transaction_options: TransactionOptions,
     pub profile: TransactionProfile,
 }
 
 impl<D: DurabilityClient> TransactionWrite<D> {
     pub fn open(
         database: Arc<Database<D>>,
-        transaction_options: ServiceTransactionOptions,
+        transaction_options: TransactionOptions,
     ) -> Result<Self, TransactionError> {
         database.reserve_write_transaction(transaction_options.schema_lock_acquire_timeout_millis)?;
 
@@ -170,7 +170,7 @@ impl<D: DurabilityClient> TransactionWrite<D> {
         function_manager: Arc<FunctionManager>,
         query_manager: Arc<QueryManager>,
         database: DatabaseDropGuard<D>,
-        transaction_options: ServiceTransactionOptions,
+        transaction_options: TransactionOptions,
         profile: TransactionProfile,
     ) -> Self {
         Self {
@@ -225,14 +225,14 @@ pub struct TransactionSchema<D> {
     pub function_manager: Arc<FunctionManager>,
     pub query_manager: Arc<QueryManager>,
     pub database: DatabaseDropGuard<D>,
-    pub transaction_options: ServiceTransactionOptions,
+    pub transaction_options: TransactionOptions,
     pub profile: TransactionProfile,
 }
 
 impl<D: DurabilityClient> TransactionSchema<D> {
     pub fn open(
         database: Arc<Database<D>>,
-        transaction_options: ServiceTransactionOptions,
+        transaction_options: TransactionOptions,
     ) -> Result<Self, TransactionError> {
         database.reserve_schema_transaction(transaction_options.schema_lock_acquire_timeout_millis)?;
 
@@ -272,7 +272,7 @@ impl<D: DurabilityClient> TransactionSchema<D> {
         function_manager: Arc<FunctionManager>,
         query_manager: Arc<QueryManager>,
         database: DatabaseDropGuard<D>,
-        transaction_options: ServiceTransactionOptions,
+        transaction_options: TransactionOptions,
         profile: TransactionProfile,
     ) -> Self {
         Self {

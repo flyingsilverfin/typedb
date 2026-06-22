@@ -62,7 +62,7 @@ fn setup_common() -> Context {
             &function_manager,
             define,
             schema,
-            QueryOptions::default(),
+            InternalQueryOptions::default(),
         )
         .unwrap();
     snapshot.commit(&mut CommitProfile::DISABLED).unwrap();
@@ -89,7 +89,7 @@ fn test_insert() {
             &query,
             None::<GivenRowsSimple>,
             query_str,
-            QueryOptions::default(),
+            InternalQueryOptions::default(),
         )
         .unwrap();
 
@@ -132,7 +132,7 @@ fn test_insert_insert() {
             &query,
             None::<GivenRowsSimple>,
             query_str,
-            QueryOptions::default(),
+            InternalQueryOptions::default(),
         )
         .unwrap();
 
@@ -171,7 +171,7 @@ fn test_match() {
             &query,
             None::<GivenRowsSimple>,
             query_str,
-            QueryOptions::default(),
+            InternalQueryOptions::default(),
         )
         .unwrap();
     let (iterator, ExecutionContext { snapshot, .. }) =
@@ -194,7 +194,7 @@ fn test_match() {
             &match_,
             None::<GivenRowsSimple>,
             query,
-            QueryOptions::default(),
+            InternalQueryOptions::default(),
         )
         .unwrap();
     let (iterator, ExecutionContext { snapshot, .. }) =
@@ -214,7 +214,7 @@ fn test_match() {
             &match_,
             None::<GivenRowsSimple>,
             query,
-            QueryOptions::default(),
+            InternalQueryOptions::default(),
         )
         .unwrap();
     let (iterator, ExecutionContext { .. }) =
@@ -244,7 +244,7 @@ fn test_match_match() {
             &query,
             None::<GivenRowsSimple>,
             query_str,
-            QueryOptions::default(),
+            InternalQueryOptions::default(),
         )
         .unwrap();
     let (iterator, ExecutionContext { snapshot, .. }) =
@@ -270,7 +270,7 @@ fn test_match_match() {
             &match_,
             None::<GivenRowsSimple>,
             query,
-            QueryOptions::default(),
+            InternalQueryOptions::default(),
         )
         .unwrap();
     let (iterator, ExecutionContext { snapshot, .. }) =
@@ -290,7 +290,7 @@ fn test_match_match() {
             &match_,
             None::<GivenRowsSimple>,
             query,
-            QueryOptions::default(),
+            InternalQueryOptions::default(),
         )
         .unwrap();
     let (iterator, ExecutionContext { .. }) =
@@ -315,7 +315,7 @@ fn test_match_delete_has() {
             &insert_query,
             None::<GivenRowsSimple>,
             insert_query_str,
-            QueryOptions::default(),
+            InternalQueryOptions::default(),
         )
         .unwrap();
     let (mut iterator, ExecutionContext { snapshot, .. }) =
@@ -354,7 +354,7 @@ fn test_match_delete_has() {
             &delete_query,
             None::<GivenRowsSimple>,
             delete_query_str,
-            QueryOptions::default(),
+            InternalQueryOptions::default(),
         )
         .unwrap();
 
@@ -398,7 +398,7 @@ fn test_insert_match_insert() {
             &query,
             None::<GivenRowsSimple>,
             query_str,
-            QueryOptions::default(),
+            InternalQueryOptions::default(),
         )
         .unwrap();
     let (iterator, ExecutionContext { snapshot, .. }) =
@@ -429,7 +429,7 @@ fn test_insert_match_insert() {
             &query,
             None::<GivenRowsSimple>,
             query_str,
-            QueryOptions::default(),
+            InternalQueryOptions::default(),
         )
         .unwrap();
 
@@ -463,7 +463,7 @@ fn test_match_sort() {
             &insert_query,
             None::<GivenRowsSimple>,
             insert_query_str,
-            QueryOptions::default(),
+            InternalQueryOptions::default(),
         )
         .unwrap();
     let (mut iterator, ExecutionContext { snapshot, .. }) =
@@ -487,7 +487,7 @@ fn test_match_sort() {
             &match_,
             None::<GivenRowsSimple>,
             query,
-            QueryOptions::default(),
+            InternalQueryOptions::default(),
         )
         .unwrap();
     let named_outputs = pipeline.rows_positions().unwrap().clone();
@@ -530,7 +530,7 @@ fn test_select() {
             &insert_query,
             None::<GivenRowsSimple>,
             insert_query_str,
-            QueryOptions::default(),
+            InternalQueryOptions::default(),
         )
         .unwrap();
     let (mut iterator, ExecutionContext { snapshot, .. }) =
@@ -555,7 +555,7 @@ fn test_select() {
                 &match_,
                 None::<GivenRowsSimple>,
                 query,
-                QueryOptions::default(),
+                InternalQueryOptions::default(),
             )
             .unwrap();
         let named_outputs = pipeline.rows_positions().unwrap();
@@ -576,7 +576,7 @@ fn test_select() {
                 &match_,
                 None::<GivenRowsSimple>,
                 query,
-                QueryOptions::default(),
+                InternalQueryOptions::default(),
             )
             .unwrap();
         let named_outputs = pipeline.rows_positions().unwrap();
@@ -603,7 +603,7 @@ fn test_require() {
             &insert_query,
             None::<GivenRowsSimple>,
             insert_query_str,
-            QueryOptions::default(),
+            InternalQueryOptions::default(),
         )
         .unwrap();
     let (mut iterator, ExecutionContext { snapshot, .. }) =
@@ -628,7 +628,7 @@ fn test_require() {
                 &match_,
                 None::<GivenRowsSimple>,
                 query,
-                QueryOptions::default(),
+                InternalQueryOptions::default(),
             )
             .unwrap();
         let named_outputs = pipeline.rows_positions().unwrap();

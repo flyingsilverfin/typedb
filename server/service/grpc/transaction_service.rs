@@ -949,7 +949,7 @@ impl TransactionService {
     async fn run_write_query(
         &mut self,
         req_id: Uuid,
-        query_options: ServiceQueryOptions,
+        query_options: QueryOptions,
         pipeline: typeql::query::Pipeline,
         given_rows: Option<GivenRowsGrpc>,
         source_query: String,
@@ -995,7 +995,7 @@ impl TransactionService {
     fn run_and_activate_read_transmitter(
         &mut self,
         req_id: Uuid,
-        query_options: ServiceQueryOptions,
+        query_options: QueryOptions,
         pipeline: typeql::query::Pipeline,
         given_rows: Option<GivenRowsGrpc>,
         source_query: String,
@@ -1015,7 +1015,7 @@ impl TransactionService {
 
     fn spawn_blocking_execute_write_query(
         &mut self,
-        query_options: ServiceQueryOptions,
+        query_options: QueryOptions,
         pipeline: typeql::query::Pipeline,
         given_rows: Option<GivenRowsGrpc>,
         source_query: String,
@@ -1109,7 +1109,7 @@ impl TransactionService {
         type_manager: Arc<TypeManager>,
         thing_manager: Arc<ThingManager>,
         output_descriptor: StreamQueryOutputDescriptor,
-        query_options: ServiceQueryOptions,
+        query_options: QueryOptions,
         batch: Batch,
         pipeline_structure: Option<&PipelineStructure>,
         sender: Sender<StreamQueryResponse>,
@@ -1237,7 +1237,7 @@ impl TransactionService {
     fn blocking_read_query_worker(
         &self,
         sender: Sender<StreamQueryResponse>,
-        query_options: ServiceQueryOptions,
+        query_options: QueryOptions,
         pipeline: typeql::query::Pipeline,
         given_rows: Option<GivenRowsGrpc>,
         source_query: String,
@@ -1264,7 +1264,7 @@ impl TransactionService {
                     &pipeline,
                     given_rows,
                     &source_query,
-                    QueryOptions::default(),
+                    InternalQueryOptions::default(),
                 );
                 let pipeline = unwrap_or_execute_and_return!(pipeline, |err| {
                     Self::submit_read_response_with_metrics(
@@ -1291,7 +1291,7 @@ impl TransactionService {
     }
 
     fn respond_read_query_sync<Snapshot: ReadableSnapshot>(
-        query_options: ServiceQueryOptions,
+        query_options: QueryOptions,
         pipeline: Pipeline<Snapshot, ReadPipelineStage<Snapshot>>,
         source_query: &str,
         timeout_at: Instant,
@@ -1847,7 +1847,7 @@ impl QueryStreamTransmitter {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 enum QueueOptions {
-    Query(ServiceQueryOptions),
+    Query(QueryOptions),
     Analyze,
 }
 

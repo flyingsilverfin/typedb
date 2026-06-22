@@ -102,7 +102,7 @@ fn execute_read_query(
             &query.into_structure().into_pipeline(),
             given_rows,
             source_query,
-            QueryOptions::default(),
+            InternalQueryOptions::default(),
         )?;
         if pipeline.has_fetch() {
             match pipeline.into_documents_iterator(ExecutionInterrupt::new_uninterruptible()) {
@@ -165,7 +165,7 @@ fn execute_write_query(
             &query.into_structure().into_pipeline(),
             given_rows,
             source_query,
-            QueryOptions::default(),
+            InternalQueryOptions::default(),
         );
 
         match pipeline_result {
@@ -287,7 +287,7 @@ async fn typeql_schema_query(context: &mut Context, may_error: params::TypeQLMay
             &tx.function_manager,
             typeql_schema,
             query,
-            QueryOptions::default(),
+            InternalQueryOptions::default(),
         );
         if let Either::Right(_err) = may_error.check_logic(result) {
             context.close_active_transaction();

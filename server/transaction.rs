@@ -11,7 +11,7 @@ use database::{
     transaction::{TransactionError, TransactionId, TransactionRead, TransactionSchema, TransactionWrite},
 };
 use diagnostics::metrics::LoadKind;
-use options::ServiceTransactionOptions;
+use options::TransactionOptions;
 use serde::{Deserialize, Serialize};
 use storage::durability_client::WALClient;
 use tokio::task::spawn_blocking;
@@ -83,7 +83,7 @@ impl Transaction {
 pub async fn open_transaction_blocking(
     database: Arc<Database<WALClient>>,
     transaction_type: TransactionType,
-    options: ServiceTransactionOptions,
+    options: TransactionOptions,
 ) -> Result<Transaction, TransactionError> {
     spawn_blocking(move || match transaction_type {
         TransactionType::Read => TransactionRead::open(database, options).map(Transaction::Read),

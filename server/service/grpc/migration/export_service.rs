@@ -10,7 +10,7 @@ use std::{
 };
 
 use database::{Database, migration::Checksums, transaction::TransactionRead};
-use options::ServiceTransactionOptions;
+use options::TransactionOptions;
 use resource::{constants::common::SECONDS_IN_DAY, distribution_info::DistributionInfo, profile::StorageCounters};
 use storage::durability_client::WALClient;
 use tokio::sync::{mpsc::Sender, watch};
@@ -279,8 +279,8 @@ impl DatabaseExportService {
         }
     }
 
-    fn transaction_options() -> ServiceTransactionOptions {
-        ServiceTransactionOptions {
+    fn transaction_options() -> TransactionOptions {
+        TransactionOptions {
             parallel: Self::OPTIONS_PARALLEL,
             schema_lock_acquire_timeout_millis: Self::OPTIONS_SCHEMA_LOCK_ACQUIRE_TIMEOUT_MILLIS,
             transaction_timeout_millis: Self::OPTIONS_TRANSACTION_TIMEOUT_MILLIS,
