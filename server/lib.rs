@@ -7,14 +7,7 @@
 #![deny(unused_must_use)]
 #![deny(elided_lifetimes_in_paths)]
 
-use std::{
-    fs,
-    future::Future,
-    net::{Ipv4Addr, SocketAddr},
-    path::Path,
-    pin::Pin,
-    sync::Arc,
-};
+use std::{fs, future::Future, net::SocketAddr, path::Path, pin::Pin, sync::Arc};
 
 use axum_server::{Handle, tls_rustls::RustlsConfig};
 use concurrency::{TokioTaskSpawner, TokioTaskTracker};
@@ -30,6 +23,7 @@ use resource::{
         },
     },
     distribution_info::DistributionInfo,
+    server_info::{EndpointInfo, ServingInfo, print_serving_block},
 };
 use tokio::sync::watch::{Receiver, Sender, channel};
 use tracing::info;
@@ -37,7 +31,10 @@ use tracing::info;
 use crate::{
     error::ServerOpenError,
     parameters::config::{Config, EncryptionConfig, ServerConfig, StorageConfig},
-    service::{admin::localhost_guard::LocalhostGuardLayer, grpc, http},
+    service::{
+        admin::transport::{self, AdminPath},
+        grpc, http,
+    },
     state::{BoxServerStatus, ServerState},
 };
 
@@ -310,15 +307,19 @@ impl Server {
                 &server_config.encryption,
                 server_state.clone(),
                 shutdown_receiver.clone(),
-                background_tasks_spawner,
+                background_tasks_spawner.clone(),
             );
             servers.push(Box::pin(http_server));
         }
 
-        if server_config.admin.enabled {
+        if let Some(admin_endpoint) = server_state.admin_endpoint().cloned() {
             let admin_server = admin_serve_override.unwrap_or_else(|| {
-                let address = SocketAddr::from((Ipv4Addr::LOCALHOST, server_config.admin.port));
-                Self::serve_admin(address, server_state.clone(), shutdown_receiver.clone())
+                Self::serve_admin(
+                    admin_endpoint,
+                    server_state.clone(),
+                    background_tasks_spawner.clone(),
+                    shutdown_receiver.clone(),
+                )
             });
             servers.push(Box::pin(admin_server));
         }
@@ -404,21 +405,28 @@ impl Server {
     }
 
     fn serve_admin(
-        address: SocketAddr,
+        endpoint: AdminPath,
         server_state: Arc<ServerState>,
+        task_spawner: TokioTaskSpawner,
         mut shutdown_receiver: Receiver<()>,
     ) -> AdminServeFuture {
         let admin_service = service::admin::AdminService::new(server_state);
+        let bind_shutdown_receiver = shutdown_receiver.clone();
         Box::pin(async move {
-            tonic::transport::Server::builder()
-                .layer(LocalhostGuardLayer)
+            let listener = transport::bind_admin_endpoint(&endpoint, &task_spawner, bind_shutdown_receiver)?;
+            let endpoint_for_error = transport::endpoint_to_string(&endpoint);
+            let endpoint_for_cleanup = endpoint.clone();
+            let incoming = listener.into_incoming();
+            let serve_result = tonic::transport::Server::builder()
                 .add_service(admin_proto::type_db_admin_server::TypeDbAdminServer::new(admin_service))
-                .serve_with_shutdown(address, async {
+                .serve_with_incoming_shutdown(incoming, async {
                     // The tonic server starts a shutdown process when this closure execution finishes
                     shutdown_receiver.changed().await.expect("Expected shutdown receiver signal");
                 })
                 .await
-                .map_err(|err| ServerOpenError::AdminServe { address, source: Arc::new(err) })
+                .map_err(|err| ServerOpenError::AdminServe { path: endpoint_for_error, source: Arc::new(err) });
+            transport::cleanup_admin_endpoint(&endpoint_for_cleanup);
+            serve_result
         })
     }
 
@@ -433,29 +441,19 @@ impl Server {
     }
 
     pub fn print_serving_information(server_status: &BoxServerStatus, encryption_config: &EncryptionConfig) {
-        const UNKNOWN: &str = "<UNKNOWN ADDRESS>";
-        println!("Serving:");
-
-        let grpc_listen_address = server_status.grpc_listen_address().unwrap_or(UNKNOWN);
-        let grpc_advertise_address = server_status.grpc_advertise_address().unwrap_or(UNKNOWN);
-        if grpc_advertise_address != grpc_listen_address {
-            println!("  gRPC:  {grpc_listen_address} (connect via {grpc_advertise_address})");
-        } else {
-            println!("  gRPC:  {grpc_listen_address}");
-        }
-
-        if let Some(http_listen_address) = server_status.http_listen_address() {
-            match server_status.http_advertise_address() {
-                Some(http_advertise_address) if http_advertise_address != http_listen_address => {
-                    println!("  HTTP:  {http_listen_address} (connect via {http_advertise_address})");
-                }
-                _ => println!("  HTTP:  {http_listen_address}"),
-            }
-        }
-
-        if let Some(admin_address) = server_status.admin_address() {
-            println!("  Admin: {admin_address} (localhost only)");
-        }
+        let info = ServingInfo {
+            grpc: EndpointInfo {
+                listen: server_status.grpc_listen_address().map(str::to_string),
+                advertise: server_status.grpc_advertise_address().map(str::to_string),
+            },
+            http: server_status.http_listen_address().map(|listen| EndpointInfo {
+                listen: Some(listen.to_string()),
+                advertise: server_status.http_advertise_address().map(str::to_string),
+            }),
+            admin: server_status.admin_address().map(str::to_string),
+            monitoring: server_status.monitoring_address().map(str::to_string),
+        };
+        print_serving_block(&info);
 
         if encryption_config.enabled {
             println!("TLS: enabled");
@@ -466,14 +464,16 @@ impl Server {
             println!("  Drivers must be configured to connect *without TLS*.");
         }
 
-        let grpc_connect_address = server_status.grpc_advertise_address();
-        let http_connect_address = server_status.http_advertise_address();
+        let grpc_connect_address =
+            Self::connect_address(server_status.grpc_advertise_address(), server_status.grpc_listen_address());
+        let http_connect_address =
+            Self::connect_address(server_status.http_advertise_address(), server_status.http_listen_address());
         if grpc_connect_address.is_some() || http_connect_address.is_some() {
-            println!("To connect:");
-            if let Some(http_connect_address) = http_connect_address {
+            println!("\nTo connect:");
+            if let Some(http_connect_address) = http_connect_address.as_deref() {
                 println!("  Studio:  {}", Self::studio_connect_link(http_connect_address, encryption_config));
             }
-            if let Some(grpc_connect_address) = grpc_connect_address {
+            if let Some(grpc_connect_address) = grpc_connect_address.as_deref() {
                 println!("  Console: {}", Self::console_connect_command(grpc_connect_address, encryption_config));
             }
         }
@@ -485,9 +485,26 @@ impl Server {
         info!("\nReady!");
     }
 
+    fn connect_address(advertise: Option<&str>, listen: Option<&str>) -> Option<String> {
+        if let Some(advertise) = advertise {
+            Some(advertise.to_owned())
+        } else {
+            listen.map(|listen| listen.replace("0.0.0.0", "127.0.0.1"))
+        }
+    }
+
     fn studio_connect_link(http_advertise_address: &str, encryption_config: &EncryptionConfig) -> String {
-        let scheme = if encryption_config.enabled { "https" } else { "http" };
-        format!("{STUDIO_URL}/connect?address={scheme}://{http_advertise_address}&username=admin")
+        let address = Self::ensure_http_scheme(http_advertise_address, encryption_config);
+        format!("{STUDIO_URL}/connect?address={address}&username=admin")
+    }
+
+    fn ensure_http_scheme(address: &str, encryption_config: &EncryptionConfig) -> String {
+        if address.starts_with("http://") || address.starts_with("https://") {
+            address.to_owned()
+        } else {
+            let scheme = if encryption_config.enabled { "https" } else { "http" };
+            format!("{scheme}://{address}")
+        }
     }
 
     fn console_connect_command(grpc_advertise_address: &str, encryption_config: &EncryptionConfig) -> String {
@@ -507,8 +524,8 @@ impl Server {
 
     fn spawn_shutdown_handler(shutdown_sender: Sender<()>) {
         tokio::spawn(async move {
-            Self::wait_for_ctrl_c_signal().await;
-            println!("\nReceived CTRL-C. Initiating shutdown...");
+            let initial_signal = Self::wait_for_shutdown_signal().await;
+            println!("\nReceived {initial_signal}. Initiating shutdown...");
             shutdown_sender.send(()).expect("Expected a successful shutdown signal");
 
             tokio::spawn(Self::forced_shutdown_handler());
@@ -516,13 +533,29 @@ impl Server {
     }
 
     async fn forced_shutdown_handler() {
-        Self::wait_for_ctrl_c_signal().await;
-        println!("\nReceived CTRL-C. Forcing shutdown...");
+        let forced_signal = Self::wait_for_shutdown_signal().await;
+        println!("\nReceived {forced_signal}. Forcing shutdown...");
         std::process::exit(1);
     }
 
-    async fn wait_for_ctrl_c_signal() {
-        tokio::signal::ctrl_c().await.expect("Failed to listen for CTRL-C signal");
+    async fn wait_for_shutdown_signal() -> &'static str {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{SignalKind, signal};
+            let mut sigterm = signal(SignalKind::terminate()).expect("Failed to install SIGTERM handler");
+            tokio::select! {
+                result = tokio::signal::ctrl_c() => {
+                    result.expect("Failed to listen for SIGINT");
+                    "SIGINT"
+                }
+                _ = sigterm.recv() => "SIGTERM",
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            tokio::signal::ctrl_c().await.expect("Failed to listen for Ctrl-C");
+            "CTRL-C"
+        }
     }
 
     fn install_default_encryption_provider() -> Result<(), ServerOpenError> {

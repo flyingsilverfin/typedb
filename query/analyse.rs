@@ -9,17 +9,19 @@ use std::{
     sync::Arc,
 };
 
-use answer::variable::Variable;
+use answer::{Type, variable::Variable};
 use compiler::{
     annotation::{
+        expression::compiled_expression::ExpressionValueType,
         fetch::{AnnotatedFetchObject, AnnotatedFetchSome},
         function::{AnnotatedFunctionSignature, FunctionParameterAnnotation},
-        pipeline::{AnnotatedPipeline, AnnotatedStage},
+        pipeline::{AnnotatedGiven, AnnotatedPipeline, AnnotatedStage},
         type_annotations::{BlockAnnotations, TypeAnnotations},
     },
     query_structure::{
-        ConjunctionAnnotations, PipelineStructure, PipelineStructureAnnotations, PipelineVariableAnnotation,
-        PipelineVariableAnnotationAndModifier, QueryStructure, StageIndex, StructureVariableId,
+        ConjunctionAnnotations, GivenStructureAnnotations, PipelineStructure, PipelineStructureAnnotations,
+        PipelineVariableAnnotation, PipelineVariableAnnotationAndModifier, QueryStructure, StageIndex,
+        StructureVariableId,
     },
 };
 use concept::{
@@ -28,10 +30,13 @@ use concept::{
 };
 use encoding::value::value_type::ValueType;
 use ir::{
-    pattern::{ParameterID, Scope, Vertex, conjunction::Conjunction, nested_pattern::NestedPattern},
+    pattern::{
+        ParameterID, Scope, Vertex, conjunction::Conjunction, nested_pattern::NestedPattern,
+        variable_category::VariableOptionality,
+    },
     pipeline::{ParameterRegistry, VariableRegistry},
 };
-use itertools::chain;
+use itertools::{Either, chain};
 use storage::snapshot::ReadableSnapshot;
 
 #[derive(Debug)]
@@ -44,6 +49,7 @@ pub struct AnalysedQuery {
 #[derive(Debug)]
 pub struct QueryStructureAnnotations {
     pub preamble: Vec<FunctionStructureAnnotations>,
+    pub given: Option<GivenStructureAnnotations>,
     pub query: PipelineStructureAnnotations,
     pub fetch: Option<FetchStructureAnnotationsFields>,
 }
@@ -58,10 +64,12 @@ impl QueryStructureAnnotations {
         annotated_pipeline: &AnnotatedPipeline,
         query_structure: &QueryStructure,
     ) -> Result<Self, Box<ConceptReadError>> {
-        let AnnotatedPipeline { annotated_stages, annotated_fetch, annotated_preamble } = &annotated_pipeline;
+        let AnnotatedPipeline { annotated_stages, annotated_given, annotated_fetch, annotated_preamble } =
+            &annotated_pipeline;
+        let given = annotated_given.as_ref().map(build_given_annotations);
         let pipeline =
             build_pipeline_annotations(variable_registry, annotated_stages.as_slice(), &query_structure.query);
-        let last_stage_annotations = get_last_stage_annotations(annotated_stages.as_slice());
+        let last_stage_annotations = LastStageAnnotations(annotated_stages.as_slice());
         let fetch = annotated_fetch
             .as_ref()
             .map(|fetch| {
@@ -70,7 +78,7 @@ impl QueryStructureAnnotations {
                     type_manager,
                     parameters.clone(),
                     source_query,
-                    last_stage_annotations,
+                    &last_stage_annotations,
                     &fetch.object,
                 )
             })
@@ -89,7 +97,7 @@ impl QueryStructureAnnotations {
             })
             .collect();
 
-        Ok(Self { preamble, query: pipeline, fetch })
+        Ok(Self { preamble, given, query: pipeline, fetch })
     }
 }
 
@@ -106,6 +114,28 @@ pub enum FetchStructureAnnotations {
 pub struct FunctionStructureAnnotations {
     pub signature: AnnotatedFunctionSignature,
     pub body: PipelineStructureAnnotations,
+}
+
+fn build_given_annotations(given: &AnnotatedGiven) -> GivenStructureAnnotations {
+    given
+        .variables
+        .iter()
+        .zip(given.expected_types.iter().zip(given.optionality.iter()))
+        .map(|(variable, (annotation, optionality))| {
+            let is_optional = *optionality == VariableOptionality::Optional;
+            let annotations = match annotation {
+                FunctionParameterAnnotation::AnyConcept => {
+                    debug_assert!(false, "This should be unreachable");
+                    PipelineVariableAnnotation::Instance(vec![])
+                }
+                FunctionParameterAnnotation::Concept(types) => {
+                    PipelineVariableAnnotation::Instance(types.iter().copied().collect())
+                }
+                FunctionParameterAnnotation::Value(value_type) => PipelineVariableAnnotation::Value(value_type.clone()),
+            };
+            (StructureVariableId::from(variable), PipelineVariableAnnotationAndModifier { is_optional, annotations })
+        })
+        .collect()
 }
 
 pub fn build_pipeline_annotations(
@@ -226,7 +256,7 @@ pub fn build_fetch_annotations(
     type_manager: &TypeManager,
     parameters: Arc<ParameterRegistry>,
     source_query: &str,
-    last_stage_annotations: &TypeAnnotations,
+    last_stage_annotations: &LastStageAnnotations<'_>,
     object: &AnnotatedFetchObject,
 ) -> Result<FetchStructureAnnotationsFields, Box<ConceptReadError>> {
     match object {
@@ -247,13 +277,14 @@ pub fn build_fetch_annotations(
 fn build_fetch_attributes_annotations(
     snapshot: &impl ReadableSnapshot,
     type_manager: &TypeManager,
-    last_stage_annotations: &TypeAnnotations,
+    last_stage_annotations: &LastStageAnnotations<'_>,
     variable: Variable,
 ) -> Result<FetchStructureAnnotationsFields, Box<ConceptReadError>> {
     let mut fetch_value_types = HashMap::new();
     let owner_types = last_stage_annotations
-        .vertex_annotations_of(&Vertex::Variable(variable))
-        .expect("Expected annotations to be available");
+        .get(&Vertex::Variable(variable))
+        .expect("Expected annotations to be available")
+        .expect_left("Expected concept annotations");
     owner_types.iter().filter(|owner_type| owner_type.is_entity_type() || owner_type.is_relation_type()).try_for_each(
         |owner_type| {
             let attribute_types = owner_type.as_object_type().get_owned_attribute_types(snapshot, type_manager)?;
@@ -276,7 +307,7 @@ fn build_fetch_entries_annotations<Snapshot: ReadableSnapshot>(
     type_manager: &TypeManager,
     parameters: Arc<ParameterRegistry>,
     source_query: &str,
-    last_stage_annotations: &TypeAnnotations,
+    last_stage_annotations: &LastStageAnnotations<'_>,
     entries: &HashMap<ParameterID, AnnotatedFetchSome>,
 ) -> Result<FetchStructureAnnotationsFields, Box<ConceptReadError>> {
     entries.iter().map(|(parameter_id, fetch_object)| {
@@ -284,14 +315,17 @@ fn build_fetch_entries_annotations<Snapshot: ReadableSnapshot>(
         let fetch_object_annotations_maybe_list = match fetch_object {
             AnnotatedFetchSome::SingleVar(var) => {
                 let as_vertex = Vertex::Variable(*var);
-                if let Some(annotations) = last_stage_annotations.vertex_annotations_of(&as_vertex) {
-                    let attribute_types = annotations.iter().filter(|&attribute_type| attribute_type.is_attribute_type()).map(|attribute_type| attribute_type.as_attribute_type());
-                    let leaf_annotations = build_leaf_annotations(snapshot, type_manager, attribute_types)?;
-                    FetchStructureAnnotations::Leaf(leaf_annotations)
-                } else if let Some(value_type) = last_stage_annotations.value_type_annotations_of(&as_vertex) {
-                    FetchStructureAnnotations::Leaf(BTreeSet::from([value_type.value_type().clone()]))
-                } else {
-                    unreachable!("Expected either type annotations or value annotations to be present");
+                let latest_annotations = last_stage_annotations.get(&as_vertex)
+                    .expect("Expected either type annotations or value annotations to be present");
+                match latest_annotations {
+                    Either::Left(annotations) => {
+                        let attribute_types = annotations.iter().filter(|&attribute_type| attribute_type.is_attribute_type()).map(|attribute_type| attribute_type.as_attribute_type());
+                        let leaf_annotations = build_leaf_annotations(snapshot, type_manager, attribute_types)?;
+                        FetchStructureAnnotations::Leaf(leaf_annotations)
+                    }
+                    Either::Right(value_type) => {
+                        FetchStructureAnnotations::Leaf(BTreeSet::from([value_type.value_type().clone()]))
+                    }
                 }
             }
             AnnotatedFetchSome::ListAttributesAsList(_var, attribute_type) // TODO: Verify these can use the same code as SingleAttribute
@@ -306,8 +340,8 @@ fn build_fetch_entries_annotations<Snapshot: ReadableSnapshot>(
                 FetchStructureAnnotations::Object(build_fetch_annotations(snapshot, type_manager, parameters.clone(), source_query, last_stage_annotations, inner)?)
             }
             AnnotatedFetchSome::ListSubFetch(sub_fetch) => {
-                let last_stage_annotations = get_last_stage_annotations(sub_fetch.stages.as_slice());
-                let fetch = build_fetch_annotations(snapshot, type_manager, parameters.clone(), source_query, last_stage_annotations, &sub_fetch.fetch.object)?;
+                let last_stage_annotations = LastStageAnnotations(sub_fetch.stages.as_slice());
+                let fetch = build_fetch_annotations(snapshot, type_manager, parameters.clone(), source_query, &last_stage_annotations, &sub_fetch.fetch.object)?;
                 FetchStructureAnnotations::Object(fetch)
             }
             AnnotatedFetchSome::ListFunction(function)
@@ -370,17 +404,24 @@ fn build_leaf_annotations(
         .collect::<Result<BTreeSet<_>, _>>()
 }
 
-pub fn get_last_stage_annotations(stages: &[AnnotatedStage]) -> &TypeAnnotations {
-    stages
-        .iter()
-        .filter_map(|stage| match stage {
+struct LastStageAnnotations<'a>(&'a [AnnotatedStage]);
+impl<'a> LastStageAnnotations<'a> {
+    pub fn get(&self, vertex: &Vertex<Variable>) -> Option<Either<Arc<BTreeSet<Type>>, ExpressionValueType>> {
+        self.0.iter().rev().find_map(|stage| match stage {
             | AnnotatedStage::Match { block_annotations, block, .. }
             | AnnotatedStage::Put { match_annotations: block_annotations, block, .. }
             | AnnotatedStage::Insert { annotations: block_annotations, block, .. }
             | AnnotatedStage::Update { annotations: block_annotations, block, .. } => {
-                Some(block_annotations.type_annotations_of(block.conjunction()).unwrap())
+                let root_annotations = block_annotations.type_annotations_of(block.conjunction()).unwrap();
+                if let Some(annotations) = root_annotations.vertex_annotations_of(vertex) {
+                    Some(Either::Left(annotations.clone()))
+                } else if let Some(value_type) = root_annotations.value_type_annotations_of(vertex) {
+                    Some(Either::Right(value_type.clone()))
+                } else {
+                    None
+                }
             }
-            | AnnotatedStage::Delete { .. }
+            AnnotatedStage::Delete { .. }
             | AnnotatedStage::Select(_)
             | AnnotatedStage::Sort(_)
             | AnnotatedStage::Offset(_)
@@ -389,6 +430,5 @@ pub fn get_last_stage_annotations(stages: &[AnnotatedStage]) -> &TypeAnnotations
             | AnnotatedStage::Distinct(_)
             | AnnotatedStage::Reduce(_, _) => None,
         })
-        .last()
-        .expect("Expected pipeline to have a last stage")
+    }
 }

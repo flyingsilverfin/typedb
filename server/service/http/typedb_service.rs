@@ -41,7 +41,7 @@ use crate::{
                 authentication::{SigninPayload, encode_token},
                 body::{JsonBody, PlainTextBody},
                 database::{DatabasePath, encode_database, encode_databases},
-                query::{QueryOptionsPayload, QueryPayload, TransactionQueryPayload},
+                query::{GivenRowsHttp, QueryOptionsPayload, QueryPayload, TransactionQueryPayload},
                 server::encode_servers,
                 transaction::{TransactionOpenPayload, TransactionPath, encode_transaction},
                 user::{CreateUserPayload, UpdateUserPayload, UserPath, encode_user, encode_users},
@@ -61,7 +61,7 @@ type TransactionRequestSender = Sender<(TransactionRequest, TransactionResponder
 #[derive(Clone, Debug)]
 struct TransactionInfo {
     pub owner: String,
-    pub database_name: String,
+    pub database_name: Arc<str>,
     pub request_sender: TransactionRequestSender,
     pub transaction_timeout_millis: u64,
 }
@@ -107,15 +107,17 @@ impl HTTPTypeDBService {
         payload: TransactionOpenPayload,
     ) -> Result<(TransactionInfo, u64), HttpServiceError> {
         let (request_sender, request_stream) = channel(TRANSACTION_REQUEST_BUFFER_SIZE);
-        let options =
-            payload.transaction_options.map(|options| options.into()).unwrap_or_else(|| TransactionOptions::default());
+        let options = payload
+            .transaction_options
+            .map(|options| options.into())
+            .unwrap_or_else(|| TransactionOptions::default());
         let transaction_timeout_millis = options.transaction_timeout_millis;
         let mut transaction_service = TransactionService::new(service.server_state.clone(), request_stream);
 
-        let database_name = payload.database_name;
+        let database_name = Arc::<str>::from(payload.database_name);
 
         let processing_time = transaction_service
-            .open(payload.transaction_type, owner.clone(), database_name.clone(), options)
+            .open(payload.transaction_type, owner.clone(), Arc::clone(&database_name), options)
             .await
             .map_err(|typedb_source| HttpServiceError::Transaction { typedb_source })?;
 
@@ -146,10 +148,14 @@ impl HTTPTypeDBService {
         }
     }
 
-    fn build_query_request(query_options_payload: Option<QueryOptionsPayload>, query: String) -> TransactionRequest {
+    fn build_query_request(
+        query_options_payload: Option<QueryOptionsPayload>,
+        given_rows: Option<GivenRowsHttp>,
+        query: String,
+    ) -> TransactionRequest {
         let query_options =
             query_options_payload.map(|options| options.into()).unwrap_or_else(|| QueryOptions::default_http());
-        TransactionRequest::Query(query_options, query)
+        TransactionRequest::Query(query_options, given_rows, query)
     }
 
     fn try_get_query_response(
@@ -566,7 +572,7 @@ impl HTTPTypeDBService {
 
         run_with_diagnostics_async(
             service.server_state.diagnostics_manager(),
-            Some(transaction.database_name.clone()),
+            Some(&transaction.database_name),
             ActionKind::TransactionCommit,
             || async {
                 if accessor != transaction.owner {
@@ -592,7 +598,7 @@ impl HTTPTypeDBService {
 
         run_with_diagnostics_async(
             service.server_state.diagnostics_manager(),
-            Some(transaction.database_name.clone()),
+            Some(&transaction.database_name),
             ActionKind::TransactionClose,
             || async {
                 if accessor != transaction.owner {
@@ -616,7 +622,7 @@ impl HTTPTypeDBService {
 
         run_with_diagnostics_async(
             service.server_state.diagnostics_manager(),
-            Some(transaction.database_name.clone()),
+            Some(&transaction.database_name),
             ActionKind::TransactionRollback,
             || async {
                 if accessor != transaction.owner {
@@ -641,7 +647,7 @@ impl HTTPTypeDBService {
 
         run_with_diagnostics_async(
             service.server_state.diagnostics_manager(),
-            Some(transaction.database_name.clone()),
+            Some(&transaction.database_name),
             ActionKind::TransactionAnalyse,
             || async {
                 if accessor != transaction.owner {
@@ -666,7 +672,7 @@ impl HTTPTypeDBService {
 
         run_with_diagnostics_async(
             service.server_state.diagnostics_manager(),
-            Some(transaction.database_name.clone()),
+            Some(&transaction.database_name),
             ActionKind::TransactionQuery,
             || async {
                 if accessor != transaction.owner {
@@ -674,7 +680,7 @@ impl HTTPTypeDBService {
                 }
                 Self::transaction_request(
                     &transaction,
-                    Self::build_query_request(payload.query_options, payload.query),
+                    Self::build_query_request(payload.query_options, payload.given_rows.map(Into::into), payload.query),
                     true,
                 )
                 .await
@@ -699,7 +705,7 @@ impl HTTPTypeDBService {
 
                 let transaction_response = Self::transaction_request(
                     &transaction_info,
-                    Self::build_query_request(payload.query_options, payload.query),
+                    Self::build_query_request(payload.query_options, payload.given_rows.map(Into::into), payload.query),
                     true,
                 )
                 .await?;

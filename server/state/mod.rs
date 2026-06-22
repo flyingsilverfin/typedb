@@ -9,12 +9,7 @@ pub mod server_operator;
 pub mod transaction_operator;
 pub mod user_operator;
 
-use std::{
-    collections::HashSet,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{collections::HashSet, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use concurrency::{IntervalRunner, TokioTaskSpawner};
 use database::database_manager::DatabaseManager;
@@ -34,16 +29,25 @@ use crate::{
     authentication::token_manager::TokenManager,
     error::{ArcServerStateError, ServerOpenError},
     parameters::config::{Config, DiagnosticsConfig},
+    service::admin::transport::AdminPath,
     status::{LocalServerStatus, PrivateEndpointAddress, PublicEndpointAddress, ServerStatus},
 };
 
 pub type BoxServerStatus = Box<dyn ServerStatus + Send + Sync>;
+
+struct ResolvedEndpoints {
+    grpc_listen_address: SocketAddr,
+    http_listen_address: Option<SocketAddr>,
+    admin_endpoint: Option<AdminPath>,
+    server_status: LocalServerStatus,
+}
 
 #[derive(Debug)]
 pub struct ServerState {
     distribution_info: DistributionInfo,
     grpc_listen_address: SocketAddr,
     http_listen_address: Option<SocketAddr>,
+    admin_endpoint: Option<AdminPath>,
     diagnostics_manager: Arc<DiagnosticsManager>,
     shutdown_receiver: Receiver<()>,
     background_task_spawner: TokioTaskSpawner,
@@ -64,8 +68,6 @@ impl ServerState {
         shutdown_receiver: Receiver<()>,
         background_task_spawner: TokioTaskSpawner,
     ) -> Result<ServerStateBuilder, ServerOpenError> {
-        let database_manager = DatabaseManager::new(&config.storage.data_directory)
-            .map_err(|typedb_source| ServerOpenError::DatabaseOpen { typedb_source })?;
         let token_manager = Arc::new(
             TokenManager::new(config.server.authentication.token_expiration, background_task_spawner.clone())
                 .map_err(|typedb_source| ServerOpenError::TokenConfiguration { typedb_source })?,
@@ -84,6 +86,8 @@ impl ServerState {
             )
             .await,
         );
+        let database_manager = DatabaseManager::new(&config.storage.data_directory, diagnostics_manager.clone())
+            .map_err(|typedb_source| ServerOpenError::DatabaseOpen { typedb_source })?;
         let database_diagnostics_updater = IntervalRunner::new(
             {
                 let diagnostics_manager = diagnostics_manager.clone();
@@ -93,12 +97,14 @@ impl ServerState {
             DATABASE_METRICS_UPDATE_INTERVAL,
         );
 
-        let (grpc_listen_address, http_listen_address, server_status) = Self::resolve_endpoints(&config.server).await?;
+        let ResolvedEndpoints { grpc_listen_address, http_listen_address, admin_endpoint, server_status } =
+            Self::resolve_endpoints(&config).await?;
 
         Ok(ServerStateBuilder {
             distribution_info,
             grpc_listen_address,
             http_listen_address,
+            admin_endpoint,
             server_status,
             database_manager,
             token_manager,
@@ -123,6 +129,10 @@ impl ServerState {
 
     pub fn http_listen_address(&self) -> Option<SocketAddr> {
         self.http_listen_address
+    }
+
+    pub fn admin_endpoint(&self) -> Option<&AdminPath> {
+        self.admin_endpoint.as_ref()
     }
 
     pub fn servers(&self) -> &dyn ServerOperator {
@@ -180,6 +190,7 @@ impl ServerState {
         is_development_mode: bool,
         background_tasks: TokioTaskSpawner,
     ) -> DiagnosticsManager {
+        let metrics_enabled = config.monitoring.enabled || config.reporting.report_metrics;
         let diagnostics = Diagnostics::new(
             deployment_id,
             server_id,
@@ -187,6 +198,7 @@ impl ServerState {
             distribution_info.version.to_owned(),
             storage_directory,
             config.reporting.report_metrics,
+            metrics_enabled,
         );
         let diagnostics_manager = DiagnosticsManager::new(
             diagnostics,
@@ -204,13 +216,13 @@ impl ServerState {
         diagnostics_manager: Arc<DiagnosticsManager>,
         database_manager: Arc<DatabaseManager>,
     ) {
-        let metrics = database_manager
+        let snapshots = database_manager
             .databases()
             .values()
             .filter(|database| DatabaseManager::is_user_database(database.name()))
-            .map(|database| database.get_metrics())
+            .map(|database| (database.name_arc(), database.get_metrics()))
             .collect();
-        diagnostics_manager.submit_database_metrics(metrics);
+        diagnostics_manager.submit_database_metrics(snapshots);
     }
 
     pub async fn resolve_address(address: &str) -> Result<SocketAddr, ServerOpenError> {
@@ -224,34 +236,18 @@ impl ServerState {
             .ok_or_else(|| ServerOpenError::AddressResolutionEmpty { address: address.to_string() })
     }
 
-    fn default_advertise_address(listen: SocketAddr) -> String {
-        if listen.ip().is_unspecified() {
-            let loopback =
-                if listen.is_ipv4() { IpAddr::V4(Ipv4Addr::LOCALHOST) } else { IpAddr::V6(Ipv6Addr::LOCALHOST) };
-            SocketAddr::new(loopback, listen.port()).to_string()
-        } else {
-            listen.to_string()
-        }
-    }
-
-    async fn resolve_endpoints(
-        config: &crate::parameters::config::ServerConfig,
-    ) -> Result<(SocketAddr, Option<SocketAddr>, LocalServerStatus), ServerOpenError> {
-        let grpc_listen_address = Self::resolve_address(&config.listen_address).await?;
-        let grpc_advertise_address =
-            config.advertise_address.clone().unwrap_or_else(|| Self::default_advertise_address(grpc_listen_address));
+    async fn resolve_endpoints(config: &Config) -> Result<ResolvedEndpoints, ServerOpenError> {
+        let server = &config.server;
+        let monitoring = &config.diagnostics.monitoring;
+        let grpc_listen_address = Self::resolve_address(&server.listen_address).await?;
+        let grpc_advertise_address = server.advertise_address.clone();
 
         let http_listen_address =
-            if config.http.enabled { Some(Self::resolve_address(&config.http.listen_address).await?) } else { None };
-        let http_advertise_address = http_listen_address.map(|listen| {
-            config.http.advertise_address.clone().unwrap_or_else(|| Self::default_advertise_address(listen))
-        });
+            if server.http.enabled { Some(Self::resolve_address(&server.http.listen_address).await?) } else { None };
+        let http_advertise_address = server.http.advertise_address.clone();
 
-        let admin_address = if config.admin.enabled {
-            Some(SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, config.admin.port)))
-        } else {
-            None
-        };
+        let monitoring_address =
+            monitoring.enabled.then(|| SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, monitoring.port)));
 
         let mut reserved = HashSet::from([grpc_listen_address]);
         if let Some(address) = http_listen_address {
@@ -259,21 +255,25 @@ impl ServerState {
                 return Err(ServerOpenError::HttpConflictingAddress { address });
             }
         }
-        if let Some(address) = admin_address {
+        if let Some(address) = monitoring_address {
             if !reserved.insert(address) {
-                return Err(ServerOpenError::AdminConflictingAddress { address });
+                return Err(ServerOpenError::MonitoringConflictingAddress { address });
             }
         }
 
+        let admin_endpoint =
+            server.admin.enabled.then(|| server.admin.resolve_endpoint(&config.storage.data_directory));
+
         let server_status = LocalServerStatus::new(
             PublicEndpointAddress::from_socket_addr(grpc_listen_address, grpc_advertise_address),
-            http_listen_address
-                .zip(http_advertise_address)
-                .map(|(serv, conn)| PublicEndpointAddress::from_socket_addr(serv, conn)),
-            admin_address.map(PrivateEndpointAddress::from_socket_addr),
+            http_listen_address.map(|listen| PublicEndpointAddress::from_socket_addr(listen, http_advertise_address)),
+            admin_endpoint
+                .as_ref()
+                .map(|ep| PrivateEndpointAddress::new(crate::service::admin::transport::endpoint_to_string(ep))),
+            monitoring_address.map(PrivateEndpointAddress::from_socket_addr),
         );
 
-        Ok((grpc_listen_address, http_listen_address, server_status))
+        Ok(ResolvedEndpoints { grpc_listen_address, http_listen_address, admin_endpoint, server_status })
     }
 }
 
@@ -281,6 +281,7 @@ pub struct ServerStateBuilder {
     distribution_info: DistributionInfo,
     grpc_listen_address: SocketAddr,
     http_listen_address: Option<SocketAddr>,
+    admin_endpoint: Option<AdminPath>,
     server_status: LocalServerStatus,
     database_manager: Arc<DatabaseManager>,
     token_manager: Arc<TokenManager>,
@@ -356,6 +357,7 @@ impl ServerStateBuilder {
             distribution_info: self.distribution_info,
             grpc_listen_address: self.grpc_listen_address,
             http_listen_address: self.http_listen_address,
+            admin_endpoint: self.admin_endpoint,
             diagnostics_manager: self.diagnostics_manager,
             shutdown_receiver: self.shutdown_receiver,
             background_task_spawner: self.background_task_spawner,
@@ -365,34 +367,5 @@ impl ServerStateBuilder {
             transaction_operator,
             user_operator,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::net::SocketAddr;
-
-    use super::ServerState;
-
-    fn default_advertise_address(input: &str) -> String {
-        ServerState::default_advertise_address(input.parse::<SocketAddr>().unwrap())
-    }
-
-    #[test]
-    fn ipv4_wildcard_resolves_to_loopback() {
-        assert_eq!(default_advertise_address("0.0.0.0:1729"), "127.0.0.1:1729");
-        assert_eq!(default_advertise_address("0.0.0.0:8000"), "127.0.0.1:8000");
-    }
-
-    #[test]
-    fn ipv6_wildcard_resolves_to_loopback() {
-        assert_eq!(default_advertise_address("[::]:1729"), "[::1]:1729");
-    }
-
-    #[test]
-    fn explicit_listen_address_is_kept_as_is() {
-        assert_eq!(default_advertise_address("127.0.0.1:1729"), "127.0.0.1:1729");
-        assert_eq!(default_advertise_address("192.168.1.10:1729"), "192.168.1.10:1729");
-        assert_eq!(default_advertise_address("[2001:db8::1]:1729"), "[2001:db8::1]:1729");
     }
 }

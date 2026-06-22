@@ -65,16 +65,16 @@ bazel_dep(name = "rules_java", version = "8.6.2")
 # ===========================================================
 
 bazel_dep(name = "rules_proto", version = "7.1.0")
-bazel_dep(name = "protobuf", version = "29.3", repo_name = "com_google_protobuf")
+bazel_dep(name = "protobuf", version = "35.0", repo_name = "com_google_protobuf")
 
 # ===========================================================
 # Package managers
 # ===========================================================
 
 # Maven
-bazel_dep(name = "rules_jvm_external", version = "6.6")
-maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")
-use_repo(maven, "maven")
+maven = use_extension("@typedb_dependencies//library/maven:maven_extension.bzl", "maven")
+maven.namespace(name = "typedb_maven", artifacts = []) # Empty list because None initialises all
+use_repo(maven, "typedb_maven")
 
 # Rust crates
 crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
@@ -106,30 +106,52 @@ workspace_refs = use_repo_rule("@typedb_bazel_distribution//common/workspace_ref
 workspace_refs(
     name = "typedb_workspace_refs",
     workspace_commit_dict = {
-#        "typeql+": "a1fae91ebd68ed2d7b2eb5035c1287c3bc66789b",
-#        "typedb_protocol+": "25ab3fb02715062bd036f8b83908de92b106a202",
+        "typeql+": "405c5383a35277acc40bb0921ffd2e8eb1b1b00d",
+        "typedb_protocol+": "3a39f0b94fd7ea316ba5a4f74d44d5afc454cedf",
     },
     workspace_tag_dict = {
-        "typeql+": "3.11.0",
-        "typedb_protocol+": "3.11.0",
+#        "typeql+": "3.11.0-rc0",
+#        "typedb_protocol+": "3.11.0-rc0",
     },
 )
 
-# TypeDB Console artifact
+# TypeDB Console and Loader artifacts
 native_artifact_files = use_extension("@typedb_dependencies//distribution/artifact:rules.bzl", "native_artifact_files")
 native_artifact_files.artifact(
     name = "typedb_console_artifact",
     group_name = "typedb-console-{platform}",
     artifact_name = "typedb-console-{platform}-{version}.{ext}",
-    tag = "3.11.1",
+    archive_strip_prefix = "typedb-console-{platform}-{version}",
+    tag = "3.11.5",
+)
+native_artifact_files.artifact(
+    name = "typedb_loader_artifact",
+    group_name = "typedb-loader-{platform}",
+    artifact_name = "typedb-loader-{platform}-{version}.{ext}",
+    commit = "4795857183a89ecbc13ab66d349472aea893d8b4",
 )
 use_repo(
     native_artifact_files,
-     "typedb_console_artifact_linux-x86_64",
-     "typedb_console_artifact_linux-arm64",
-     "typedb_console_artifact_mac-x86_64",
-     "typedb_console_artifact_mac-arm64",
-     "typedb_console_artifact_windows-x86_64",
+    "typedb_console_artifact_linux-x86_64",
+    "typedb_console_artifact_linux-arm64",
+    "typedb_console_artifact_mac-x86_64",
+    "typedb_console_artifact_mac-arm64",
+    "typedb_console_artifact_windows-x86_64",
+    "typedb_console_artifact_linux-x86_64-extracted",
+    "typedb_console_artifact_linux-arm64-extracted",
+    "typedb_console_artifact_mac-x86_64-extracted",
+    "typedb_console_artifact_mac-arm64-extracted",
+    "typedb_console_artifact_windows-x86_64-extracted",
+    "typedb_loader_artifact_linux-x86_64",
+    "typedb_loader_artifact_linux-arm64",
+    "typedb_loader_artifact_mac-x86_64",
+    "typedb_loader_artifact_mac-arm64",
+    "typedb_loader_artifact_windows-x86_64",
+    "typedb_loader_artifact_linux-x86_64-extracted",
+    "typedb_loader_artifact_linux-arm64-extracted",
+    "typedb_loader_artifact_mac-x86_64-extracted",
+    "typedb_loader_artifact_mac-arm64-extracted",
+    "typedb_loader_artifact_windows-x86_64-extracted",
 )
 
 # ===========================================================
@@ -140,33 +162,33 @@ bazel_dep(name = "typedb_bazel_distribution", version = "0.0.0")
 git_override(
     module_name = "typedb_bazel_distribution",
     remote = "https://github.com/typedb/bazel-distribution",
-    commit = "6c81a5180ed94a11c989e06a4ff8215df6da163e",
+    commit = "dd811cf28715bbce8374e5e0f9defaf772e7dd36",
 )
 
 bazel_dep(name = "typedb_dependencies", version = "0.0.0")
 git_override(
     module_name = "typedb_dependencies",
     remote = "https://github.com/typedb/dependencies",
-    commit = "ec1d121856cbd2ea1078b293f387b9d9d03188b2",
+    commit = "8428a895a99930b8974ce3056f362f390486eb92",
 )
 
 bazel_dep(name = "typeql", version = "0.0.0")
 git_override(
     module_name = "typeql",
     remote = "https://github.com/typedb/typeql",
-    tag = "3.11.0",
+    commit = "405c5383a35277acc40bb0921ffd2e8eb1b1b00d",
 )
 
 bazel_dep(name = "typedb_protocol", version = "0.0.0")
 git_override(
     module_name = "typedb_protocol",
     remote = "https://github.com/typedb/typedb-protocol",
-    tag = "3.11.0",
+    commit = "3a39f0b94fd7ea316ba5a4f74d44d5afc454cedf",
 )
 
 bazel_dep(name = "typedb_behaviour", version = "0.0.0")
 git_override(
     module_name = "typedb_behaviour",
     remote = "https://github.com/typedb/typedb-behaviour",
-    commit = "d3bb01333c67b41eeac23d2291e243b047cb518d",
+    commit = "a6cc06acd204c1e000abe3646ca2e115583b5ce4",
 )

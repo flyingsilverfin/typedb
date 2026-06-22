@@ -11,7 +11,9 @@ rust_test(
     deps = [
         "//common/options",
         "//database",
+        "//diagnostics",
         "//executor",
+        "//query",
         "//storage",
 
         "//util/test:test_utils",

@@ -1,15 +1,31 @@
 **Download from TypeDB Package Repository:**
 
-[Distributions for 3.11.1](https://cloudsmith.io/~typedb/repos/public-release/packages/?q=name%3A%5Etypedb-all+version%3A3.11.1)
+[Distributions for 3.11.5](https://cloudsmith.io/~typedb/repos/public-release/packages/?q=name%3A%5Etypedb-all+version%3A3.11.5)
 
 **Pull the Docker image:**
 
-```docker pull typedb/typedb:3.11.1```
+```docker pull typedb/typedb:3.11.5```
 
-## Breaking changes
-This release breaks backwards compatibility.
-This version is only compatible with TypeDB driver versions >= 3.11.0.
-Connections from older drivers will be rejected.
+
+## Breaking changes ⚠️
+
+1) Driver-Server compatibility:
+We have updated the wire protocol version in TypeDB 3.11 in preparation of TypeDB cluster GA.
+- Connections from drivers older than 3.11.0 will be rejected by a server running 3.11.0 or newer. 
+- Connections from drivers running 3.11.0 or newer will be rejected by server versions older than  3.11.0. 
+
+2) TypeDB Driver entry point
+TypeDB drivers version 3.11.x will use the following format to open a driver:
+
+```python
+TypeDB.driver(TypeDB.DEFAULT_ADDRESS, Credentials("admin", "password"), DriverOptions(DriverTlsConfig.disabled()))
+
+# old version: TypeDB.driver(TypeDB.DEFAULT_ADDRESS, Credentials("admin", "password"), DriverOptions())
+```
+
+3) Disk compatibility
+**Once you upgrade to 3.11.x, you cannot downgrade your server with the same database**. We've made some backwards-compatible changes to TypeDB's storage. You can upgrade freely, but once the new data format is written, older versions will not understand your databases anymore. It's a good time to take a backup copy of your databases or use typedb export if you think you may want to downgrade
+
 
 ## New Features
 - **Print TypeDB Studio link and Console command on server startup**
@@ -147,9 +163,25 @@ Connections from older drivers will be rejected.
   
 
 ## Other Improvements
+- **Update console artifact to use empty adverise address**
+  
+  Update console artifact to use an empty adverise address
+  
+  
+- **Remove default advertised address**
+  
+  Return empty advertised server address (both grpc and http) in case it's not specified instead of using a default value.
+  
+  This change lets the clients to understand when the server does not enforce any address for connections and make independent decisions. It is especially important in cases of connecting to a docker container or a proxy, when the server used to return a not accessible address, which the client eagerly used and failed to connect regardless of the correctness of the connection address provided by the user.
+  
+  
+- **Prepare release 3.11.1**
+  Bump version & prepare release notes
+  
+  
 - **Make studio link a constant**
   
-- **Escalate concurrent key and unique writes to transaction failure#7800 (#7800)**
+- **Escalate concurrent key and uniqueq writes to transaction failure#7800 (#7800)**
 
 - **Disable all warnings on optional return mismatches**
   Disable all warnings on optional return mismatches, till the spec is finalised

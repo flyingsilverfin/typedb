@@ -54,3 +54,8 @@ impl QueryOptions {
         }
     }
 }
+
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+pub struct InternalQueryOptions {
+    pub force_query_profile: bool,
+}

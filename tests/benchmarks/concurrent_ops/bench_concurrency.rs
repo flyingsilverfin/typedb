@@ -23,8 +23,10 @@ use database::{
     query::{execute_schema_query, execute_write_query_in_write},
     transaction::{CommitIntent, TransactionRead, TransactionSchema, TransactionWrite},
 };
+use diagnostics::diagnostics_manager::DiagnosticsManager;
 use executor::{ExecutionInterrupt, pipeline::stage::StageIterator};
-use options::{QueryOptions, TransactionOptions};
+use options::{InternalQueryOptions, QueryOptions, TransactionOptions};
+use query::given_rows::GivenRowsSimple;
 use rand_core::RngCore;
 use storage::durability_client::WALClient;
 use test_utils::{TempDir, create_tmp_storage_dir};
@@ -139,7 +141,7 @@ impl TimingAnalysis {
 
 fn create_database(schema: &str) -> (TempDir, Arc<Database<WALClient>>) {
     let tmp_dir = create_tmp_storage_dir();
-    let dbm = DatabaseManager::new(&tmp_dir).unwrap();
+    let dbm = DatabaseManager::new(&tmp_dir, Arc::new(DiagnosticsManager::new_disabled())).unwrap();
     dbm.put_database(DB_NAME).unwrap();
     let database = dbm.database(DB_NAME).unwrap();
 
@@ -168,6 +170,39 @@ fn seed_persons(database: &Arc<Database<WALClient>>, count: usize) {
                 tx,
                 QueryOptions::default_grpc(),
                 pipeline,
+                None::<GivenRowsSimple>,
+                query_str,
+                ExecutionInterrupt::new_uninterruptible(),
+            );
+            result.unwrap();
+            tx = returned_tx;
+        }
+        let (mut profile, intent) = tx.finalise();
+        intent.unwrap().commit(profile.commit_profile()).unwrap();
+        offset += n;
+    }
+}
+
+fn seed_friendships(database: &Arc<Database<WALClient>>, person_count: usize, friendship_count: usize) {
+    let batch_size = 1000;
+    let mut offset = 0;
+    while offset < friendship_count {
+        let n = std::cmp::min(batch_size, friendship_count - offset);
+        let mut tx = TransactionWrite::open(database.clone(), TransactionOptions::default()).unwrap();
+        for i in 0..n {
+            let idx = offset + i;
+            let a_id = idx % person_count;
+            // pseudo-random spread so seeded friendships aren't all between adjacent persons
+            let b_id = (idx * 7 + 3) % person_count;
+            let query_str = format!(
+                r#"match $a isa person, has name "person_{a_id}"; $b isa person, has name "person_{b_id}"; insert friendship (friend: $a, friend: $b);"#
+            );
+            let pipeline = typeql::parse_query(&query_str).unwrap().into_structure().into_pipeline();
+            let (returned_tx, result) = execute_write_query_in_write(
+                tx,
+                QueryOptions::default_grpc(),
+                pipeline,
+                None::<GivenRowsSimple>,
                 query_str,
                 ExecutionInterrupt::new_uninterruptible(),
             );
@@ -233,6 +268,7 @@ fn execute_insert_batch(
             tx,
             QueryOptions::default_grpc(),
             pipeline,
+            None::<GivenRowsSimple>,
             query_str,
             ExecutionInterrupt::new_uninterruptible(),
         );
@@ -269,6 +305,7 @@ fn execute_update_batch(
             tx,
             QueryOptions::default_grpc(),
             pipeline,
+            None::<GivenRowsSimple>,
             query_str,
             ExecutionInterrupt::new_uninterruptible(),
         );
@@ -307,6 +344,7 @@ fn execute_relation_batch(
             tx,
             QueryOptions::default_grpc(),
             pipeline,
+            None::<GivenRowsSimple>,
             query_str,
             ExecutionInterrupt::new_uninterruptible(),
         );
@@ -335,7 +373,9 @@ fn execute_read_query(database: &Arc<Database<WALClient>>, query_str: &str) {
             thing_manager.clone(),
             function_manager,
             &query,
+            None::<GivenRowsSimple>,
             query_str,
+            InternalQueryOptions::default(),
         )
         .unwrap();
     let (rows, _context) = pipeline.into_rows_iterator(ExecutionInterrupt::new_uninterruptible()).unwrap();

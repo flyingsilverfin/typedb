@@ -11,8 +11,10 @@ use database::{
     database_manager::DatabaseManager,
     transaction::{CommitIntent, TransactionRead, TransactionSchema, TransactionWrite},
 };
+use diagnostics::diagnostics_manager::DiagnosticsManager;
 use executor::{ExecutionInterrupt, batch::Batch, pipeline::stage::StageIterator};
-use options::TransactionOptions;
+use options::{InternalQueryOptions, TransactionOptions};
+use query::given_rows::GivenRowsSimple;
 use storage::durability_client::WALClient;
 use test_utils::create_tmp_storage_dir;
 
@@ -49,6 +51,7 @@ fn load_schema_tql(database: Arc<Database<WALClient>>, schema_tql: &Path) {
             &function_manager,
             schema_query,
             &schema_str,
+            InternalQueryOptions::default(),
         )
         .unwrap();
     let tx = TransactionSchema::from_parts(
@@ -89,7 +92,9 @@ fn load_data_tql(database: Arc<Database<WALClient>>, data_tql: &Path) {
             thing_manager.clone(),
             &function_manager,
             &data_query,
+            None::<GivenRowsSimple>,
             &data_str,
+            InternalQueryOptions::default(),
         )
         .unwrap();
     let (_output, context) = write_pipeline.into_rows_iterator(ExecutionInterrupt::new_uninterruptible()).unwrap();
@@ -110,7 +115,7 @@ fn load_data_tql(database: Arc<Database<WALClient>>, data_tql: &Path) {
 fn setup() -> Arc<Database<WALClient>> {
     let tmp_dir = create_tmp_storage_dir();
     {
-        let dbm = DatabaseManager::new(&tmp_dir).unwrap();
+        let dbm = DatabaseManager::new(&tmp_dir, Arc::new(DiagnosticsManager::new_disabled())).unwrap();
         dbm.put_database(DB_NAME).unwrap();
         let database = dbm.database(DB_NAME).unwrap();
         let schema_path = Path::new(RESOURCE_PATH).join(Path::new(SCHEMA_FILENAME));
@@ -121,7 +126,7 @@ fn setup() -> Arc<Database<WALClient>> {
         load_schema_tql(database.clone(), &functions_path);
         load_data_tql(database.clone(), &data_path);
     }
-    let dbm = DatabaseManager::new(&tmp_dir).unwrap();
+    let dbm = DatabaseManager::new(&tmp_dir, Arc::new(DiagnosticsManager::new_disabled())).unwrap();
     dbm.put_database(DB_NAME).unwrap();
 
     dbm.database(DB_NAME).unwrap()
@@ -138,7 +143,9 @@ fn run_query(database: Arc<Database<WALClient>>, query_str: &str) -> Batch {
             thing_manager.clone(),
             function_manager,
             &query,
+            None::<GivenRowsSimple>,
             query_str,
+            InternalQueryOptions::default(),
         )
         .unwrap();
     let (rows, _context) = pipeline.into_rows_iterator(ExecutionInterrupt::new_uninterruptible()).unwrap();

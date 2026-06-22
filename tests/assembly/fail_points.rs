@@ -80,7 +80,7 @@ fn start_server_with_env(env: Option<(&str, &str)>, expected_fail: Option<&str>)
                     break (process, port);
                 }
             }
-            if !buf.contains("SRO11") {
+            if !buf.contains("SRO12") {
                 panic!("Server process crashed for an unrelated reason: {buf}");
             }
         } else {
@@ -174,11 +174,11 @@ fn extract_typedb() {
     }
     let archive_name = std::env::var("TYPEDB_ASSEMBLY_ARCHIVE").unwrap();
     let extract_cmd = if archive_name.ends_with(".zip") {
-        let without_extension = Path::new(archive_name.trim_end_matches(".zip")).file_name().unwrap().to_str().unwrap();
-        format!("unzip {archive_name} && mv {without_extension} typedb-extracted")
+        let without_extension_with_version = archive_name.replace(".zip", "-0.0.0");
+        format!("unzip {archive_name} && mv {without_extension_with_version} typedb-extracted")
     } else if archive_name.ends_with(".tar.gz") {
-        let without_extension = archive_name.replace(".tar.gz", "");
-        format!("tar -xf {archive_name} && mv {without_extension} typedb-extracted")
+        let without_extension_with_version = archive_name.replace(".tar.gz", "-0.0.0");
+        format!("tar -xf {archive_name} && mv {without_extension_with_version} typedb-extracted")
     } else {
         unreachable!("Expected .zip or .tar.gz");
     };
@@ -190,7 +190,11 @@ fn extract_typedb() {
 }
 
 fn delete_data() {
-    fs::remove_dir_all("typedb-extracted/server/data").unwrap();
+    match fs::remove_dir_all("typedb-extracted/server/data") {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => panic!("Failed to delete server data directory: {err}"),
+    }
 }
 
 fn setup(port: u16) {

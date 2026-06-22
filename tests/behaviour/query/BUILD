@@ -26,6 +26,7 @@ rust_test(
         "@typedb_behaviour//query/language:delete.feature",
         "@typedb_behaviour//query/language:expression.feature",
         "@typedb_behaviour//query/language:fetch.feature",
+        "@typedb_behaviour//query/language:given.feature",
         "@typedb_behaviour//query/language:insert.feature",
         "@typedb_behaviour//query/language:match.feature",
         "@typedb_behaviour//query/language:modifiers.feature",
@@ -48,6 +49,7 @@ rust_test(
     crate_features = ["bazel"],
     env = {"RUST_MIN_STACK" : "40960000"}, # for recursion.feature
     size = "enormous",
+    tags = ["manual_build"],
 )
 
 rustfmt_test(

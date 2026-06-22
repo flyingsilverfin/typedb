@@ -12,6 +12,7 @@ use std::{
 };
 
 use cache::CACHE_DB_NAME_PREFIX;
+use diagnostics::diagnostics_manager::DiagnosticsManager;
 use resource::{constants::database::INTERNAL_DATABASE_PREFIX, internal_database_prefix};
 use storage::durability_client::WALClient;
 use tracing::{Level, debug, event, warn};
@@ -27,24 +28,30 @@ pub struct DatabaseManager {
     data_directory: PathBuf,
     import_directory: PathBuf,
     databases: Databases,
+    diagnostics_manager: Arc<DiagnosticsManager>,
 }
 
 impl DatabaseManager {
     const IMPORT_DIRECTORY_NAME: &'static str = concat!(internal_database_prefix!(), "import");
 
-    pub fn new(data_directory: impl AsRef<Path>) -> Result<Arc<Self>, DatabaseOpenError> {
+    pub fn new(
+        data_directory: impl AsRef<Path>,
+        diagnostics_manager: Arc<DiagnosticsManager>,
+    ) -> Result<Arc<Self>, DatabaseOpenError> {
         let data_directory = data_directory.as_ref().to_owned();
         let import_directory = data_directory.join(Self::IMPORT_DIRECTORY_NAME);
 
-        let databases = RwLock::new(Self::initialise_databases(&data_directory, &import_directory)?);
+        let databases =
+            RwLock::new(Self::initialise_databases(&data_directory, &import_directory, &diagnostics_manager)?);
         Self::cleanup_import_directory(&import_directory)?;
 
-        Ok(Arc::new(Self { data_directory, import_directory, databases }))
+        Ok(Arc::new(Self { data_directory, import_directory, databases, diagnostics_manager }))
     }
 
     fn initialise_databases(
         data_directory: &PathBuf,
         import_directory: &PathBuf,
+        diagnostics_manager: &DiagnosticsManager,
     ) -> Result<DatabasesMap, DatabaseOpenError> {
         let entries = fs::read_dir(data_directory).map_err(|error| DatabaseOpenError::DirectoryRead {
             name: Self::file_name_lossy(data_directory),
@@ -72,11 +79,11 @@ impl DatabaseManager {
             }
 
             let database_name = entry_path.file_name().unwrap().to_string_lossy();
-            if Self::validate_user_database_name(&database_name).is_err() {
+            if Self::validate_database_name(&database_name).is_err() {
                 continue;
             }
 
-            let database = match Database::<WALClient>::open(&entry_path) {
+            let database = match Database::<WALClient>::open(&entry_path, diagnostics_manager) {
                 Ok(database) => database,
                 Err(DatabaseOpenError::NotADatabase { .. }) => {
                     warn!("{entry_path:?} is not a database, skipping");
@@ -292,6 +299,15 @@ impl DatabaseManager {
         self.databases.read().unwrap()
     }
 
+    pub fn prepare_for_writes(&self) -> Result<(), DatabaseOpenError> {
+        for (name, database) in self.databases.read().unwrap().iter() {
+            database
+                .prepare_for_writes()
+                .map_err(|source| DatabaseOpenError::PrepareForWrites { name: name.clone(), source })?;
+        }
+        Ok(())
+    }
+
     pub fn is_user_database(name: &str) -> bool {
         !Self::is_internal_database(name)
     }
@@ -305,12 +321,12 @@ impl DatabaseManager {
     }
 
     fn new_public_database(&self, name: &str) -> Result<Database<WALClient>, DatabaseCreateError> {
-        Database::<WALClient>::open(&self.data_directory.join(name))
+        Database::<WALClient>::open(&self.data_directory.join(name), &self.diagnostics_manager)
             .map_err(|typedb_source| DatabaseCreateError::DatabaseOpen { typedb_source })
     }
 
     fn new_imported_database(&self, name: &str) -> Result<Database<WALClient>, DatabaseCreateError> {
-        Database::<WALClient>::open(&self.import_directory.join(name))
+        Database::<WALClient>::open(&self.import_directory.join(name), &self.diagnostics_manager)
             .map_err(|typedb_source| DatabaseCreateError::DatabaseOpen { typedb_source })
     }
 
@@ -350,6 +366,10 @@ impl DatabaseManager {
         if Self::is_internal_database(name) {
             return Err(DatabaseCreateError::InternalDatabaseCreationProhibited {});
         }
+        Self::validate_database_name(name)
+    }
+
+    fn validate_database_name(name: &str) -> Result<(), DatabaseCreateError> {
         if !typeql::common::identifier::is_valid_label(name) {
             return Err(DatabaseCreateError::InvalidName { name: name.to_string() });
         }
