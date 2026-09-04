@@ -12,7 +12,7 @@ use std::{
 };
 
 use bytes::{Bytes, byte_array::ByteArray};
-use cache::{CacheError, SpilloverCache};
+use cache::{CacheError, SpilloverCache, SpilloverMultiMap};
 use concept::{
     error::{ConceptReadError, ConceptWriteError},
     thing::{
@@ -37,7 +37,14 @@ use concept::{
         type_manager::TypeManager,
     },
 };
-use encoding::value::{label::Label, value::Value};
+use encoding::{
+    graph::{
+        Typed,
+        thing::{ThingVertex, vertex_object::ObjectVertex},
+        type_::vertex::{PrefixedTypeVertexEncoding, TypeID, TypeIDUInt, TypeVertexEncoding},
+    },
+    value::{label::Label, value::Value},
+};
 use error::typedb_error;
 use executor::ExecutionInterrupt;
 use query::error::QueryError;
@@ -248,18 +255,28 @@ impl<T: ThingAPI> InstanceIDMapping<T> {
     }
 }
 
+// References to instances that have not been imported yet. They are keyed by the original id of the
+// missing instance and resolved when it arrives. The exporter streams attributes last, so in the
+// worst case every ownership of the database waits here: the values spill over to disk once the
+// in-memory budget is spent. Instances are stored as raw IIDs, which are enough to rebuild them.
 #[derive(Debug)]
 struct ObjectsInfo {
     pub instance_id_mapping: InstanceIDMapping<Object>,
-    // TODO: Should be a SpilloverCache
-    pub awaited_for_roles: HashMap<String, HashSet<(RoleType, Relation)>>,
+    // relations (with the role's type id) waiting for a player object: player's original id -> [(role id, relation iid)]
+    pub awaited_for_roles: SpilloverMultiMap<(TypeIDUInt, IID)>,
 }
 
 impl ObjectsInfo {
+    const AWAITED_SPILLOVER_THRESHOLD: usize = 300_000;
+
     fn new(cache_directory: &PathBuf, database_name: &str) -> Self {
         Self {
             instance_id_mapping: InstanceIDMapping::new(cache_directory, database_name),
-            awaited_for_roles: HashMap::new(),
+            awaited_for_roles: SpilloverMultiMap::new(
+                cache_directory,
+                Some(database_name),
+                Self::AWAITED_SPILLOVER_THRESHOLD,
+            ),
         }
     }
 }
@@ -267,15 +284,21 @@ impl ObjectsInfo {
 #[derive(Debug)]
 struct AttributesInfo {
     pub instance_id_mapping: InstanceIDMapping<Attribute>,
-    // TODO: Should be a SpilloverCache
-    pub awaited_for_ownerships: HashMap<String, HashSet<Object>>,
+    // owners waiting for an attribute: attribute's original id -> [owner iid]
+    pub awaited_for_ownerships: SpilloverMultiMap<IID>,
 }
 
 impl AttributesInfo {
+    const AWAITED_SPILLOVER_THRESHOLD: usize = 300_000;
+
     fn new(cache_directory: &PathBuf, database_name: &str) -> Self {
         Self {
             instance_id_mapping: InstanceIDMapping::new(cache_directory, database_name),
-            awaited_for_ownerships: HashMap::new(),
+            awaited_for_ownerships: SpilloverMultiMap::new(
+                cache_directory,
+                Some(database_name),
+                Self::AWAITED_SPILLOVER_THRESHOLD,
+            ),
         }
     }
 }
@@ -465,7 +488,11 @@ impl DatabaseImporter {
                     self.data_info.record_ownership();
                 }
                 None => {
-                    self.data_info.attributes.awaited_for_ownerships.entry(id).or_insert(HashSet::new()).insert(object);
+                    self.data_info
+                        .attributes
+                        .awaited_for_ownerships
+                        .push(&id, object.iid().into_array())
+                        .map_err(|source| DatabaseImportError::CacheError { source })?;
                 }
             }
         }
@@ -479,13 +506,18 @@ impl DatabaseImporter {
         original_id: &str,
         attribute: &Attribute,
     ) -> Result<(), DatabaseImportError> {
-        if let Some(awaiting_objects) = self.data_info.attributes.awaited_for_ownerships.remove(original_id) {
-            for object in awaiting_objects {
-                object
-                    .set_has_unordered(snapshot, thing_manager, attribute, StorageCounters::DISABLED)
-                    .map_err(|typedb_source| DatabaseImportError::ConceptWrite { typedb_source })?;
-                self.data_info.record_ownership();
-            }
+        let awaiting_owners = self
+            .data_info
+            .attributes
+            .awaited_for_ownerships
+            .take(original_id)
+            .map_err(|source| DatabaseImportError::CacheError { source })?;
+        for owner_iid in awaiting_owners {
+            let object = Object::new(decode_object_vertex(&owner_iid)?);
+            object
+                .set_has_unordered(snapshot, thing_manager, attribute, StorageCounters::DISABLED)
+                .map_err(|typedb_source| DatabaseImportError::ConceptWrite { typedb_source })?;
+            self.data_info.record_ownership();
         }
         Ok(())
     }
@@ -516,9 +548,8 @@ impl DatabaseImporter {
                         self.data_info
                             .objects
                             .awaited_for_roles
-                            .entry(id)
-                            .or_insert(HashSet::new())
-                            .insert((role_type, relation));
+                            .push(&id, (role_type.vertex().type_id_().as_u16(), relation.iid().into_array()))
+                            .map_err(|source| DatabaseImportError::CacheError { source })?;
                     }
                 }
             }
@@ -533,13 +564,19 @@ impl DatabaseImporter {
         original_id: &str,
         player: Object,
     ) -> Result<(), DatabaseImportError> {
-        if let Some(awaiting_relations) = self.data_info.objects.awaited_for_roles.remove(original_id) {
-            for (role_type, relation) in awaiting_relations {
-                relation
-                    .add_player(snapshot, thing_manager, role_type, player, StorageCounters::DISABLED)
-                    .map_err(|typedb_source| DatabaseImportError::ConceptWrite { typedb_source })?;
-                self.data_info.record_role();
-            }
+        let awaiting_relations = self
+            .data_info
+            .objects
+            .awaited_for_roles
+            .take(original_id)
+            .map_err(|source| DatabaseImportError::CacheError { source })?;
+        for (role_type_id, relation_iid) in awaiting_relations {
+            let role_type = RoleType::build_from_type_id(TypeID::new(role_type_id));
+            let relation = Relation::new(decode_object_vertex(&relation_iid)?);
+            relation
+                .add_player(snapshot, thing_manager, role_type, player, StorageCounters::DISABLED)
+                .map_err(|typedb_source| DatabaseImportError::ConceptWrite { typedb_source })?;
+            self.data_info.record_role();
         }
         Ok(())
     }
@@ -944,15 +981,16 @@ impl DatabaseImporter {
     }
 
     fn validate_imported_data(&self) -> Result<(), DatabaseImportError> {
+        let map_err = |source| DatabaseImportError::CacheError { source };
         if !self.data_info.objects.awaited_for_roles.is_empty() {
             return Err(DatabaseImportError::IncompleteRolesOnDone {
-                count: self.data_info.objects.awaited_for_roles.len(),
+                count: self.data_info.objects.awaited_for_roles.key_count().map_err(map_err)?,
             });
         }
 
         if !self.data_info.attributes.awaited_for_ownerships.is_empty() {
             return Err(DatabaseImportError::IncompleteOwnershipsOnDone {
-                count: self.data_info.attributes.awaited_for_ownerships.len(),
+                count: self.data_info.attributes.awaited_for_ownerships.key_count().map_err(map_err)?,
             });
         }
 
@@ -1000,6 +1038,12 @@ impl DatabaseImporter {
     fn import_handler(&self) -> Result<&dyn DatabaseImportHandler, DatabaseImportError> {
         self.import_handler.as_deref().ok_or(DatabaseImportError::AccessAfterFinalisation {})
     }
+}
+
+fn decode_object_vertex(iid: &IID) -> Result<ObjectVertex, DatabaseImportError> {
+    ObjectVertex::try_decode(iid).ok_or_else(|| DatabaseImportError::ConceptRead {
+        typedb_source: Box::new(ConceptReadError::IidRepresentsWrongInstanceKind {}),
+    })
 }
 
 impl Drop for DatabaseImporter {
