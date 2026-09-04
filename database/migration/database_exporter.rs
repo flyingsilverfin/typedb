@@ -19,12 +19,20 @@ use crate::{
     transaction::{DatabaseReadError, TransactionRead},
 };
 
+// Streams a database as migration items: the schema and header, then attributes, entities,
+// relations, and finally the checksums.
+//
+// The importer accepts instances in any order and defers references to instances it has not seen
+// yet, but every deferred reference has to be held until it resolves. Attributes are therefore
+// exported before the objects that own them, and entities before the relations that may play
+// them, so that an import in stream order never defers an ownership and defers only the role
+// players that are relations themselves.
 pub struct DatabaseExporter<'a> {
     transaction: &'a TransactionRead<WALClient>,
     opening: std::vec::IntoIter<MigrationItem>,
+    attributes: Box<dyn Iterator<Item = Result<Attribute, Box<ConceptReadError>>> + Send + 'a>,
     entities: Box<dyn Iterator<Item = Result<Entity, Box<ConceptReadError>>> + Send + 'a>,
     relations: Box<dyn Iterator<Item = Result<Relation, Box<ConceptReadError>>> + Send + 'a>,
-    attributes: Box<dyn Iterator<Item = Result<Attribute, Box<ConceptReadError>>> + Send + 'a>,
     checksums: Checksums,
     checksums_pending: bool,
 }
@@ -45,9 +53,9 @@ impl<'a> DatabaseExporter<'a> {
         Ok(Self {
             transaction,
             opening: vec![MigrationItem::Schema(transaction.schema()?), header].into_iter(),
+            attributes: Box::new(attributes),
             entities: Box::new(entities),
             relations: Box::new(relations),
-            attributes: Box::new(attributes),
             checksums: Checksums::new(),
             checksums_pending: true,
         })
@@ -69,6 +77,16 @@ impl<'a> DatabaseExporter<'a> {
             return Ok(Some(item));
         }
         let transaction = self.transaction;
+        if let Some(attribute) = self.attributes.next() {
+            let item = encode_attribute(
+                transaction.snapshot(),
+                &transaction.type_manager,
+                &transaction.thing_manager,
+                attribute?,
+            )?;
+            self.checksums.attribute_count += 1;
+            return Ok(Some(item));
+        }
         if let Some(entity) = self.entities.next() {
             let item = encode_entity(
                 transaction.snapshot(),
@@ -89,16 +107,6 @@ impl<'a> DatabaseExporter<'a> {
                 relation?,
             )?;
             self.checksums.relation_count += 1;
-            return Ok(Some(item));
-        }
-        if let Some(attribute) = self.attributes.next() {
-            let item = encode_attribute(
-                transaction.snapshot(),
-                &transaction.type_manager,
-                &transaction.thing_manager,
-                attribute?,
-            )?;
-            self.checksums.attribute_count += 1;
             return Ok(Some(item));
         }
         if self.checksums_pending {
