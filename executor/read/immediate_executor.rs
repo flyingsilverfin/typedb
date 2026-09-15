@@ -888,6 +888,8 @@ pub(crate) struct CheckExecutor {
     checks: Vec<CheckInstruction<ExecutorVariable>>,
     selected_variables: Vec<VariablePosition>,
     output_width: u32,
+    // positions of the input rows that this step drops, computed for the input width seen in `prepare`
+    unselected_positions: (u32, Vec<VariablePosition>),
     input: Option<FixedBatch>,
     profile: Arc<StepProfile>,
 }
@@ -905,7 +907,7 @@ impl CheckExecutor {
         output_width: u32,
         profile: Arc<StepProfile>,
     ) -> Self {
-        Self { checks, selected_variables, output_width, input: None, profile }
+        Self { checks, selected_variables, output_width, unselected_positions: (0, Vec::new()), input: None, profile }
     }
 
     fn reset(&mut self) {
@@ -917,6 +919,14 @@ impl CheckExecutor {
         input_batch: FixedBatch,
         _context: &ExecutionContext<impl ReadableSnapshot + 'static>,
     ) -> Result<(), ReadExecutionError> {
+        if self.unselected_positions.0 != input_batch.width() {
+            let width = input_batch.width();
+            let unselected = (0..width)
+                .map(VariablePosition::new)
+                .filter(|position| !self.selected_variables.contains(position))
+                .collect();
+            self.unselected_positions = (width, unselected);
+        }
         self.input = Some(input_batch);
         Ok(())
     }
@@ -926,27 +936,28 @@ impl CheckExecutor {
         context: &ExecutionContext<impl ReadableSnapshot + 'static>,
         _interrupt: &mut ExecutionInterrupt,
     ) -> Result<Option<FixedBatch>, ReadExecutionError> {
-        let Some(input_batch) = self.input.take() else {
+        let Some(mut batch) = self.input.take() else {
             return Ok(None);
         };
         let measurement = self.profile.start_measurement();
-        let mut input = Peekable::new(FixedBatchRowIterator::new(Ok(input_batch)));
-        debug_assert!(input.peek().is_some());
-
-        let mut output = FixedBatch::new(self.output_width);
-
-        while let Some(row) = input.next() {
-            let input_row = row.map_err(|err| err.clone())?;
-            if Checker::filter(&self.checks, context, &input_row, self.profile.storage_counters())
-                .map_err(|err| ReadExecutionError::ConceptRead { typedb_source: err })?
-            {
-                output.append(|mut row| {
-                    row.copy_mapped(input_row, self.selected_variables.iter().map(|pos| (*pos, *pos)));
-                })
+        // Filter the input batch in place instead of copying the surviving rows into a new one.
+        batch.retain_rows(|row| {
+            Checker::filter(&self.checks, context, &row, self.profile.storage_counters())
+                .map_err(|err| ReadExecutionError::ConceptRead { typedb_source: err })
+        })?;
+        // Positions this step drops must read as unbound downstream: the match boundary, `distinct`, and the
+        // bound-variable probes of later stages inspect whole rows.
+        let unselected = &self.unselected_positions.1;
+        if !unselected.is_empty() {
+            for index in 0..batch.len() {
+                let mut row = batch.get_row_mut(index);
+                for &position in unselected {
+                    row.unset(position);
+                }
             }
         }
-        measurement.end(&self.profile, 1, output.len() as u64);
-        if output.is_empty() { Ok(None) } else { Ok(Some(output)) }
+        measurement.end(&self.profile, 1, batch.len() as u64);
+        if batch.is_empty() { Ok(None) } else { Ok(Some(batch)) }
     }
 }
 

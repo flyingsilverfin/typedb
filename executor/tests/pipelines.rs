@@ -8,6 +8,7 @@
 
 use std::sync::Arc;
 
+use answer::variable_value::VariableValue;
 use concept::{thing::thing_manager::ThingManager, type_::type_manager::TypeManager};
 use encoding::{
     graph::definition::definition_key_generator::DefinitionKeyGenerator,
@@ -282,6 +283,90 @@ fn test_match_match() {
         pipeline.into_rows_iterator(ExecutionInterrupt::new_uninterruptible()).unwrap();
     let batch = iterator.collect_owned().unwrap();
     assert_eq!(batch.len(), 1);
+}
+
+#[test]
+fn test_match_dedups_anonymous_relation_after_check() {
+    // Two parallel memberships between the same pair: the anonymous relation is dropped before the type check
+    // on it runs, so the final check step must leave the dropped position unbound for the match boundary to
+    // de-duplicate the two rows into one.
+    let context = setup_common();
+    let snapshot = context.storage.clone().open_snapshot_write();
+    let query_str = r#"
+       insert
+       $p isa person, has name 'John';
+       $q isa person, has name 'Alice';
+       $o isa organisation;
+       membership (member: $p, group: $o);
+       membership (member: $p, group: $o);
+       membership (member: $q, group: $o);
+   "#;
+    let query = typeql::parse_query(query_str).unwrap().into_structure().into_pipeline();
+    let pipeline = context
+        .query_manager
+        .prepare_write_pipeline(
+            snapshot,
+            &context.type_manager,
+            context.thing_manager.clone(),
+            context.function_manager.clone(),
+            &query,
+            None::<GivenRowsSimple>,
+            query_str,
+        )
+        .unwrap();
+    let (iterator, ExecutionContext { snapshot, .. }) =
+        pipeline.into_rows_iterator(ExecutionInterrupt::new_uninterruptible()).unwrap();
+    let _ = iterator.count();
+    let snapshot = Arc::into_inner(snapshot).unwrap();
+    snapshot.commit(&mut CommitProfile::DISABLED).unwrap();
+
+    let run = |query: &str| {
+        let snapshot = Arc::new(context.storage.clone().open_snapshot_read());
+        let match_ = typeql::parse_query(query).unwrap().into_structure().into_pipeline();
+        let pipeline = context
+            .query_manager
+            .prepare_read_pipeline(
+                snapshot,
+                &context.type_manager,
+                context.thing_manager.clone(),
+                context.function_manager.clone(),
+                &match_,
+                None::<GivenRowsSimple>,
+                query,
+            )
+            .unwrap();
+        let (iterator, ExecutionContext { .. }) =
+            pipeline.into_rows_iterator(ExecutionInterrupt::new_uninterruptible()).unwrap();
+        iterator.collect_owned().unwrap()
+    };
+
+    // one row per (member, group) pair, not per relation
+    assert_eq!(run("match $p isa person; membership (member: $p, group: $o);").len(), 2);
+    // the relation is visible: one row per relation
+    assert_eq!(run("match $p isa person; $m isa membership (member: $p, group: $o);").len(), 3);
+    // the pair rows must survive a second stage that binds a new anonymous relation variable
+    assert_eq!(
+        run("match $p isa person; membership (member: $p, group: $o); match membership (member: $p, group: $o);").len(),
+        2
+    );
+    // pipeline modifiers after the check: sort and limit see de-duplicated rows
+    assert_eq!(run("match $p isa person, has name $n; membership (member: $p, group: $o); sort $n; limit 5;").len(), 2);
+    // grouped reduce over the de-duplicated rows
+    let batch = run("match $p isa person; membership (member: $p, group: $o); reduce $n = count groupby $o;");
+    assert_eq!(batch.len(), 1);
+    assert!(
+        batch.iter().next().unwrap().row().iter().any(|value| matches!(value, VariableValue::Value(Value::Integer(2))))
+    );
+    // the same shape inside a function body, whose return reshapes the row
+    assert_eq!(
+        run(concat!(
+            "with fun groups($p: person) -> { organisation }: ",
+            "match membership (member: $p, group: $g); return { $g }; ",
+            "match $p isa person; let $g in groups($p);"
+        ))
+        .len(),
+        2
+    );
 }
 
 #[test]

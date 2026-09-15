@@ -247,7 +247,14 @@ impl StepBuilder {
             }
 
             StepInstructionsBuilder::Check(CheckBuilder { instructions }) => {
-                ExecutionStep::Check(CheckStep::new(instructions, selected_variables, output_width))
+                // A check filters rows in place and never narrows them, so its output is as wide as its input.
+                let row_width = index
+                    .values()
+                    .filter_map(ExecutorVariable::as_position)
+                    .map(|position| position.as_usize() as u32 + 1)
+                    .max()
+                    .unwrap_or(0);
+                ExecutionStep::Check(CheckStep::new(instructions, selected_variables, row_width))
             }
 
             StepInstructionsBuilder::Expression(ExpressionBuilder { executable_expression, output }) => {
