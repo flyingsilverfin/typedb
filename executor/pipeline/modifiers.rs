@@ -281,11 +281,13 @@ where
 pub struct SelectStageIterator<InputIterator> {
     input: InputIterator,
     retained_positions: HashSet<VariablePosition>,
+    output_width: usize,
 }
 
 impl<InputIterator> SelectStageIterator<InputIterator> {
     fn new(input: InputIterator, retained_positions: HashSet<VariablePosition>) -> Self {
-        Self { input, retained_positions }
+        let output_width = retained_positions.iter().map(|position| position.as_usize() + 1).max().unwrap_or(0);
+        Self { input, retained_positions, output_width }
     }
 }
 
@@ -301,14 +303,18 @@ where
         self.input.next().map(|res| {
             res.map(|row| {
                 let (input, mult, provenance) = row.into_owned_parts();
-                let mut output = Vec::with_capacity(input.len());
-                for (i, val) in input.into_iter().enumerate() {
-                    if self.retained_positions.contains(&VariablePosition::new(i as u32)) {
-                        output.push(val);
-                    } else {
-                        output.push(VariableValue::None);
-                    }
-                }
+                let output = input
+                    .into_iter()
+                    .take(self.output_width)
+                    .enumerate()
+                    .map(|(i, val)| {
+                        if self.retained_positions.contains(&VariablePosition::new(i as u32)) {
+                            val
+                        } else {
+                            VariableValue::None
+                        }
+                    })
+                    .collect();
                 MaybeOwnedRow::new_owned(output, mult, provenance)
             })
         })
