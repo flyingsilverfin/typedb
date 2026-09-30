@@ -318,24 +318,36 @@ impl CardinalityValidation {
         out_errors: &mut Vec<DataValidationError>,
         storage_counters: StorageCounters,
     ) -> Result<(), Box<ConceptReadError>> {
-        thing_manager.for_each_player_with_modified_links(
-            snapshot,
-            storage_counters.clone(),
-            |error| error,
-            |snapshot, modified| {
-                if modified.status == ConceptStatus::Persisted {
-                    CardinalityValidation::validate_object_links(
-                        snapshot,
-                        thing_manager,
-                        modified.player,
-                        &modified.modified_role_types,
-                        out_errors,
-                        storage_counters.clone(),
-                    )?;
-                }
-                Ok(())
-            },
-        )
+        // EXPERIMENT (benchmark only): inverted order. Look up the checkable plays cardinality constraints for the
+        // player's type first; only if there are any, read the player's status and validate. With unbounded plays
+        // this skips one storage read per touched player.
+        thing_manager.for_each_player_with_modified_links_lazy_status(snapshot, |snapshot, player, modified_role_types| {
+            let constraints = Self::collect_checked_plays_cardinality_constraints(
+                snapshot,
+                thing_manager,
+                player.type_(),
+                &modified_role_types,
+            )?;
+            if constraints.is_empty() {
+                return Ok(());
+            }
+            let status = thing_manager.get_status(
+                snapshot,
+                encoding::Keyable::into_storage_key(crate::thing::ThingAPI::vertex(&player)),
+                storage_counters.clone(),
+            )?;
+            if status == ConceptStatus::Persisted {
+                let check = Self::validate_plays_cardinality_constraints(
+                    snapshot,
+                    thing_manager,
+                    player,
+                    &constraints,
+                    storage_counters.clone(),
+                );
+                collect_errors!(out_errors, check, |e: Box<_>| *e);
+            }
+            Ok(())
+        })
     }
 
     fn validate_existing_relations_of_modified_links<Snapshot: ReadableSnapshot>(

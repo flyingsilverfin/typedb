@@ -1802,6 +1802,34 @@ impl ThingManager {
         flush(snapshot, group.take())
     }
 
+    /// EXPERIMENT (benchmark only): like `for_each_player_with_modified_links` but without reading each player's
+    /// status up front; the visitor decides whether it needs the status at all.
+    pub(crate) fn for_each_player_with_modified_links_lazy_status<Snapshot: ReadableSnapshot, E>(
+        &self,
+        snapshot: &mut Snapshot,
+        mut visit: impl FnMut(&mut Snapshot, Object, HashSet<RoleType>) -> Result<(), E>,
+    ) -> Result<(), E> {
+        let mut group: Option<(Object, HashSet<RoleType>)> = None;
+        let mut flush = |snapshot: &mut Snapshot, group: Option<(Object, HashSet<RoleType>)>| match group {
+            Some((player, role_types)) => visit(snapshot, player, role_types),
+            None => Ok(()),
+        };
+        snapshot.visit_writes_in_range(
+            &KeyRange::new_within(ThingEdgeLinks::prefix_reverse(), ThingEdgeLinks::FIXED_WIDTH_ENCODING_REVERSE),
+            |snapshot, key, _| {
+                let edge = ThingEdgeLinks::decode(Bytes::reference(key.bytes()));
+                let player = Object::new(edge.player());
+                if !group.as_ref().is_some_and(|(grouped, _)| *grouped == player) {
+                    flush(snapshot, group.take())?;
+                    group = Some((player, HashSet::new()));
+                }
+                group.as_mut().unwrap().1.insert(RoleType::build_from_type_id(edge.role_id()));
+                Ok(())
+            },
+        )?;
+        flush(snapshot, group.take())
+    }
+
     pub(crate) fn for_each_player_with_modified_links<Snapshot: ReadableSnapshot, E>(
         &self,
         snapshot: &mut Snapshot,

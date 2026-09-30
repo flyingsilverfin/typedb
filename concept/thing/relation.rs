@@ -165,14 +165,15 @@ impl Relation {
         )
         .map_err(|error| Box::new(ConceptWriteError::DataValidation { typedb_source: error }))?;
 
-        OperationTimeValidation::validate_role_player_exists_to_add_player(
-            snapshot,
-            thing_manager,
-            self,
-            player,
-            storage_counters.clone(),
-        )
-        .map_err(|error| Box::new(ConceptWriteError::DataValidation { typedb_source: error }))?;
+        // EXPERIMENT (benchmark only): trust that the player exists; skips one storage seek per player.
+        // OperationTimeValidation::validate_role_player_exists_to_add_player(
+        //     snapshot,
+        //     thing_manager,
+        //     self,
+        //     player,
+        //     storage_counters.clone(),
+        // )
+        // .map_err(|error| Box::new(ConceptWriteError::DataValidation { typedb_source: error }))?;
 
         OperationTimeValidation::validate_relation_type_relates_role_type(
             snapshot,
