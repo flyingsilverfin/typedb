@@ -15,6 +15,9 @@ features = {}
 
 [dev-dependencies]
 
+	[dev-dependencies.options]
+		workspace = true
+
 	[dev-dependencies.rand]
 		workspace = true
 

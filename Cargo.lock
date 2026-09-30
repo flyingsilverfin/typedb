@@ -949,6 +949,7 @@ dependencies = [
  "lending_iterator",
  "logger",
  "macro_rules_attribute",
+ "options",
  "paste",
  "pprof",
  "primitive",
