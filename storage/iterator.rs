@@ -19,6 +19,7 @@ use crate::{
 };
 
 pub(crate) struct MVCCRangeIterator {
+    storage_name: Arc<str>,
     keyspace_id: KeyspaceId,
     iterator: KeyspaceRangeIterator,
     open_sequence_number: SequenceNumber,
@@ -37,6 +38,7 @@ enum NextItem {
     // point into the raw iterator's current entry, which stays valid until `iterator` is advanced or sought.
     // Both only happen after `next_item` has been reset to `Unknown`.
     Item { key: &'static [u8], value: &'static [u8] },
+    Error(MVCCReadError),
 }
 
 impl MVCCRangeIterator {
@@ -55,6 +57,7 @@ impl MVCCRangeIterator {
         let mapped_range = range.map(|key| key.as_bytes(), |fixed_width| fixed_width);
         let iterator = keyspace.iterate_range(iterpool, &mapped_range, storage_counters.clone());
         MVCCRangeIterator {
+            storage_name: storage.name(),
             keyspace_id: keyspace.id(),
             iterator,
             open_sequence_number,
@@ -66,20 +69,29 @@ impl MVCCRangeIterator {
 
     pub(crate) fn peek(&mut self) -> Option<Result<(StorageKeyReference<'_>, &[u8]), MVCCReadError>> {
         self.find_next_state();
-        match self.next_item {
+        match &self.next_item {
             NextItem::Unknown => None,
-            NextItem::Item { key, value } => Some(Ok((StorageKeyReference::new_raw(self.keyspace_id, key), value))),
+            &NextItem::Item { key, value } => Some(Ok((StorageKeyReference::new_raw(self.keyspace_id, key), value))),
+            NextItem::Error(error) => Some(Err(error.clone())),
         }
     }
 
-    /// Unless already known, consumes keyspace items up to the next visible inserted version and records it as the next
-    /// item. The next item stays unknown if the keyspace iterator is exhausted, or fails: a keyspace error is treated as
-    /// the end of the range.
+    /// Unless already known, consumes keyspace items up to the next visible inserted version, or error, and records
+    /// it as the next item. The next item stays unknown if the keyspace iterator is exhausted.
     fn find_next_state(&mut self) {
         if !matches!(self.next_item, NextItem::Unknown) {
             return;
         }
-        while let Some(Ok((key, value))) = self.iterator.next() {
+        while let Some(item) = self.iterator.next() {
+            let (key, value) = match item {
+                Ok(key_value) => key_value,
+                Err(error) => {
+                    let source = Arc::new(error);
+                    self.next_item =
+                        NextItem::Error(MVCCReadError::Keyspace { storage_name: self.storage_name.clone(), source });
+                    return;
+                }
+            };
             let (key, sequence_number, operation) = MVCCKey::split(key);
             if sequence_number > self.open_sequence_number || self.last_visible_key.as_deref() == Some(key) {
                 self.storage_counters.increment_advance_mvcc_invisible();
@@ -112,6 +124,7 @@ impl LendingIterator for MVCCRangeIterator {
         match std::mem::replace(&mut self.next_item, NextItem::Unknown) {
             NextItem::Unknown => None,
             NextItem::Item { key, value } => Some(Ok((StorageKeyReference::new_raw(self.keyspace_id, key), value))),
+            NextItem::Error(error) => Some(Err(error)),
         }
     }
 }

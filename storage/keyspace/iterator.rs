@@ -137,7 +137,8 @@ impl LendingIterator for KeyspaceRangeIterator {
                 false => None,
             },
         };
-        if item.is_none() {
+        // iteration ends at the end of the range, or after returning an error
+        if !matches!(item, Some(Ok(_))) {
             self.is_finished = true;
         }
         item

@@ -20,7 +20,7 @@ use storage::{
     snapshot::{CommittableSnapshot, PreloadedRangesSnapshot, ReadableSnapshot, WritableSnapshot},
 };
 use test_utils::{create_tmp_storage_dir, init_logging};
-use test_utils_storage::{create_storage, test_keyspace_set};
+use test_utils_storage::{checkpoint_storage, create_storage, test_keyspace_set};
 
 use self::TestKeyspaceSet::{Keyspace, Keyspace2};
 
@@ -363,6 +363,46 @@ fn snapshot_iterate_versions_deletes_buffered_and_seek() {
     assert_eq!(next_index(&mut iterator), Some(10));
     assert_eq!(next_index(&mut iterator), Some(11));
     assert_eq!(next_index(&mut iterator), None);
+}
+
+#[test]
+fn snapshot_iterate_returns_storage_error_once() {
+    init_logging();
+    let storage_path = create_tmp_storage_dir();
+    let storage = create_storage::<TestKeyspaceSet>(&storage_path).unwrap();
+    let key = |i: u8| StorageKeyArray::<BUFFER_KEY_INLINE>::from((Keyspace, [0x6, 0x0, i]));
+    let mut snapshot = storage.clone().open_snapshot_write();
+    (0..10).for_each(|i| snapshot.put_val(key(i), ByteArray::copy(&[i; 32])));
+    snapshot.commit(&mut CommitProfile::disabled()).unwrap();
+
+    // flush the writes to table files, then corrupt their first data block so that reading it fails its checksum
+    checkpoint_storage(&storage);
+    fn table_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .flat_map(|path| match path.is_dir() {
+                true => table_files(&path),
+                false => {
+                    path.extension().is_some_and(|extension| extension == "sst").then_some(path).into_iter().collect()
+                }
+            })
+            .collect()
+    }
+    let table_files = table_files(storage.path());
+    assert!(!table_files.is_empty());
+    for table_file in table_files {
+        let mut bytes = std::fs::read(&table_file).unwrap();
+        bytes[..16].fill(0xFF);
+        std::fs::write(&table_file, bytes).unwrap();
+    }
+
+    let snapshot = storage.clone().open_snapshot_read();
+    let range =
+        KeyRange::new_within(StorageKey::<BUFFER_KEY_INLINE>::Array(StorageKeyArray::from((Keyspace, [0x6]))), true);
+    let mut iterator = snapshot.iterate_range(&range, StorageCounters::DISABLED);
+    assert!(matches!(iterator.next(), Some(Err(_))), "the read error is returned");
+    assert!(iterator.next().is_none(), "and ends the iteration");
 }
 
 // ---------------------------------------------------------------------------
