@@ -2,7 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test", "rustfmt_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test", "rustfmt_test")
 rustfmt_test(
     name = "rustfmt_test",
     targets = [
@@ -84,4 +84,50 @@ checkstyle_test(
         "Cargo.*",
     ]),
     license_type = "mpl-header",
+)
+
+# Concept iterator scan benchmark (see the header of examples/concept_scan.rs):
+#   bazel run -c opt //concept:concept_scan -- 5000000
+rust_binary(
+    name = "concept_scan",
+    crate_root = "examples/concept_scan.rs",
+    srcs = ["examples/concept_scan.rs", "examples/scan_common.rs"],
+    deps = [
+        ":concept",
+        "//common/bytes",
+        "//common/lending_iterator",
+        "//common/options",
+        "//diagnostics",
+        "//durability",
+        "//encoding",
+        "//resource",
+        "//storage",
+        "//concept/tests:test_utils_concept",
+        "//util/test:test_utils",
+        "@crates//:pprof",
+        "@crates//:rocksdb",
+    ],
+)
+
+# Has-reverse scan benchmark (see the header of examples/has_reverse_scan.rs):
+#   bazel run -c opt //concept:has_reverse_scan -- 10000000
+rust_binary(
+    name = "has_reverse_scan",
+    crate_root = "examples/has_reverse_scan.rs",
+    srcs = ["examples/has_reverse_scan.rs", "examples/scan_common.rs"],
+    deps = [
+        ":concept",
+        "//common/bytes",
+        "//common/lending_iterator",
+        "//common/options",
+        "//diagnostics",
+        "//durability",
+        "//encoding",
+        "//resource",
+        "//storage",
+        "//concept/tests:test_utils_concept",
+        "//util/test:test_utils",
+        "@crates//:pprof",
+        "@crates//:rocksdb",
+    ],
 )
