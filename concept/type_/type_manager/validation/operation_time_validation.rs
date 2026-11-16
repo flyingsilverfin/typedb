@@ -2867,7 +2867,7 @@ impl OperationTimeValidation {
             return Ok(());
         }
 
-        let abstract_constraints = get_abstract_constraints(constraints.iter().cloned());
+        let abstract_constraints = get_abstract_constraints(constraints.iter());
 
         debug_assert!(
             !abstract_constraints.is_empty(),
@@ -2913,7 +2913,7 @@ impl OperationTimeValidation {
             return Ok(());
         }
 
-        let abstract_constraints = get_abstract_constraints(constraints.iter().cloned());
+        let abstract_constraints = get_abstract_constraints(constraints.iter());
 
         debug_assert!(
             !abstract_constraints.is_empty(),
@@ -2960,10 +2960,10 @@ impl OperationTimeValidation {
             return Ok(());
         }
 
-        let abstract_constraints = get_abstract_constraints(constraints.iter().cloned());
-        let regex_constraints = get_regex_constraints(constraints.iter().cloned());
-        let range_constraints = get_range_constraints(constraints.iter().cloned());
-        let values_constraints = get_values_constraints(constraints.iter().cloned());
+        let abstract_constraints = get_abstract_constraints(constraints.iter());
+        let regex_constraints = get_regex_constraints(constraints.iter());
+        let range_constraints = get_range_constraints(constraints.iter());
+        let values_constraints = get_values_constraints(constraints.iter());
 
         debug_assert!(
             !abstract_constraints.is_empty()
@@ -3310,15 +3310,13 @@ impl OperationTimeValidation {
         storage_counters: StorageCounters,
     ) -> Result<(), Box<DataValidationError>> {
         let abstract_constraints: HashSet<CapabilityConstraint<Owns>> =
-            get_abstract_constraints(existing_constraints.iter().cloned());
+            get_abstract_constraints(existing_constraints.iter());
         let distinct_constraints: HashSet<CapabilityConstraint<Owns>> =
-            get_distinct_constraints(existing_constraints.iter().cloned());
-        let regex_constraints: HashSet<CapabilityConstraint<Owns>> =
-            get_regex_constraints(existing_constraints.iter().cloned());
-        let range_constraints: HashSet<CapabilityConstraint<Owns>> =
-            get_range_constraints(existing_constraints.iter().cloned());
+            get_distinct_constraints(existing_constraints.iter());
+        let regex_constraints: HashSet<CapabilityConstraint<Owns>> = get_regex_constraints(existing_constraints.iter());
+        let range_constraints: HashSet<CapabilityConstraint<Owns>> = get_range_constraints(existing_constraints.iter());
         let values_constraints: HashSet<CapabilityConstraint<Owns>> =
-            get_values_constraints(existing_constraints.iter().cloned());
+            get_values_constraints(existing_constraints.iter());
 
         // TODO:
         //   Turn this into one ForwardHas iterator per Object Type
@@ -3512,7 +3510,7 @@ impl OperationTimeValidation {
             constraints.iter().all(|constraint| constraint.requires_operation_time_validation()),
             "Only operation-time constraints are validated here"
         );
-        let abstract_constraints = get_abstract_constraints(constraints.iter().cloned());
+        let abstract_constraints = get_abstract_constraints(constraints.iter());
         if abstract_constraints.is_empty() {
             return Ok(());
         }
@@ -3585,8 +3583,8 @@ impl OperationTimeValidation {
             constraints.iter().all(|constraint| constraint.requires_operation_time_validation()),
             "Only operation-time constraints are validated here"
         );
-        let abstract_constraints = get_abstract_constraints(constraints.iter().cloned());
-        let distinct_constraints = get_distinct_constraints(constraints.iter().cloned());
+        let abstract_constraints = get_abstract_constraints(constraints.iter());
+        let distinct_constraints = get_distinct_constraints(constraints.iter());
         if abstract_constraints.is_empty() && distinct_constraints.is_empty() {
             return Ok(());
         }
