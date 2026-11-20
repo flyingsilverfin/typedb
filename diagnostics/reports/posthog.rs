@@ -4,17 +4,19 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 use std::{
+    cmp::Reverse,
     collections::HashMap,
     iter::Sum,
     ops::{Add, AddAssign},
     sync::Arc,
 };
 
+use resource::constants::diagnostics::{REPORT_MAX_INDIVIDUAL_DATABASES, REPORT_REMAINING_DATABASES_NAME};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
 use crate::{
-    DatabaseHash, DatabaseHashOpt, DatabaseId, Diagnostics,
+    DatabaseHash, DatabaseHashOpt, DatabaseId, Diagnostics, hash_string_consistently,
     metrics::{ALL_CLIENT_ENDPOINTS, ActionKind, ClientEndpoint},
     reports::{
         ActionReport, DataLoadReport, DatabaseReport, ErrorReport, LoadReport, OsReport, SchemaLoadReport,
@@ -136,10 +138,37 @@ impl From<LoadReport> for PosthogLoadReport {
     }
 }
 
+impl PosthogLoadReport {
+    // Connection counts are per-database peaks, so their sum is an upper bound of the combined peak.
+    fn merge(&mut self, other: PosthogLoadReport) {
+        self.schema = match (self.schema.take(), other.schema) {
+            (Some(lhs), Some(rhs)) => Some(PosthogSchemaLoadReport { type_count: lhs.type_count + rhs.type_count }),
+            (lhs, rhs) => lhs.or(rhs),
+        };
+        self.data = match (self.data.take(), other.data) {
+            (Some(lhs), Some(rhs)) => Some(lhs + rhs),
+            (lhs, rhs) => lhs.or(rhs),
+        };
+        for (load_kind, counts) in other.connection {
+            let inner = self.connection.entry(load_kind).or_default();
+            for (client, count) in counts {
+                *inner.entry(client).or_default() += count;
+            }
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 struct PosthogDatabaseReport {
     database_hash: DatabaseHash,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct PosthogRemainingDatabasesReport {
+    database_hash: DatabaseHash,
+    aggregated_database_count: usize,
 }
 
 impl<T> From<T> for PosthogDatabaseReport
@@ -173,6 +202,22 @@ struct PosthogDataLoadReport {
     role_count: u64,
     storage_in_bytes: u64,
     storage_key_count: u64,
+}
+
+impl Add for PosthogDataLoadReport {
+    type Output = PosthogDataLoadReport;
+
+    fn add(self, rhs: PosthogDataLoadReport) -> Self::Output {
+        Self {
+            entity_count: self.entity_count + rhs.entity_count,
+            relation_count: self.relation_count + rhs.relation_count,
+            attribute_count: self.attribute_count + rhs.attribute_count,
+            has_count: self.has_count + rhs.has_count,
+            role_count: self.role_count + rhs.role_count,
+            storage_in_bytes: self.storage_in_bytes + rhs.storage_in_bytes,
+            storage_key_count: self.storage_key_count + rhs.storage_key_count,
+        }
+    }
 }
 
 impl From<DataLoadReport> for PosthogDataLoadReport {
@@ -302,6 +347,45 @@ impl PosthogReportBuilder {
         inner.insert(client, error_report.into());
     }
 
+    /// Sums the load, action and error metrics of `other` into `self`. Flat properties of `other` are dropped.
+    fn merge(&mut self, other: PosthogReportBuilder) {
+        if let Some(other_load) = other.load_report {
+            match &mut self.load_report {
+                Some(load) => load.merge(other_load),
+                None => self.load_report = Some(other_load),
+            }
+        }
+        for (action_kind, reports) in other.action_reports {
+            let inner = self.action_reports.entry(action_kind).or_default();
+            for (client, report) in reports {
+                *inner.entry(client).or_insert_with(PosthogActionReport::new) += report;
+            }
+        }
+        for (code, reports) in other.error_reports {
+            let inner = self.error_reports.entry(code).or_default();
+            for (client, report) in reports {
+                inner.entry(client).or_insert(PosthogErrorReport { count: 0 }).count += report.count;
+            }
+        }
+    }
+
+    /// Ordering key for picking the most active databases: queries in this reporting interval,
+    /// then all other actions (e.g. transaction opens), then storage size.
+    fn activity_key(&self) -> (i64, i64, u64) {
+        let mut queries = 0;
+        let mut actions = 0;
+        for (action_kind, reports) in &self.action_reports {
+            let count: i64 = reports.values().map(|report| report.successful + report.failed).sum();
+            actions += count;
+            if action_kind.is_query() {
+                queries += count;
+            }
+        }
+        let storage =
+            self.load_report.as_ref().and_then(|load| load.data.as_ref()).map_or(0, |data| data.storage_in_bytes);
+        (queries, actions, storage)
+    }
+
     fn build(self) -> PosthogReport {
         let mut properties = self.flat_properties;
 
@@ -367,10 +451,51 @@ impl PosthogPayloadBuilder {
             server_usage.flat_properties.extend(self.server_metrics_minimal);
             vec![server_usage.build()]
         } else {
-            self.usage_reports.into_values().map(|builder| builder.build()).collect()
+            let mut builders = Vec::with_capacity(self.usage_reports.len());
+            let mut database_builders = Vec::new();
+            for (database_hash, builder) in self.usage_reports {
+                match database_hash {
+                    None => builders.push(builder),
+                    Some(database_hash) => database_builders.push((database_hash, builder)),
+                }
+            }
+
+            // Servers can host an unbounded number of databases, so only report the most active ones
+            // individually and sum up the rest. The hash breaks ties deterministically.
+            if database_builders.len() > REPORT_MAX_INDIVIDUAL_DATABASES {
+                database_builders
+                    .sort_by_cached_key(|(database_hash, builder)| (Reverse(builder.activity_key()), *database_hash));
+                let remaining = database_builders.split_off(REPORT_MAX_INDIVIDUAL_DATABASES);
+                builders.push(Self::remaining_databases_report(
+                    remaining.into_iter().map(|(_, builder)| builder).collect(),
+                    &self.server_properties,
+                    &self.server_metrics_minimal,
+                ));
+            }
+            builders.extend(database_builders.into_iter().map(|(_, builder)| builder));
+            builders.into_iter().map(|builder| builder.build()).collect()
         };
 
         PosthogPayload { api_key: self.api_key, batch }
+    }
+
+    fn remaining_databases_report(
+        remaining: Vec<PosthogReportBuilder>,
+        server_properties: &Map<String, Value>,
+        server_metrics_minimal: &Map<String, Value>,
+    ) -> PosthogReportBuilder {
+        let mut summary = PosthogReportBuilder::database_usage();
+        let report = PosthogRemainingDatabasesReport {
+            database_hash: hash_string_consistently(REPORT_REMAINING_DATABASES_NAME),
+            aggregated_database_count: remaining.len(),
+        };
+        summary.flat_properties.extend(report.to_json_map());
+        summary.flat_properties.extend(server_metrics_minimal.clone());
+        summary.flat_properties.extend(server_properties.clone());
+        for builder in remaining {
+            summary.merge(builder);
+        }
+        summary
     }
 
     fn get_or_init_report(&mut self, database_id: Option<Arc<DatabaseId>>) -> &mut PosthogReportBuilder {
@@ -443,4 +568,102 @@ pub(crate) fn to_full_posthog_reporting_json(diagnostics: &Diagnostics, api_key:
 
 pub(crate) fn to_minimal_posthog_reporting_json(diagnostics: &Diagnostics, api_key: &str) -> Value {
     json!(PosthogPayloadBuilder::new(diagnostics, api_key.to_string()).build())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashMap, path::PathBuf, sync::Arc};
+
+    use resource::constants::diagnostics::{REPORT_MAX_INDIVIDUAL_DATABASES, REPORT_REMAINING_DATABASES_NAME};
+    use serde_json::Value;
+
+    use crate::{
+        Diagnostics, hash_string_consistently,
+        metrics::{ActionKind, ClientEndpoint, DataLoadMetrics, DatabaseMetricsSnapshot, SchemaLoadMetrics},
+    };
+
+    fn diagnostics_with_databases(database_count: usize) -> Diagnostics {
+        let diagnostics = Diagnostics::new(
+            "deploy".into(),
+            "server".into(),
+            "edition".into(),
+            "version".into(),
+            PathBuf::from("/tmp/diagnostics-test"),
+            /* is_reporting_enabled */ true,
+            /* metrics_enabled */ true,
+        );
+        let mut snapshots = HashMap::new();
+        for i in 0..database_count {
+            let name: Arc<str> = format!("db_{i}").into();
+            snapshots.insert(
+                name.clone(),
+                DatabaseMetricsSnapshot {
+                    schema: SchemaLoadMetrics { type_count: 1 },
+                    data: DataLoadMetrics { entity_count: 10, ..Default::default() },
+                },
+            );
+            // db_i runs i queries, so the highest indices are the most active
+            for _ in 0..i {
+                diagnostics.submit_action_success(ClientEndpoint::Grpc, Some(&name), ActionKind::OneshotQuery);
+            }
+            diagnostics.submit_error(ClientEndpoint::Http, Some(&name), "ERR-1".into());
+        }
+        diagnostics.submit_database_metrics(snapshots);
+        diagnostics
+    }
+
+    fn database_events(payload: &Value) -> Vec<&Value> {
+        payload["batch"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|event| event["event"] == "database_usage")
+            .map(|event| &event["properties"])
+            .collect()
+    }
+
+    fn summary_hash() -> u64 {
+        hash_string_consistently(REPORT_REMAINING_DATABASES_NAME)
+    }
+
+    #[test]
+    fn databases_under_cap_are_reported_individually() {
+        let diagnostics = diagnostics_with_databases(REPORT_MAX_INDIVIDUAL_DATABASES);
+        let payload = diagnostics.to_posthog_reporting_json_against_snapshot("test-key");
+        let events = database_events(&payload);
+
+        assert_eq!(events.len(), REPORT_MAX_INDIVIDUAL_DATABASES);
+        assert!(events.iter().all(|event| event["database_hash"] != summary_hash()));
+        assert!(events.iter().all(|event| event.get("aggregated_database_count").is_none()));
+    }
+
+    #[test]
+    fn databases_over_cap_are_summarised() {
+        let database_count = REPORT_MAX_INDIVIDUAL_DATABASES + 5;
+        let diagnostics = diagnostics_with_databases(database_count);
+        let payload = diagnostics.to_posthog_reporting_json_against_snapshot("test-key");
+        let events = database_events(&payload);
+
+        assert_eq!(events.len(), REPORT_MAX_INDIVIDUAL_DATABASES + 1);
+        assert_eq!(payload["batch"].as_array().unwrap().len(), REPORT_MAX_INDIVIDUAL_DATABASES + 2); // + server_usage
+
+        // The most active databases are reported individually
+        for i in (database_count - REPORT_MAX_INDIVIDUAL_DATABASES)..database_count {
+            let hash = hash_string_consistently(format!("db_{i}"));
+            let event = events.iter().find(|event| event["database_hash"] == hash).expect("missing top database");
+            assert_eq!(event["total_queries"]["successful"], i as i64);
+        }
+
+        // The rest are summed into one event
+        let summary = events.iter().find(|event| event["database_hash"] == summary_hash()).expect("missing summary");
+        let remaining_count = database_count - REPORT_MAX_INDIVIDUAL_DATABASES;
+        let remaining_queries: usize = (0..remaining_count).sum();
+        assert_eq!(summary["aggregated_database_count"], remaining_count);
+        assert_eq!(summary["total_queries"]["successful"], remaining_queries);
+        assert_eq!(summary["oneshot_queries"]["grpc"]["successful"], remaining_queries);
+        assert_eq!(summary["schema"]["type_count"], remaining_count);
+        assert_eq!(summary["data"]["entity_count"], remaining_count * 10);
+        assert_eq!(summary["user_errors"]["ERR-1"]["http"]["count"], remaining_count);
+        assert_eq!(summary["distinct_id"], "deploy");
+    }
 }

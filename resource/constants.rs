@@ -204,4 +204,9 @@ pub mod diagnostics {
     pub const REPORT_MAX_RETRY_NUM: u32 = 3;
 
     pub const DISABLED_REPORTING_FILE_NAME: &str = "_reporting_disabled";
+
+    // Only the most active databases get their own `database_usage` event per report.
+    // The rest are summed into a single event for a synthetic database with this name.
+    pub const REPORT_MAX_INDIVIDUAL_DATABASES: usize = 10;
+    pub const REPORT_REMAINING_DATABASES_NAME: &str = "_remaining_dbs_summary";
 }
