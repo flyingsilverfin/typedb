@@ -814,6 +814,17 @@ impl TypeReader {
         Ok(all_constraints)
     }
 
+    pub(crate) fn get_constraint_covered_interface_types<CAP: Capability>(
+        snapshot: &impl ReadableSnapshot,
+        constraint: &CapabilityConstraint<CAP>,
+    ) -> Result<HashSet<CAP::InterfaceType>, Box<ConceptReadError>> {
+        let source = constraint.source().interface();
+        if !constraint.covers_subtypes() {
+            return Ok(HashSet::from([source]));
+        }
+        Ok(TypeAPI::chain_types(source, Self::get_subtypes_transitive(snapshot, source)?).collect())
+    }
+
     pub(crate) fn get_type_capabilities_constraints<CAP: Capability>(
         snapshot: &impl ReadableSnapshot,
         object_type: CAP::ObjectType,
