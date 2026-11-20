@@ -11,17 +11,20 @@ use error::typedb_error;
 use itertools::Itertools;
 use storage::snapshot::ReadableSnapshot;
 
-use crate::type_::{
-    Capability, KindAPI, Ordering,
-    annotation::{
-        Annotation, AnnotationAbstract, AnnotationCardinality, AnnotationCategory, AnnotationDistinct, AnnotationDoc,
-        AnnotationIndependent, AnnotationKey, AnnotationMeta, AnnotationRange, AnnotationRegex, AnnotationUnique,
-        AnnotationValues,
+use crate::{
+    error::ConceptReadError,
+    type_::{
+        Capability, KindAPI, Ordering, TypeAPI,
+        annotation::{
+            Annotation, AnnotationAbstract, AnnotationCardinality, AnnotationCategory, AnnotationDistinct,
+            AnnotationDoc, AnnotationIndependent, AnnotationKey, AnnotationMeta, AnnotationRange, AnnotationRegex,
+            AnnotationUnique, AnnotationValues,
+        },
+        owns::Owns,
+        plays::Plays,
+        relates::Relates,
+        type_manager::TypeManager,
     },
-    owns::Owns,
-    plays::Plays,
-    relates::Relates,
-    type_manager::TypeManager,
 };
 
 macro_rules! with_constraint_description {
@@ -399,6 +402,28 @@ pub struct CapabilityConstraint<CAP: Capability> {
 impl<CAP: Capability> CapabilityConstraint<CAP> {
     pub(crate) fn new(description: ConstraintDescription, source: CAP) -> Self {
         Self { description, source }
+    }
+
+    pub(crate) fn covered_object_types(
+        &self,
+        snapshot: &impl ReadableSnapshot,
+        type_manager: &TypeManager,
+    ) -> Result<HashSet<CAP::ObjectType>, Box<ConceptReadError>> {
+        let source = self.source.object();
+        if !self.covers_subtypes() {
+            return Ok(HashSet::from([source]));
+        }
+        let subtypes = source.get_subtypes_transitive(snapshot, type_manager)?;
+        Ok(TypeAPI::chain_types(source, subtypes.iter().copied()).collect())
+    }
+
+    pub(crate) fn covers_subtypes(&self) -> bool {
+        match self.description.scope() {
+            ConstraintScope::SingleInstanceOfType => false,
+            ConstraintScope::SingleInstanceOfTypeOrSubtype
+            | ConstraintScope::AllInstancesOfSiblingTypeOrSubtypes
+            | ConstraintScope::AllInstancesOfTypeOrSubtypes => true,
+        }
     }
 }
 

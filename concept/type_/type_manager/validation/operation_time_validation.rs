@@ -3189,14 +3189,10 @@ impl OperationTimeValidation {
             }
 
             if !unique_attribute_types.is_empty() {
-                let root_owner_type = unique_constraint.source().owner();
-                let root_owner_subtypes = root_owner_type
-                    .get_subtypes_transitive(snapshot, type_manager)
+                let mut unique_owner_types = unique_constraint
+                    .covered_object_types(snapshot, type_manager)
                     .map_err(|source| Box::new(DataValidationError::ConceptRead { typedb_source: source }))?;
-                let unique_owner_types: HashSet<ObjectType> =
-                    TypeAPI::chain_types(root_owner_type, root_owner_subtypes.into_iter().cloned())
-                        .chain(object_types.iter().copied())
-                        .collect();
+                unique_owner_types.extend(object_types.iter().copied());
                 Self::validate_ownerships_unique(
                     snapshot,
                     type_manager,
